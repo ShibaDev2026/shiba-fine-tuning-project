@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+
+# 測試快取
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Plan 檔與 CLAUDE.md 不進版控
+docs/superpowers/
+CLAUDE.md
+
+# macOS
+.DS_Store
+
+# 本地資料（不進版控）
+*.db
+*.log

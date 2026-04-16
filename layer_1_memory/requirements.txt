@@ -1,0 +1,6 @@
+# Layer 1 記憶層 Python 依賴
+# 安裝方式：
+#   python3 -m venv ~/.local-brain/venv
+#   ~/.local-brain/venv/bin/pip install -r requirements.txt
+
+pyyaml>=6.0

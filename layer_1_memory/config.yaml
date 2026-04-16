@@ -1,0 +1,59 @@
+# Layer 1 記憶層設定檔
+# 路徑使用 ~ 代表 home 目錄
+
+# ============================================================
+# DB 設定
+# ============================================================
+db:
+  path: ~/.local-brain/shiba-brain.db
+
+# ============================================================
+# RAG 設定
+# ============================================================
+rag:
+  top_n: 3                  # 每次注入最多幾筆歷史記憶
+  token_budget: 500         # hookSpecificOutput 最大 token 數
+
+# ============================================================
+# Logging 設定
+# ============================================================
+logging:
+  path: ~/.local-brain/logs/memory.log
+  level: INFO
+
+# ============================================================
+# Fallback Queue（Chamber 未啟動時的備援）
+# ============================================================
+queue:
+  path: ~/.local-brain/queue
+
+# ============================================================
+# 記憶衰減設定（Phase 7 啟用邏輯，此處預留）
+# 參數說明：
+#   lambda_base       - 衰減速率（越小越慢，建議 0.05~0.08）
+#   protection_days   - 新記憶的保護期（天），期間不衰減
+#   frequency_exp     - 頻率強化指數（log(1+count)^exp，建議 0.7）
+#   hit_multiplier    - RAG 命中時的 boost 倍率（建議 1.5~2.0）
+#   archive_threshold - decay_score 低於此值時歸檔（建議 0.2）
+#   archive_trigger   - active branches 超過此數量時觸發歸檔
+# ============================================================
+decay:
+  enabled: false            # Phase 1 關閉，Phase 7 開啟
+  lambda_base: 0.06
+  protection_days: 7
+  frequency_exp: 0.7
+  hit_multiplier: 1.8
+  archive_threshold: 0.2
+  archive_trigger: 500
+
+# ============================================================
+# event_type 初始重要性（Phase 7 initial_importance 欄位用）
+# ============================================================
+event_importance:
+  architecture: 1.1
+  fine_tuning_ops: 1.1
+  debugging: 1.0
+  code_gen: 1.0
+  git_ops: 0.9
+  terminal_ops: 0.9
+  knowledge_qa: 0.9
