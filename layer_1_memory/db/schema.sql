@@ -69,9 +69,36 @@ CREATE TABLE IF NOT EXISTS messages (
     parent_uuid TEXT,                   -- 父節點 UUID（建 DAG 用）
     role        TEXT NOT NULL,          -- 'user' | 'assistant'
     content     TEXT,                   -- 訊息純文字內容
+    raw_content TEXT,                   -- 完整 JSON 序列化結構（含 tool_result 等）
+    input_tokens INTEGER DEFAULT 0,     -- 輸入 token 消耗
+    output_tokens INTEGER DEFAULT 0,    -- 輸出 token 消耗
+    cache_creation_input_tokens INTEGER DEFAULT 0, -- Cache 建立消耗 
+    cache_read_input_tokens INTEGER DEFAULT 0,     -- Cache 讀取節省
+    char_count INTEGER DEFAULT 0,       -- 字元數
+    byte_count INTEGER DEFAULT 0,       -- 位元組大小
+    encoding TEXT DEFAULT 'utf-8',      -- 編碼格式
+    is_compressed INTEGER DEFAULT 0,    -- 內文是否經過 zlib 壓縮
+    message_time TEXT,                  -- 真實對話時間戳
+    model_name   TEXT,                  -- 使用模型，例：claude-3-7-sonnet
     has_tool_use INTEGER DEFAULT 0,     -- 是否含工具呼叫
     tool_names  TEXT DEFAULT '[]',      -- JSON array：使用的工具名稱
     created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- ============================================================
+-- Tool Executions 表：從 raw_content 拆分出來供後續正規化與壓縮
+-- ============================================================
+CREATE TABLE IF NOT EXISTS tool_executions (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    message_id    INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    tool_use_id   TEXT NOT NULL,
+    tool_name     TEXT NOT NULL,
+    input_cmd     TEXT,               -- 傳入的指令參數 (不壓縮)
+    output_log    BLOB,               -- 執行結果 (gzip 壓縮)
+    is_error      INTEGER DEFAULT 0,  -- 是否失敗 (exit code != 0)
+    is_compressed INTEGER DEFAULT 0,  -- output_log 是否經過 zlib 壓縮
+    duration_ms   INTEGER,
+    UNIQUE(message_id, tool_use_id)
 );
 
 -- Branch-Messages 橋接表：記錄哪些訊息屬於哪條分支
@@ -108,3 +135,6 @@ CREATE INDEX IF NOT EXISTS idx_messages_session   ON messages(session_id);
 CREATE INDEX IF NOT EXISTS idx_messages_uuid      ON messages(uuid);
 CREATE INDEX IF NOT EXISTS idx_messages_parent    ON messages(parent_uuid);
 CREATE INDEX IF NOT EXISTS idx_projects_hash      ON projects(hash);
+
+CREATE INDEX IF NOT EXISTS idx_tool_executions_msg ON tool_executions(message_id);
+CREATE INDEX IF NOT EXISTS idx_tool_executions_err ON tool_executions(tool_name, is_error);

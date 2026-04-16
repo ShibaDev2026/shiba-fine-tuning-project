@@ -6,6 +6,7 @@ db.py — SQLite 連線管理、WAL 設定、init_db、基本 CRUD
 import json
 import logging
 import sqlite3
+import zlib
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
@@ -58,6 +59,16 @@ def _column_exists(conn: sqlite3.Connection, table: str, column: str) -> bool:
     return any(row["name"] == column for row in rows)
 
 
+def compress_text(text: str | None) -> tuple[bytes | str | None, int]:
+    """若文字的位元組長度大於 1024 Bytes，則套用 zlib 壓縮返回 (BLOB, 1)，否則返回 (TEXT, 0)。"""
+    if not text:
+        return text, 0
+    encoded = text.encode("utf-8")
+    if len(encoded) > 1024:
+        return zlib.compress(encoded), 1
+    return text, 0
+
+
 def init_db() -> None:
     """
     初始化 DB：執行 schema.sql，並對舊版 DB 執行 migration。
@@ -83,6 +94,27 @@ def init_db() -> None:
                     f"ALTER TABLE branches ADD COLUMN {col_name} {col_def};"
                 )
                 logger.info("Migration: branches 表新增欄位 %s", col_name)
+
+        if not _column_exists(conn, "messages", "raw_content"):
+            conn.execute("ALTER TABLE messages ADD COLUMN raw_content TEXT;")
+            logger.info("Migration: messages 表新增欄位 raw_content")
+
+        new_msg_columns = [
+            ("input_tokens", "INTEGER DEFAULT 0"),
+            ("output_tokens", "INTEGER DEFAULT 0"),
+            ("cache_creation_input_tokens", "INTEGER DEFAULT 0"),
+            ("cache_read_input_tokens", "INTEGER DEFAULT 0"),
+            ("char_count", "INTEGER DEFAULT 0"),
+            ("byte_count", "INTEGER DEFAULT 0"),
+            ("encoding", "TEXT DEFAULT 'utf-8'"),
+            ("is_compressed", "INTEGER DEFAULT 0"),
+            ("message_time", "TEXT"),
+            ("model_name", "TEXT"),
+        ]
+        for col_name, col_def in new_msg_columns:
+            if not _column_exists(conn, "messages", col_name):
+                conn.execute(f"ALTER TABLE messages ADD COLUMN {col_name} {col_def};")
+                logger.info("Migration: messages 表新增欄位 %s", col_name)
 
         conn.commit()
         logger.info("DB 初始化完成：%s", get_db_path())
@@ -251,28 +283,53 @@ def insert_message(
     parent_uuid: str | None,
     role: str,
     content: str | None,
+    raw_content: str | None,
+    input_tokens: int,
+    output_tokens: int,
+    cache_creation_input_tokens: int,
+    cache_read_input_tokens: int,
+    char_count: int,
+    byte_count: int,
+    encoding: str,
     has_tool_use: bool,
     tool_names: list[str],
+    message_time: str | None = None,
+    model_name: str | None = None,
 ) -> int:
-    """新增訊息記錄（UUID 已存在則忽略），回傳 message.id"""
+    """新增訊息記錄（UUID 已存在則忽略），回傳 message.id。若字串超過 1024 即自動壓為 BLOB。"""
     row = conn.execute(
         "SELECT id FROM messages WHERE uuid = ?", (uuid,)
     ).fetchone()
     if row:
         return row["id"]
 
+    compressed_raw, is_raw_comp = compress_text(raw_content)
+
     cur = conn.execute(
         """INSERT INTO messages
-           (session_id, uuid, parent_uuid, role, content, has_tool_use, tool_names)
-           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+           (session_id, uuid, parent_uuid, role, content, raw_content, 
+            input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens, 
+            char_count, byte_count, encoding, has_tool_use, tool_names, is_compressed, message_time, model_name)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             session_id,
             uuid,
             parent_uuid,
             role,
             content,
+            compressed_raw,
+            input_tokens,
+            output_tokens,
+            cache_creation_input_tokens,
+            cache_read_input_tokens,
+            char_count,
+            byte_count,
+            encoding,
             1 if has_tool_use else 0,
             json.dumps(tool_names, ensure_ascii=False),
+            is_raw_comp,
+            message_time,
+            model_name,
         ),
     )
     conn.commit()
@@ -289,6 +346,38 @@ def insert_branch_message(
         (branch_id, message_id, seq),
     )
     conn.commit()
+
+
+def insert_tool_execution(
+    conn: sqlite3.Connection,
+    message_id: int,
+    tool_use_id: str,
+    tool_name: str,
+    input_cmd: str | None,
+    output_log: str | None,
+    is_error: bool,
+    duration_ms: int | None = None,
+) -> int:
+    """寫入分離出來的 tool execution，並套用自動壓縮。"""
+    compressed_out, is_comp = compress_text(output_log)
+    cur = conn.execute(
+        """INSERT OR IGNORE INTO tool_executions
+           (message_id, tool_use_id, tool_name, input_cmd, output_log, is_error, is_compressed, duration_ms)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            message_id,
+            tool_use_id,
+            tool_name,
+            input_cmd,
+            compressed_out,
+            1 if is_error else 0,
+            is_comp,
+            duration_ms,
+        ),
+    )
+    conn.commit()
+    return cur.lastrowid
+
 
 
 # ============================================================

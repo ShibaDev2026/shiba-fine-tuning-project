@@ -97,3 +97,68 @@ def test_parse_detects_tool_use(tmp_path):
     tool_msgs = [m for m in result.all_messages if m.has_tool_use]
     assert len(tool_msgs) >= 1
     assert "Bash" in tool_msgs[0].tool_names
+
+
+def test_parse_detects_tool_result_in_raw_content(tmp_path):
+    """raw_content 應可完整保留 json 結構，包含被忽略的 tool_result"""
+    jsonl = tmp_path / "aaaaaaaa-0000-0000-0000-000000000004.jsonl"
+    _write_jsonl(jsonl, [
+        {
+            "type": "user",
+            "uuid": "u2",
+            "parentUuid": None,
+            "timestamp": "2026-04-15T10:00:00Z",
+            "message": {
+                "role": "user",
+                "content": [
+                    {"type": "tool_result", "tool_use_id": "t1", "content": "error line 1"}
+                ]
+            },
+            "cwd": "/project",
+            "sessionId": "aaaaaaaa-0000-0000-0000-000000000004",
+        }
+    ])
+    result = parse_jsonl(jsonl)
+
+    assert result is not None
+    msg = result.all_messages[0]
+    assert msg.content is None  # content 依舊忽略 tool_result
+    assert msg.raw_content is not None
+    assert "error line 1" in msg.raw_content
+
+
+def test_parse_extracts_tokens_and_sizes(tmp_path):
+    """驗證 parser 能正確抽取出 usage token 以計算字元數與位元組"""
+    jsonl = tmp_path / "aaaaaaaa-0000-0000-0000-000000000005.jsonl"
+    _write_jsonl(jsonl, [
+        {
+            "type": "assistant",
+            "uuid": "a2",
+            "parentUuid": None,
+            "timestamp": "2026-04-15T10:00:00Z",
+            "message": {
+                "role": "assistant",
+                "content": [{"type": "text", "text": "測試字串"}],
+                "usage": {
+                    "input_tokens": 10,
+                    "output_tokens": 20,
+                    "cache_creation_input_tokens": 100,
+                    "cache_read_input_tokens": 50
+                }
+            },
+            "sessionId": "aaaaaaaa-0000-0000-0000-000000000005",
+        }
+    ])
+    result = parse_jsonl(jsonl)
+
+    assert result is not None
+    msg = result.all_messages[0]
+    
+    # Validation
+    assert msg.input_tokens == 10
+    assert msg.output_tokens == 20
+    assert msg.cache_creation_input_tokens == 100
+    assert msg.cache_read_input_tokens == 50
+    assert msg.char_count > 0
+    assert msg.byte_count >= msg.char_count
+    assert msg.encoding == "utf-8"

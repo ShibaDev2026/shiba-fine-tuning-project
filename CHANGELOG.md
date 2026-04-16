@@ -19,3 +19,19 @@
   - `layer_1_memory/config.yaml`：路徑、閾值設定
   - `layer_1_memory/setup.sh`：一鍵部署腳本（venv、DB 初始化、settings.json hooks 寫入）
 - **單元測試** `tests/memory/`：db / parser / classifier / rag 共 18 個測試案例，全數通過
+
+### Changed
+
+- **Layer 1 記憶記錄完整性與成本追蹤補強**
+  - 修復 `tool_result` 遭到 `parser.py` 拋棄的問題。
+  - `layer_1_memory/db/schema.sql`：在 `messages` 表新增了 8 個欄位。包含 `raw_content` TEXT 欄位，用以保存未經過濾的最原始 JSON 結構；以及 7 個量測數值的欄位：`input_tokens`, `output_tokens`, `cache_creation_input_tokens`, `cache_read_input_tokens`, `char_count`, `byte_count`, `encoding`，全面涵蓋成本與流量追蹤。
+  - `layer_1_memory/lib/parser.py`：`_parse_entry` 現在會攔截 `message["content"]` 以及 `message["usage"]` 將其拆解、並且透過 python 計算物理位元組字元數。
+  - `layer_1_memory/lib/db.py`：在 `init_db()` 加入 7 項新欄位新增的 Migration 控制；並擴充 `insert_message`。
+  - `layer_1_memory/hooks/stop_hook.py`：串接流量追蹤參數至資料庫 `insert_message` 儲存階段。
+  - `tests/memory/test_parser.py`：新增驗證單元測試，確保字元數、Token 消耗能被準確萃取與計算。
+  - `tests/memory/test_classifier.py`：補上改版遺失的占位符。
+
+- **Layer 1 生命週期與效能優化 (延遲壓縮與工具正規化)**
+  - **時間戳與模型紀錄**：於 `messages` 分別新增 `message_time`, `model_name`，讓儀表板可精算真實時間與費率。
+  - **工具紀錄正規化 (`tool_executions` 表)**：成功從 `raw_content` 獨立拆分，並使用 `(tool_name, is_error)` 建立索引，方便未來 Layer 2 背景程式毫秒級掃描出問題的 `Bash` 指令。
+  - **Application-Level 即時壓縮機制**：引入 Python `zlib`。在寫入 DB 前，如果分析到 `output_log` 或 `raw_content` 的位元組超過 `1024 Bytes`，會直接啟動 `.compress()` 包裝成 `BLOB` 寫入。完全不拖慢背景掛勾且解決硬碟未來爆滿問題，並設有 `is_compressed=1` 的彈性旗標。

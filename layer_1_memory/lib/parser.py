@@ -32,8 +32,18 @@ class ParsedMessage:
     parent_uuid: str | None
     role: str                      # 'user' | 'assistant'
     content: str | None            # 純文字內容
+    raw_content: str | None        # 原始 message["content"] 原貌保留
+    input_tokens: int
+    output_tokens: int
+    cache_creation_input_tokens: int
+    cache_read_input_tokens: int
+    char_count: int
+    byte_count: int
+    encoding: str
     has_tool_use: bool
     tool_names: list[str]
+    timestamp: str | None
+    model_name: str | None
     raw_entry: dict                # 原始 JSON entry（供進階分析）
 
 
@@ -62,6 +72,7 @@ class ParsedSession:
     commits: int
     tool_counts: dict[str, int]
     all_messages: list[ParsedMessage]
+    tool_executions: list[dict]
 
 
 # ============================================================
@@ -110,6 +121,9 @@ def parse_jsonl(jsonl_path: Path) -> ParsedSession | None:
     # 建立 DAG 並分析分支
     branches = _build_branches(messages)
 
+    # 擷取完整的工具執行紀錄（匹配 tool_use 與 tool_result）
+    tool_executions = _extract_tool_executions(messages)
+
     # 計算 tool_counts（全 session 彙整）
     tool_counts = _compute_tool_counts(messages)
 
@@ -126,6 +140,7 @@ def parse_jsonl(jsonl_path: Path) -> ParsedSession | None:
         commits=active.commits if active else 0,
         tool_counts=tool_counts,
         all_messages=messages,
+        tool_executions=tool_executions,
     )
 
 
@@ -151,14 +166,42 @@ def _parse_entry(entry: dict) -> ParsedMessage | None:
     # 解析訊息內容
     message = entry.get("message", {})
     content_text, has_tool_use, tool_names = _extract_content(message)
+    
+    raw_content_str = None
+    if message.get("content") is not None:
+        raw_content_str = json.dumps(message.get("content"), ensure_ascii=False)
+
+    usage = message.get("usage", {})
+    input_tokens = usage.get("input_tokens", 0)
+    output_tokens = usage.get("output_tokens", 0)
+    cache_creation_input_tokens = usage.get("cache_creation_input_tokens", 0)
+    cache_read_input_tokens = usage.get("cache_read_input_tokens", 0)
+
+    eval_text = raw_content_str if raw_content_str is not None else (content_text or "")
+    char_count = len(eval_text)
+    encoded_bytes = eval_text.encode("utf-8")
+    byte_count = len(encoded_bytes)
+
+    timestamp = entry.get("timestamp")
+    model_name = message.get("model")
 
     return ParsedMessage(
         uuid=uuid,
         parent_uuid=parent_uuid,
         role=role,
         content=content_text,
+        raw_content=raw_content_str,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        cache_creation_input_tokens=cache_creation_input_tokens,
+        cache_read_input_tokens=cache_read_input_tokens,
+        char_count=char_count,
+        byte_count=byte_count,
+        encoding="utf-8",
         has_tool_use=has_tool_use,
         tool_names=tool_names,
+        timestamp=timestamp,
+        model_name=model_name,
         raw_entry=entry,
     )
 
@@ -379,3 +422,48 @@ def _compute_tool_counts(messages: list[ParsedMessage]) -> dict[str, int]:
         for tool_name in m.tool_names:
             counts[tool_name] = counts.get(tool_name, 0) + 1
     return counts
+
+
+def _extract_tool_executions(messages: list[ParsedMessage]) -> list[dict]:
+    """配對 tool_use 與 tool_result 來產生正規化的 tool_executions 表列"""
+    uses = {}
+    results = {}
+    
+    for m in messages:
+        content = m.raw_entry.get("message", {}).get("content", [])
+        if not isinstance(content, list):
+            continue
+            
+        for block in content:
+            if not isinstance(block, dict):
+                continue
+            
+            b_type = block.get("type")
+            if b_type == "tool_use":
+                tid = block.get("id")
+                if tid:
+                    uses[tid] = {
+                        "message_uuid": m.uuid,
+                        "tool_name": block.get("name", ""),
+                        "input_cmd": json.dumps(block.get("input", {}), ensure_ascii=False)
+                    }
+            elif b_type == "tool_result":
+                tid = block.get("tool_use_id")
+                if tid:
+                    results[tid] = {
+                        "output_log": str(block.get("content", "")),
+                        "is_error": block.get("is_error", False)
+                    }
+                    
+    executions = []
+    for tid, use_info in uses.items():
+        res_info = results.get(tid, {})
+        executions.append({
+            "message_uuid": use_info["message_uuid"],
+            "tool_use_id": tid,
+            "tool_name": use_info["tool_name"],
+            "input_cmd": use_info["input_cmd"],
+            "output_log": res_info.get("output_log"),
+            "is_error": res_info.get("is_error", False),
+        })
+    return executions

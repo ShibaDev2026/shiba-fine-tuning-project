@@ -21,8 +21,18 @@ def _make_session(*user_texts: str) -> ParsedSession:
             parent_uuid=None,
             role="user",
             content=text,
+            raw_content=None,
+            input_tokens=0,
+            output_tokens=0,
+            cache_creation_input_tokens=0,
+            cache_read_input_tokens=0,
+            char_count=len(text),
+            byte_count=len(text.encode("utf-8")),
+            encoding="utf-8",
             has_tool_use=False,
             tool_names=[],
+            timestamp=None,
+            model_name=None,
             raw_entry={},
         )
         for i, text in enumerate(user_texts)
@@ -46,6 +56,7 @@ def _make_session(*user_texts: str) -> ParsedSession:
         commits=0,
         tool_counts={},
         all_messages=msgs,
+        tool_executions=[],
     )
 
 

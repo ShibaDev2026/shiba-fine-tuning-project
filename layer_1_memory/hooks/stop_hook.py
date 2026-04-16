@@ -50,6 +50,7 @@ from lib.db import (
     init_db,
     insert_branch_message,
     insert_message,
+    insert_tool_execution,
     upsert_branch,
     upsert_project,
     upsert_session,
@@ -182,10 +183,34 @@ def sync_session(payload: dict, config: dict) -> None:
                 parent_uuid=msg.parent_uuid,
                 role=msg.role,
                 content=msg.content,
+                raw_content=msg.raw_content,
+                input_tokens=msg.input_tokens,
+                output_tokens=msg.output_tokens,
+                cache_creation_input_tokens=msg.cache_creation_input_tokens,
+                cache_read_input_tokens=msg.cache_read_input_tokens,
+                char_count=msg.char_count,
+                byte_count=msg.byte_count,
+                encoding=msg.encoding,
                 has_tool_use=msg.has_tool_use,
                 tool_names=msg.tool_names,
+                message_time=msg.timestamp,
+                model_name=msg.model_name,
             )
             uuid_to_msg_id[msg.uuid] = msg_id
+
+        # 4.5 寫入抽取出來的 tool_executions
+        for exec_dict in parsed.tool_executions:
+            m_id = uuid_to_msg_id.get(exec_dict["message_uuid"])
+            if m_id:
+                insert_tool_execution(
+                    conn,
+                    message_id=m_id,
+                    tool_use_id=exec_dict["tool_use_id"],
+                    tool_name=exec_dict["tool_name"],
+                    input_cmd=exec_dict["input_cmd"],
+                    output_log=exec_dict["output_log"],
+                    is_error=exec_dict["is_error"],
+                )
 
         # 5. 寫入 branches（先將舊分支設為非活躍）
         deactivate_old_branches(conn, session_id)
