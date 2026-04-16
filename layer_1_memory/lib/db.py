@@ -18,12 +18,16 @@ logger = logging.getLogger(__name__)
 
 # 讀取設定檔（config.yaml 同層上兩層）
 _CONFIG_PATH = Path(__file__).parent.parent / "config.yaml"
+_CONFIG_CACHE: dict | None = None
 
 
 def _load_config() -> dict:
-    """讀取 config.yaml，取得 DB 路徑等設定"""
-    with open(_CONFIG_PATH, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f)
+    """讀取 config.yaml；模組級快取，同 process 只讀檔一次"""
+    global _CONFIG_CACHE
+    if _CONFIG_CACHE is None:
+        with open(_CONFIG_PATH, "r", encoding="utf-8") as f:
+            _CONFIG_CACHE = yaml.safe_load(f)
+    return _CONFIG_CACHE
 
 
 def get_db_path() -> Path:
@@ -49,6 +53,9 @@ def get_connection():
         conn.execute("PRAGMA busy_timeout=5000;")
         conn.execute("PRAGMA foreign_keys=ON;")
         yield conn
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         conn.close()
 
@@ -67,6 +74,48 @@ def compress_text(text: str | None) -> tuple[bytes | str | None, int]:
     if len(encoded) > 1024:
         return zlib.compress(encoded), 1
     return text, 0
+
+
+def decompress_text(blob: bytes | str | None, is_compressed: int) -> str | None:
+    """
+    與 compress_text 對稱的反向還原：
+      - blob 為 None → 回傳 None
+      - is_compressed=1 → 視為 zlib 壓縮 BLOB，解壓後以 utf-8 decode
+      - is_compressed=0 → 視為純文字，若為 bytes 亦嘗試 utf-8 decode
+    """
+    if blob is None:
+        return None
+    if is_compressed:
+        # 若儲存為 TEXT 型別但標示為壓縮（異常情況），先 encode 回 bytes 再解壓
+        raw = blob if isinstance(blob, (bytes, bytearray)) else blob.encode("utf-8")
+        return zlib.decompress(raw).decode("utf-8")
+    return blob if isinstance(blob, str) else blob.decode("utf-8")
+
+
+def fetch_message_raw_content(
+    conn: sqlite3.Connection, message_id: int
+) -> str | None:
+    """讀取 messages.raw_content，自動依 is_compressed 還原為純文字"""
+    row = conn.execute(
+        "SELECT raw_content, is_compressed FROM messages WHERE id = ?",
+        (message_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    return decompress_text(row["raw_content"], row["is_compressed"])
+
+
+def fetch_tool_execution_output(
+    conn: sqlite3.Connection, tool_exec_id: int
+) -> str | None:
+    """讀取 tool_executions.output_log，自動依 is_compressed 還原為純文字"""
+    row = conn.execute(
+        "SELECT output_log, is_compressed FROM tool_executions WHERE id = ?",
+        (tool_exec_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    return decompress_text(row["output_log"], row["is_compressed"])
 
 
 def init_db() -> None:
@@ -139,7 +188,6 @@ def upsert_project(conn: sqlite3.Connection, name: str, path: str, hash_: str) -
         "INSERT INTO projects (name, path, hash) VALUES (?, ?, ?)",
         (name, path, hash_),
     )
-    conn.commit()
     return cur.lastrowid
 
 
@@ -168,7 +216,6 @@ def upsert_session(
            VALUES (?, ?, COALESCE(?, datetime('now')))""",
         (project_id, uuid, started_at),
     )
-    conn.commit()
     return cur.lastrowid
 
 
@@ -202,7 +249,6 @@ def update_session_stats(
             session_id,
         ),
     )
-    conn.commit()
 
 
 # ============================================================
@@ -241,7 +287,6 @@ def upsert_branch(
                 row["id"],
             ),
         )
-        conn.commit()
         return row["id"]
 
     cur = conn.execute(
@@ -259,7 +304,6 @@ def upsert_branch(
             commits,
         ),
     )
-    conn.commit()
     return cur.lastrowid
 
 
@@ -269,7 +313,6 @@ def deactivate_old_branches(conn: sqlite3.Connection, session_id: int) -> None:
         "UPDATE branches SET is_active = 0 WHERE session_id = ?",
         (session_id,),
     )
-    conn.commit()
 
 
 # ============================================================
@@ -332,7 +375,6 @@ def insert_message(
             model_name,
         ),
     )
-    conn.commit()
     return cur.lastrowid
 
 
@@ -345,7 +387,6 @@ def insert_branch_message(
            VALUES (?, ?, ?)""",
         (branch_id, message_id, seq),
     )
-    conn.commit()
 
 
 def insert_tool_execution(
@@ -375,9 +416,7 @@ def insert_tool_execution(
             duration_ms,
         ),
     )
-    conn.commit()
     return cur.lastrowid
-
 
 
 # ============================================================
@@ -414,4 +453,3 @@ def upsert_sessions_fts(
             ended_at,
         ),
     )
-    conn.commit()

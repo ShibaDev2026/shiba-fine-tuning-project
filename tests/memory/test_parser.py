@@ -162,3 +162,75 @@ def test_parse_extracts_tokens_and_sizes(tmp_path):
     assert msg.char_count > 0
     assert msg.byte_count >= msg.char_count
     assert msg.encoding == "utf-8"
+
+
+def test_active_branch_picks_latest_leaf(tmp_path):
+    """
+    rewind 情境驗證：
+      - branch A 較長但 leaf timestamp 較早（舊對話）
+      - branch B 較短但 leaf timestamp 較新（rewind 後新對話）
+    新邏輯應以 leaf timestamp 判定 active，B 才是 active branch。
+    """
+    sid = "aaaaaaaa-0000-0000-0000-000000000099"
+    jsonl = tmp_path / f"{sid}.jsonl"
+    _write_jsonl(jsonl, [
+        # 共同根
+        {
+            "type": "user", "uuid": "u1", "parentUuid": None,
+            "timestamp": "2026-04-15T10:00:00Z",
+            "message": {"role": "user", "content": "起始問題"},
+            "sessionId": sid,
+        },
+        {
+            "type": "assistant", "uuid": "a1", "parentUuid": "u1",
+            "timestamp": "2026-04-15T10:00:05Z",
+            "message": {"role": "assistant", "content": [{"type": "text", "text": "初始回應"}]},
+            "sessionId": sid,
+        },
+        {
+            "type": "user", "uuid": "u2", "parentUuid": "a1",
+            "timestamp": "2026-04-15T10:00:10Z",
+            "message": {"role": "user", "content": "分叉前最後訊息"},
+            "sessionId": sid,
+        },
+        # === Branch A：較長但較舊 ===
+        {
+            "type": "assistant", "uuid": "a_old_1", "parentUuid": "u2",
+            "timestamp": "2026-04-15T10:00:15Z",
+            "message": {"role": "assistant", "content": [{"type": "text", "text": "舊路徑回應 1"}]},
+            "sessionId": sid,
+        },
+        {
+            "type": "user", "uuid": "u_old_2", "parentUuid": "a_old_1",
+            "timestamp": "2026-04-15T10:00:20Z",
+            "message": {"role": "user", "content": "舊路徑追問"},
+            "sessionId": sid,
+        },
+        {
+            "type": "assistant", "uuid": "a_old_leaf", "parentUuid": "u_old_2",
+            "timestamp": "2026-04-15T10:00:25Z",  # 舊 leaf
+            "message": {"role": "assistant", "content": [{"type": "text", "text": "舊路徑回應 2"}]},
+            "sessionId": sid,
+        },
+        # === Branch B：較短但較新（rewind 後產生）===
+        {
+            "type": "assistant", "uuid": "a_new_leaf", "parentUuid": "u2",
+            "timestamp": "2026-04-15T11:00:00Z",  # 新 leaf，明顯比 A 晚
+            "message": {"role": "assistant", "content": [{"type": "text", "text": "新路徑回應"}]},
+            "sessionId": sid,
+        },
+    ])
+
+    result = parse_jsonl(jsonl)
+    assert result is not None
+    assert len(result.branches) == 2
+
+    active = next((b for b in result.branches if b.is_active), None)
+    assert active is not None
+    assert active.leaf_uuid == "a_new_leaf", \
+        f"預期較新的短分支被標為 active，實際 leaf={active.leaf_uuid}"
+
+    # 反向確認：較長的舊分支必須是 inactive
+    inactive = [b for b in result.branches if not b.is_active]
+    assert len(inactive) == 1
+    assert inactive[0].leaf_uuid == "a_old_leaf"

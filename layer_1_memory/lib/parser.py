@@ -281,8 +281,14 @@ def _build_branches(messages: list[ParsedMessage]) -> list[ParsedBranch]:
             seen_paths.add(key)
             unique_paths.append(path)
 
-    # 最長路徑（最多訊息）的分支視為 active
-    unique_paths.sort(key=len, reverse=True)
+    # 以 leaf 訊息的 timestamp 判斷最新分支為 active；
+    # timestamp 相同時以路徑長度 tiebreaker（避免 rewind 後新短分支被舊長分支覆蓋）
+    def _leaf_sort_key(path: list[str]) -> tuple[str, int]:
+        leaf_msg = by_uuid.get(path[-1]) if path else None
+        leaf_ts = leaf_msg.timestamp if leaf_msg and leaf_msg.timestamp else ""
+        return (leaf_ts, len(path))
+
+    unique_paths.sort(key=_leaf_sort_key, reverse=True)
 
     result: list[ParsedBranch] = []
     for idx, path in enumerate(unique_paths):

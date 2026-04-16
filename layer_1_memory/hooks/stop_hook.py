@@ -251,6 +251,9 @@ def sync_session(payload: dict, config: dict) -> None:
             ended_at=now,
         )
 
+        # 全部寫入無誤後才 commit（與 get_connection rollback 形成完整事務）
+        conn.commit()
+
     logger.info("session 同步完成：%s", session_uuid)
 
 

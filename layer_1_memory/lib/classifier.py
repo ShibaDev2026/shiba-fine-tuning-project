@@ -164,12 +164,8 @@ def _collect_text(session: "ParsedSession") -> str:
 
 
 def _matches_keywords(text: str, keywords: list[str]) -> bool:
-    """檢查文字是否包含任一關鍵字（不區分大小寫）"""
-    text_lower = text.lower()
-    for kw in keywords:
-        if kw.lower() in text_lower:
-            return True
-    return False
+    """檢查文字是否包含任一關鍵字（呼叫方須先 lower）"""
+    return any(kw in text for kw in keywords)
 
 
 def _has_git_bash(session: "ParsedSession") -> bool:

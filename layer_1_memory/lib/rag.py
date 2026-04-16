@@ -8,7 +8,7 @@ rag.py — FTS5 全文索引檢索 + RAG 注入
 
 import logging
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 import yaml
@@ -202,7 +202,7 @@ def _update_access_stats(sessions: list[dict]) -> None:
         return
 
     uuids = [s["session_uuid"] for s in sessions]
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
 
     try:
         with get_connection() as conn:
