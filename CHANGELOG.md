@@ -3,6 +3,27 @@
 所有版本變更依照 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/) 格式記錄。
 版本號遵循 [Semantic Versioning](https://semver.org/lang/zh-TW/)。
 
+## [0.4.0] - 2026-04-19
+
+### Added
+
+- **Layer 3 Fine-tuning Pipeline** 全自動化
+  - `layer_3_pipeline/db.py`：`finetune_runs` 表 CRUD
+  - `layer_3_pipeline/mlx_trainer.py`：呼叫 `mlx_lm.lora` 執行 LoRA 訓練
+  - `layer_3_pipeline/gguf_converter.py`：`mlx_lm.fuse` + `convert_hf_to_gguf.py` 轉換 GGUF
+  - `layer_3_pipeline/ollama_updater.py`：`ollama create` 更新本地模型
+  - `layer_3_pipeline/runner.py`：主協調器，approved≥30 自動觸發完整 pipeline
+  - `layer_2_chamber/backend/api/routes_finetune.py`：手動觸發 API（POST /trigger/{block}、GET /runs）
+  - `background.py` 新增 `finetune_check` 排程（每 6 小時）
+  - `~/.local-brain/schema_layer3.sql`：`finetune_runs` 表定義
+  - 11 個單元測試，全數通過
+
+### Fixed
+
+- `stop_hook.py`：新增 session 層級 embedding 補捕，預期 capture 率大幅提升（原 4/15 sessions）
+- `rag.py`：cosine similarity 門檻 0.5 → 0.35，提高 RAG 召回率
+- `teacher_service.py`：Gemini REST 加 `responseMimeType: application/json`，修復評分 JSON 解析錯誤
+
 ## [0.1.0] - 2026-04-17
 
 ### Added
