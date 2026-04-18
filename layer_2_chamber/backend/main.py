@@ -27,6 +27,7 @@ from fastapi import FastAPI
 from .api.routes_dashboard import router as dashboard_router
 from .api.routes_dataset import router as dataset_router
 from .api.routes_mcp import router as mcp_router
+from .api.routes_finetune import router as finetune_router
 from .core.background import setup_scheduler
 from .core.config import DB_PATH, init_layer2_db
 
@@ -71,6 +72,7 @@ app = FastAPI(
 app.include_router(dashboard_router)
 app.include_router(dataset_router)
 app.include_router(mcp_router)
+app.include_router(finetune_router)
 
 
 @app.get("/health")

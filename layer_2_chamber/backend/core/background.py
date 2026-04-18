@@ -127,6 +127,13 @@ def setup_scheduler(app, conn_factory):
         id="cold_compress", replace_existing=True,
     )
 
+    # 每 6 小時檢查是否達 fine-tune 門檻
+    scheduler.add_job(
+        lambda: _run_finetune_check(conn_factory),
+        trigger="interval", hours=6,
+        id="finetune_check", replace_existing=True,
+    )
+
     return scheduler
 
 
@@ -149,3 +156,17 @@ def _run_paraphrase_job(conn_factory) -> None:
     from ..services.paraphrase_service import paraphrase_sparse_instructions
     stats = paraphrase_sparse_instructions(conn_factory)
     logger.info("同義說法補充完成：%s", stats)
+
+
+def _run_finetune_check(conn_factory) -> None:
+    from layer_3_pipeline.runner import run_finetune_if_ready
+    for block in (1, 2):
+        conn = conn_factory()
+        try:
+            result = run_finetune_if_ready(conn, adapter_block=block)
+            if result:
+                logger.info("fine-tune 排程完成 block%d：%s", block, result)
+        except Exception as e:
+            logger.error("fine-tune 排程失敗 block%d：%s", block, e)
+        finally:
+            conn.close()
