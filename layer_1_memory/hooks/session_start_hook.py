@@ -45,6 +45,9 @@ from pathlib import Path
 _HOOK_DIR = Path(__file__).parent
 _LAYER1_DIR = _HOOK_DIR.parent
 sys.path.insert(0, str(_LAYER1_DIR))
+# 加入專案根目錄（layer_0_router 所在位置）
+_PROJECT_DIR = _LAYER1_DIR.parent
+sys.path.insert(0, str(_PROJECT_DIR))
 
 import yaml
 from lib.db import init_db
@@ -156,21 +159,39 @@ def main() -> None:
             token_budget=token_budget,
         )
 
+        # 嘗試 Layer 0 路由（Ollama 離線時靜默跳過）
+        router_context = None
+        try:
+            from layer_0_router.router import route
+            router_context = route(prompt=query, rag_context=memory_context or "")
+        except Exception as e:
+            logger.warning("Layer 0 router 失敗，跳過：%s", e)
+
+        # 合併 router 建議 + RAG 記憶
+        parts = []
+        if router_context:
+            parts.append(router_context)
         if memory_context:
+            parts.append(memory_context)
+
+        combined_context = "\n\n".join(parts) if parts else ""
+
+        if combined_context:
             logger.info(
-                "RAG 注入 %d 字元（session=%s）",
-                len(memory_context),
+                "context 注入 %d 字元（session=%s，router=%s）",
+                len(combined_context),
                 payload.get("session_id", ""),
+                "local" if router_context else "rag-only",
             )
             output = {
                 "hookSpecificOutput": {
                     "hookEventName": "UserPromptSubmit",
-                    "additionalContext": memory_context,
+                    "additionalContext": combined_context,
                 }
             }
             print(json.dumps(output, ensure_ascii=False))
         else:
-            logger.debug("RAG 無相關記憶，輸出空物件")
+            logger.debug("無 context，輸出空物件")
             print(empty_output)
 
     except json.JSONDecodeError as e:
