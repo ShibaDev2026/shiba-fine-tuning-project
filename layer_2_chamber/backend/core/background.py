@@ -92,24 +92,24 @@ def setup_scheduler(app, conn_factory):
 
     scheduler = AsyncIOScheduler()
 
-    # 每小時抽取新樣本
+    # 每 15 分鐘抽取新樣本
     scheduler.add_job(
         lambda: _run_extraction_job(conn_factory),
-        trigger="interval", hours=1,
+        trigger="interval", minutes=15,
         id="extraction", replace_existing=True,
     )
 
-    # 每 30 分鐘批次精煉 raw 樣本
+    # 每 10 分鐘批次精煉 raw 樣本
     scheduler.add_job(
         lambda: _run_refiner_job(conn_factory),
-        trigger="interval", minutes=30,
+        trigger="interval", minutes=10,
         id="refiner", replace_existing=True,
     )
 
-    # 每 6 小時批次評分
+    # 每小時批次評分
     scheduler.add_job(
         lambda: score_pending_samples(conn_factory),
-        trigger="interval", hours=6,
+        trigger="interval", hours=1,
         id="scoring", replace_existing=True,
     )
 
