@@ -120,11 +120,14 @@ def _seed_tool_execution(
     tool_use_id: str,
     tool_name: str,
     is_error: int = 0,
+    input_cmd: str | None = None,
 ) -> int:
+    if input_cmd is None:
+        input_cmd = json.dumps({"command": "git commit -m 'test'"}) if tool_name == "Bash" else json.dumps({"file_path": "/test/file.py"})
     cur = conn.execute(
-        """INSERT INTO tool_executions (message_id, tool_use_id, tool_name, is_error)
-           VALUES (?, ?, ?, ?)""",
-        (message_id, tool_use_id, tool_name, is_error),
+        """INSERT INTO tool_executions (message_id, tool_use_id, tool_name, input_cmd, is_error)
+           VALUES (?, ?, ?, ?, ?)""",
+        (message_id, tool_use_id, tool_name, input_cmd, is_error),
     )
     conn.commit()
     return cur.lastrowid
@@ -190,13 +193,14 @@ class TestPathA:
         m2 = _seed_message(conn, sid, "m2", "assistant", "好的，執行 git commit -m 'fix: ...'", has_tool_use=1, tool_names=["Bash"])
         _seed_branch_message(conn, bid, m1, 1)
         _seed_branch_message(conn, bid, m2, 2)
+        _seed_tool_execution(conn, m2, "tool-git-001", "Bash")
 
         stats = run_extraction(conn)
         assert stats["path_a"] == 1
         row = conn.execute("SELECT * FROM training_samples WHERE source='layer1_bridge'").fetchone()
         assert row["event_type"] == "git_ops"
         assert row["adapter_block"] == 1
-        assert row["status"] == "pending"
+        assert row["status"] == "raw"
 
     def test_non_bridge_event_type_skipped(self, tmp_path):
         """knowledge_qa session 不符合路徑 A 橋接條件"""
@@ -246,6 +250,7 @@ class TestPathA:
         m2 = _seed_message(conn, sid, "m2", "assistant", "完成，這是程式碼...", has_tool_use=1)
         _seed_branch_message(conn, bid, m1, 1)
         _seed_branch_message(conn, bid, m2, 2)
+        _seed_tool_execution(conn, m2, "tool-code-001", "Bash")
 
         stats = run_extraction(conn)
         assert stats["path_a"] == 1
@@ -271,7 +276,7 @@ class TestPathB:
         assert stats["path_b"] == 1
         row = conn.execute("SELECT * FROM training_samples WHERE source='error_repair'").fetchone()
         assert "Bash" in row["instruction"]
-        assert row["status"] == "pending"
+        assert row["status"] == "raw"
 
     def test_no_repair_response_skipped(self, tmp_path):
         """tool error 後沒有 assistant 修復回覆 → 不抽取"""
@@ -316,6 +321,7 @@ class TestDeduplication:
         m2 = _seed_message(conn, sid, "m2", "assistant", "完成", has_tool_use=1)
         _seed_branch_message(conn, bid, m1, 1)
         _seed_branch_message(conn, bid, m2, 2)
+        _seed_tool_execution(conn, m2, "tool-dup-001", "Bash")
 
         stats1 = run_extraction(conn)
         stats2 = run_extraction(conn)

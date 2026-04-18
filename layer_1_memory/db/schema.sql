@@ -146,13 +146,14 @@ CREATE INDEX IF NOT EXISTS idx_tool_executions_err ON tool_executions(tool_name,
 
 -- 因果對 embedding：user 說的話（因）→ 實際執行指令（果）
 CREATE TABLE IF NOT EXISTS exchange_embeddings (
-    id           INTEGER PRIMARY KEY AUTOINCREMENT,
-    session_uuid TEXT NOT NULL,
-    instruction  TEXT NOT NULL,   -- user 的原始說法（因）
-    commands     TEXT NOT NULL,   -- 實際執行的 bash/git 指令（果）
-    embedding    BLOB NOT NULL,   -- instruction 的 JSON float array 向量
-    model        TEXT NOT NULL DEFAULT 'nomic-embed-text',
-    created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_uuid       TEXT NOT NULL,
+    instruction        TEXT NOT NULL,   -- user 的原始說法（因）
+    source_instruction TEXT,            -- NULL=原始；非 NULL=paraphrase 來源，防止二次展開
+    commands           TEXT NOT NULL,   -- 實際執行的 bash/git 指令（果）
+    embedding          BLOB NOT NULL,   -- instruction 的 JSON float array 向量
+    model              TEXT NOT NULL DEFAULT 'nomic-embed-text',
+    created_at         TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_exchange_embeddings_session ON exchange_embeddings(session_uuid);
