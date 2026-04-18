@@ -165,8 +165,84 @@ def init_db() -> None:
                 conn.execute(f"ALTER TABLE messages ADD COLUMN {col_name} {col_def};")
                 logger.info("Migration: messages 表新增欄位 %s", col_name)
 
+        # Migration: sessions_fts 升級為 trigram tokenizer（改善中文子字串召回）
+        fts_row = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='sessions_fts'"
+        ).fetchone()
+        if fts_row and "trigram" not in (fts_row["sql"] or "").lower():
+            existing = conn.execute("SELECT * FROM sessions_fts").fetchall()
+            conn.execute("DROP TABLE sessions_fts")
+            conn.execute("""
+                CREATE VIRTUAL TABLE sessions_fts USING fts5(
+                    session_uuid, project_path, event_types,
+                    content_summary, files_list, ended_at,
+                    tokenize="trigram"
+                )
+            """)
+            for r in existing:
+                conn.execute(
+                    "INSERT INTO sessions_fts VALUES (?, ?, ?, ?, ?, ?)",
+                    (r["session_uuid"], r["project_path"], r["event_types"],
+                     r["content_summary"], r["files_list"], r["ended_at"]),
+                )
+            logger.info(
+                "Migration: sessions_fts 升級為 trigram tokenizer，重建 %d 筆", len(existing)
+            )
+
+        # Migration: exchange_embeddings 表（語意向量召回）
+        if not _table_exists(conn, "exchange_embeddings"):
+            conn.execute("""
+                CREATE TABLE exchange_embeddings (
+                    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_uuid       TEXT NOT NULL,
+                    instruction        TEXT NOT NULL,
+                    source_instruction TEXT,              -- NULL 表示原始，非 NULL 表示 paraphrase 的來源
+                    commands           TEXT NOT NULL,
+                    embedding          BLOB NOT NULL,
+                    model              TEXT NOT NULL DEFAULT 'nomic-embed-text',
+                    created_at         TEXT NOT NULL DEFAULT (datetime('now'))
+                )
+            """)
+            conn.execute(
+                "CREATE INDEX idx_exchange_embeddings_session ON exchange_embeddings(session_uuid)"
+            )
+            logger.info("Migration: 建立 exchange_embeddings 表")
+        else:
+            # Migration: 補充 source_instruction 欄位（舊資料升級）
+            cols = [r[1] for r in conn.execute("PRAGMA table_info(exchange_embeddings)").fetchall()]
+            if "source_instruction" not in cols:
+                conn.execute("ALTER TABLE exchange_embeddings ADD COLUMN source_instruction TEXT")
+                logger.info("Migration: exchange_embeddings 新增 source_instruction 欄位")
+
         conn.commit()
         logger.info("DB 初始化完成：%s", get_db_path())
+
+
+def upsert_exchange_embedding(
+    session_uuid: str,
+    instruction: str,
+    commands: str,
+    embedding: list[float],
+    model: str = "nomic-embed-text",
+    source_instruction: str | None = None,
+) -> None:
+    """寫入因果對 embedding。source_instruction=None 表示原始，否則為 paraphrase。"""
+    import json
+    with get_connection() as conn:
+        conn.execute(
+            """INSERT INTO exchange_embeddings
+               (session_uuid, instruction, source_instruction, commands, embedding, model)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (session_uuid, instruction, source_instruction, commands, json.dumps(embedding), model),
+        )
+        conn.commit()
+
+
+def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
+    row = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table,)
+    ).fetchone()
+    return row is not None
 
 
 # ============================================================

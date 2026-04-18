@@ -254,7 +254,83 @@ def sync_session(payload: dict, config: dict) -> None:
         # 全部寫入無誤後才 commit（與 get_connection rollback 形成完整事務）
         conn.commit()
 
+    # 8. 生成因果對 embedding（事務外執行，Ollama 離線不影響主流程）
+    _write_exchange_embeddings(session_uuid, parsed, active_branch)
+
     logger.info("session 同步完成：%s", session_uuid)
+
+
+def _write_exchange_embeddings(session_uuid: str, parsed, active_branch) -> None:
+    """
+    從 active_branch 抽取因果對（user 說的話 → 實際執行的 bash/git 指令），
+    生成 embedding 並寫入 exchange_embeddings。
+    Ollama 離線時靜默跳過。
+    """
+    try:
+        import sys
+        sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+        from layer_1_memory.lib.embedder import get_embedding
+        from layer_1_memory.lib.db import upsert_exchange_embedding
+    except ImportError:
+        return
+
+    if not active_branch:
+        return
+
+    # 建立 message_uuid → tool input_cmd 的查找表
+    exec_by_msg: dict[str, list[str]] = {}
+    for ex in parsed.tool_executions:
+        if ex["tool_name"] not in ("Bash", "Edit", "Write"):
+            continue
+        raw = ex.get("input_cmd") or ""
+        # input_cmd 為 JSON，取出實際指令字串
+        try:
+            import json as _json
+            parsed_cmd = _json.loads(raw)
+            if isinstance(parsed_cmd, dict):
+                cmd = parsed_cmd.get("command") or parsed_cmd.get("file_path") or str(parsed_cmd)
+            else:
+                cmd = str(parsed_cmd)
+        except Exception:
+            cmd = raw
+        cmd = cmd.strip()[:200]
+        if cmd:
+            exec_by_msg.setdefault(ex["message_uuid"], []).append(cmd)
+
+    # 收集 user message → 後續實際指令的因果對
+    messages = active_branch.messages
+    for i, msg in enumerate(messages):
+        if msg.role != "user" or not msg.content:
+            continue
+
+        # 收集此 user message 之後的 assistant 實際執行指令
+        commands: list[str] = []
+        for j in range(i + 1, len(messages)):
+            next_msg = messages[j]
+            if next_msg.role == "user":
+                break
+            cmds = exec_by_msg.get(next_msg.uuid, [])
+            commands.extend(cmds)
+
+        if not commands:
+            continue
+
+        instruction = msg.content[:300].strip()
+        cmd_str = "\n".join(commands[:5])  # 最多 5 條指令，避免過長
+
+        vec = get_embedding(instruction)
+        if vec is None:
+            continue  # Ollama 離線，跳過
+
+        try:
+            upsert_exchange_embedding(
+                session_uuid=session_uuid,
+                instruction=instruction,
+                commands=cmd_str,
+                embedding=vec,
+            )
+        except Exception:
+            pass
 
 
 def _build_fts_summary(parsed, active_branch, event_types: list[str] | None = None) -> str:

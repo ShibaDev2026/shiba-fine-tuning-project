@@ -1,11 +1,12 @@
 """
-rag.py — FTS5 全文索引檢索 + RAG 注入
+rag.py — 語意向量 + FTS5 雙路召回 RAG 注入
 功能：
-1. 根據 query 從 sessions_fts 檢索相關歷史 session（top-N）
-2. 依 token 預算截斷（≤500 token）
+1. 嘗試向量召回 exchange_embeddings（語意匹配因果對）
+2. 若 Ollama 不可用或無資料，fallback FTS5 sessions_fts
 3. 輸出 Claude Code hookSpecificOutput 格式的 Markdown 字串
 """
 
+import json
 import logging
 import sqlite3
 from datetime import datetime, timezone
@@ -14,6 +15,7 @@ from pathlib import Path
 import yaml
 
 from .db import get_connection
+from .embedder import get_embedding, cosine_similarity
 
 logger = logging.getLogger(__name__)
 
@@ -141,9 +143,14 @@ def get_rag_context(
 ) -> str:
     """
     主要入口：一站式取得 RAG 注入字串。
-    供 session_start_hook.py 呼叫。
-    回傳空字串代表無相關記憶或 DB 尚未初始化。
+    優先向量召回 exchange_embeddings；Ollama 不可用時 fallback FTS5。
     """
+    # 嘗試語意向量召回
+    vector_results = _vector_search(query, top_n=top_n)
+    if vector_results:
+        return _build_exchange_context(vector_results, token_budget=token_budget)
+
+    # Fallback：FTS5 關鍵字召回
     sessions = retrieve_relevant_sessions(
         query=query,
         project_path=project_path,
@@ -151,8 +158,73 @@ def get_rag_context(
     )
     if not sessions:
         return ""
-
     return build_rag_output(sessions, token_budget=token_budget)
+
+
+def _vector_search(query: str, top_n: int = 3) -> list[dict]:
+    """
+    向量召回：取得 query embedding → cosine similarity 掃描 exchange_embeddings。
+    Ollama 不可用或表為空時回傳空 list。
+    """
+    query_vec = get_embedding(query)
+    if query_vec is None:
+        return []
+
+    try:
+        with get_connection() as conn:
+            # 過濾高發散 instruction：
+            # 同一句話（instruction）衍生出 3 種以上不同 commands，
+            # 代表它無法單一指向特定操作（例如「好」「ok」「繼續」），
+            # 召回這類結果反而會引入雜訊，故自動排除。
+            # 閾值 3 = 允許一句話對應最多 2 種合理變體（如 git add + git commit）
+            rows = conn.execute("""
+                SELECT session_uuid, instruction, commands, embedding
+                FROM exchange_embeddings
+                WHERE instruction IN (
+                    SELECT instruction
+                    FROM exchange_embeddings
+                    GROUP BY instruction
+                    HAVING count(DISTINCT commands) < 3
+                )
+            """).fetchall()
+    except sqlite3.OperationalError:
+        return []
+
+    if not rows:
+        return []
+
+    scored = []
+    for row in rows:
+        try:
+            vec = json.loads(row["embedding"])
+            score = cosine_similarity(query_vec, vec)
+            scored.append({
+                "session_uuid": row["session_uuid"],
+                "instruction": row["instruction"],
+                "commands": row["commands"],
+                "score": score,
+            })
+        except Exception:
+            continue
+
+    scored.sort(key=lambda x: x["score"], reverse=True)
+    # 只回傳相似度 > 0.5 的結果
+    return [r for r in scored[:top_n] if r["score"] > 0.5]
+
+
+def _build_exchange_context(exchanges: list[dict], token_budget: int = 500) -> str:
+    """將因果對格式化為 RAG 注入字串"""
+    char_budget = token_budget * _CHARS_PER_TOKEN
+    header = "## 相關歷史記憶（top {}）\n".format(len(exchanges))
+    body = ""
+    for ex in exchanges:
+        section = "### 問題：{}\n指令：{}\n".format(
+            ex["instruction"].strip(), ex["commands"].strip()
+        )
+        if len(header) + len(body) + len(section) > char_budget:
+            break
+        body += section
+    return header + body if body else ""
 
 
 # ============================================================
@@ -174,8 +246,8 @@ def _sanitize_fts_query(query: str) -> str:
     # 取前 200 字元，避免超長 query
     sanitized = sanitized[:200].strip()
 
-    # 若剩餘內容太短則放棄
-    if len(sanitized) < 2:
+    # trigram 最少需 3 字元才能命中索引
+    if len(sanitized) < 3:
         return ""
 
     return sanitized

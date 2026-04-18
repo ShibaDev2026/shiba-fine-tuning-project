@@ -47,8 +47,11 @@ CREATE TABLE IF NOT EXISTS training_samples (
     output          TEXT NOT NULL,                -- Alpaca output 欄位
     score           REAL,                         -- Teacher 評分 0-10
     score_reason    TEXT,                         -- 評分理由
-    status          TEXT NOT NULL DEFAULT 'pending'
-                        CHECK(status IN ('pending','approved','rejected','needs_review')),
+    refined_instruction TEXT,                        -- Qwen 改寫後的自包含版本
+    expected_answer TEXT,                            -- Qwen 草擬的預期答案（供 Teacher 參考）
+    pii_scrubbed    INTEGER NOT NULL DEFAULT 0,      -- 1=已過 PII scrub
+    status          TEXT NOT NULL DEFAULT 'raw'
+                        CHECK(status IN ('raw','pending','approved','rejected','needs_review')),
     adapter_block   INTEGER,                      -- 1 或 2，對應 LoRA block
     created_at      TEXT NOT NULL DEFAULT (datetime('now')),
     reviewed_at     TEXT

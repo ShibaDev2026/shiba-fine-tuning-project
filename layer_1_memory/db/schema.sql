@@ -120,7 +120,8 @@ CREATE VIRTUAL TABLE IF NOT EXISTS sessions_fts USING fts5(
     event_types,        -- 事件分類（空格分隔）
     content_summary,    -- 可檢索的內容摘要（message content 精簡版）
     files_list,         -- 修改的檔案清單
-    ended_at            -- session 結束時間（排序用）
+    ended_at,           -- session 結束時間（排序用）
+    tokenize="trigram"  -- 支援中文子字串匹配（3字元滑動視窗）
 );
 
 -- ============================================================
@@ -138,3 +139,20 @@ CREATE INDEX IF NOT EXISTS idx_projects_hash      ON projects(hash);
 
 CREATE INDEX IF NOT EXISTS idx_tool_executions_msg ON tool_executions(message_id);
 CREATE INDEX IF NOT EXISTS idx_tool_executions_err ON tool_executions(tool_name, is_error);
+
+-- ============================================================
+-- Embedding 表：語意向量召回（Layer 1 升級）
+-- ============================================================
+
+-- 因果對 embedding：user 說的話（因）→ 實際執行指令（果）
+CREATE TABLE IF NOT EXISTS exchange_embeddings (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_uuid TEXT NOT NULL,
+    instruction  TEXT NOT NULL,   -- user 的原始說法（因）
+    commands     TEXT NOT NULL,   -- 實際執行的 bash/git 指令（果）
+    embedding    BLOB NOT NULL,   -- instruction 的 JSON float array 向量
+    model        TEXT NOT NULL DEFAULT 'nomic-embed-text',
+    created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_exchange_embeddings_session ON exchange_embeddings(session_uuid);
