@@ -3,6 +3,17 @@
 所有版本變更依照 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/) 格式記錄。
 版本號遵循 [Semantic Versioning](https://semver.org/lang/zh-TW/)。
 
+## [0.5.0] - 2026-04-19
+
+### Added
+
+- **Layer 0 路由層**
+  - `layer_0_router/classifier.py`：Gemma E2B（gemma3:2b）分類任務 local/claude，ROUTER_TIMEOUT=30s（含 model swap）
+  - `layer_0_router/compressor.py`：Gemma E4B（gemma3:4b）壓縮長 RAG context
+  - `layer_0_router/router.py`：主協調器，local → compress → Qwen → 注入 🤖 建議；任何失敗靜默 fallback
+  - `session_start_hook.py` 整合：router 結果 + RAG context 合併注入
+  - 9 個單元測試，全數通過
+
 ## [0.4.0] - 2026-04-19
 
 ### Added
