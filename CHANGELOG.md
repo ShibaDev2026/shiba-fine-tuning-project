@@ -3,6 +3,33 @@
 所有版本變更依照 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/) 格式記錄。
 版本號遵循 [Semantic Versioning](https://semver.org/lang/zh-TW/)。
 
+## [0.6.0] - 2026-04-20
+
+### Added
+
+- **P0-1 Router Telemetry**（採納率追蹤）
+  - `layer_0_router/telemetry.py`：`record_decision` / `update_acceptance` / `infer_acceptance_from_text` / `sync_sample_weights`
+  - `router_decisions` 表（schema_layer3.sql migration）
+  - `router.py` 加 telemetry 寫入與計時，`session_start_hook` 傳入 `session_id`
+  - `stop_hook` 新增 `_infer_router_acceptance()`：對話結束後自動語意比對採納狀態
+
+- **P0-2 Shadow Gate**（A/B 上線守門員）
+  - `layer_3_pipeline/gatekeeper.py`：本地 Qwen 自評零成本，bootstrap 95% CI + latency ratio 三條件
+  - `runner.py` 在 `push_to_ollama` 前插入 gate，未通過回傳 `gate_rejected`
+
+- **P1-1 動態訓練觸發**（取代固定 approved≥30）
+  - `layer_3_pipeline/trigger_policy.py`：Ebbinghaus 壁鐘間隔 / 採納退化 / embedding 分布偏移 三信號
+  - `runner.py` 改用 `should_trigger()` 決定是否訓練
+
+- **P1-2 多 Judge 投票**（SEAL ReSTEM^EM 精神）
+  - `layer_2_chamber/backend/services/multi_judge.py`：三方投票，3票=1.0 / 2票=soft 0.5 / ≤1票=rejected / Shiba採納覆蓋
+  - `background.py` 評分排程改用 `multi_judge_score`
+
+- **P1-3 隱性標籤 weight**
+  - `training_samples.weight` 欄位（migration, DEFAULT 1.0）
+  - `sync_sample_weights`：stop_hook 採納後自動同步 weight（1.0/1.5/2.0）
+  - `dataset_formatter.py`：Ebbinghaus 分桶 replay + weight 展開（soft 0.5/正常/×2/×3）
+
 ## [0.5.0] - 2026-04-19
 
 ### Added

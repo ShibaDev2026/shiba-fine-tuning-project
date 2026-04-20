@@ -20,14 +20,13 @@ def score_pending_samples(conn_factory) -> dict:
     批次評分所有 pending 樣本，每次最多處理 20 筆（避免 API 配額爆掉）。
     conn_factory：呼叫後回傳 sqlite3.Connection
     """
-    from ..extraction.pipeline import run_extraction
-    from ..services.teacher_service import score_sample
+    from ..services.multi_judge import multi_judge_score
 
     conn = conn_factory()
     try:
         # COALESCE：優先用 Qwen 改寫版本，fallback 原始 instruction
         rows = conn.execute(
-            """SELECT id,
+            """SELECT id, session_id,
                       COALESCE(refined_instruction, instruction) AS instruction,
                       input, output
                FROM training_samples WHERE status = 'pending'
@@ -36,15 +35,16 @@ def score_pending_samples(conn_factory) -> dict:
 
         results = {"scored": 0, "failed": 0}
         for row in rows:
-            result = score_sample(
-                conn, row["id"], row["instruction"], row["input"] or "", row["output"]
+            result = multi_judge_score(
+                conn, row["id"], row["instruction"], row["input"] or "", row["output"],
+                session_id=row["session_id"],
             )
             if result["score"] is not None:
                 results["scored"] += 1
             else:
                 results["failed"] += 1
 
-        logger.info("批次評分完成：%s", results)
+        logger.info("批次評分完成（multi_judge）：%s", results)
         return results
     finally:
         conn.close()

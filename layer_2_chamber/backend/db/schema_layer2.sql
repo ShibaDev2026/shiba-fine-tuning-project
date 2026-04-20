@@ -53,6 +53,7 @@ CREATE TABLE IF NOT EXISTS training_samples (
     status          TEXT NOT NULL DEFAULT 'raw'
                         CHECK(status IN ('raw','pending','approved','rejected','needs_review')),
     adapter_block   INTEGER,                      -- 1 或 2，對應 LoRA block
+    weight          REAL NOT NULL DEFAULT 1.0,    -- P1-3 隱性標籤權重（1.0/1.5/2.0）
     created_at      TEXT NOT NULL DEFAULT (datetime('now')),
     reviewed_at     TEXT
 );

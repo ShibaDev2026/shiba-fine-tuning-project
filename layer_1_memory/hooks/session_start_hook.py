@@ -163,7 +163,11 @@ def main() -> None:
         router_context = None
         try:
             from layer_0_router.router import route
-            router_context = route(prompt=query, rag_context=memory_context or "")
+            router_context = route(
+                prompt=query,
+                rag_context=memory_context or "",
+                session_id=payload.get("session_id"),
+            )
         except Exception as e:
             logger.warning("Layer 0 router 失敗，跳過：%s", e)
 

@@ -257,6 +257,9 @@ def sync_session(payload: dict, config: dict) -> None:
     # 8. 生成因果對 embedding（事務外執行，Ollama 離線不影響主流程）
     _write_exchange_embeddings(session_uuid, parsed, active_branch)
 
+    # 9. P0-1 Router 採納判定（auto 模式，靜默失敗不影響主流程）
+    _infer_router_acceptance(session_uuid, active_branch)
+
     logger.info("session 同步完成：%s", session_uuid)
 
 
@@ -331,6 +334,69 @@ def _write_exchange_embeddings(session_uuid: str, parsed, active_branch) -> None
             )
         except Exception:
             pass
+
+    # session 層級補捕：per-message 路徑沒捕到任何 embedding 時，
+    # 取整個 session 最長的 user 訊息（>15 字）作為 instruction，
+    # 彙整所有 Bash/Edit/Write 指令作為 commands。
+    # 條件：session 有工具使用 + exchange_count ≥ 2
+    all_cmds: list[str] = []
+    for cmds in exec_by_msg.values():
+        all_cmds.extend(cmds)
+
+    if all_cmds:
+        exchange_count = sum(1 for m in messages if m.role == "user")
+        if exchange_count >= 2:
+            # 找最長的 user 訊息（>15 字），作為 session 代表性 instruction
+            best_msg = max(
+                (m for m in messages if m.role == "user" and m.content and len(m.content) > 15),
+                key=lambda m: len(m.content),
+                default=None,
+            )
+            if best_msg:
+                session_instruction = best_msg.content[:300].strip()
+                session_cmd_str = "\n".join(all_cmds[:10])  # 最多 10 條彙整指令
+
+                vec = get_embedding(session_instruction)
+                if vec is not None:
+                    try:
+                        upsert_exchange_embedding(
+                            session_uuid=session_uuid,
+                            instruction=session_instruction,
+                            commands=session_cmd_str,
+                            embedding=vec,
+                        )
+                    except Exception:
+                        pass
+
+
+def _infer_router_acceptance(session_uuid: str, active_branch) -> None:
+    """
+    P0-1：從 active_branch 的最後 user messages 語意比對，
+    自動更新本 session 未判定的 local 路由決策。
+    """
+    try:
+        from layer_0_router.telemetry import update_pending_decisions
+        if not active_branch:
+            return
+        user_msgs = [m.content for m in active_branch.messages if m.role == "user" and m.content]
+        if not user_msgs:
+            return
+        combined = " ".join(user_msgs[-2:])  # 最後 2 條 user message
+        n = update_pending_decisions(session_uuid, combined)
+        if n:
+            logging.getLogger(__name__).info(
+                "P0-1 採納判定：%d 筆決策已更新（session=%s）", n, session_uuid,
+            )
+
+        # P1-3：同步對應 training_samples weight
+        from layer_0_router.telemetry import sync_sample_weights
+        updated = sync_sample_weights(session_uuid)
+        if updated:
+            logging.getLogger(__name__).debug(
+                "P1-3 weight 同步：%d 筆 training_samples（session=%s）", updated, session_uuid,
+            )
+    except Exception as e:
+        logging.getLogger(__name__).warning("P0-1/P1-3 採納判定靜默失敗：%s", e)
 
 
 def _build_fts_summary(parsed, active_branch, event_types: list[str] | None = None) -> str:

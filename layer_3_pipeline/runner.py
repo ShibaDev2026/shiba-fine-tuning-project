@@ -6,10 +6,12 @@ from pathlib import Path
 
 import sqlite3
 
-from .db import count_approved, create_run, update_run, get_last_run_id
+from .db import create_run, update_run, get_last_run_id
 from .mlx_trainer import train_lora
 from .gguf_converter import convert_to_gguf
 from .ollama_updater import push_to_ollama
+from .gatekeeper import run_gate
+from .trigger_policy import should_trigger
 from layer_2_chamber.backend.extraction.dataset_formatter import export_dataset
 
 logger = logging.getLogger(__name__)
@@ -24,15 +26,16 @@ def run_finetune_if_ready(
     work_dir: Path = _DEFAULT_WORK_DIR,
 ) -> dict | None:
     """
-    檢查 approved 樣本數是否達門檻，達到則執行完整 fine-tune pipeline。
-    回傳 {'status': 'done', 'ollama_model': '...'} 或 None（未達門檻）。
+    P1-1 動態觸發：三信號（Ebbinghaus / 採納退化 / 分布偏移）任一觸發
+    且 approved ≥ MIN_SAMPLES 才執行完整 fine-tune pipeline。
+    回傳 {'status': 'done', 'ollama_model': '...'} 或 None（未觸發）。
     """
-    approved = count_approved(conn, adapter_block)
-    if approved < threshold:
-        logger.info("block%d approved=%d < threshold=%d，跳過", adapter_block, approved, threshold)
+    decision = should_trigger(conn, adapter_block)
+    if not decision.should_train:
+        logger.info("block%d 未觸發：%s", adapter_block, decision.reason)
         return None
 
-    logger.info("block%d approved=%d，觸發 fine-tune", adapter_block, approved)
+    logger.info("block%d 觸發訓練：%s", adapter_block, decision.reason)
 
     dataset_dir = work_dir / f"block{adapter_block}"
     dataset_path = dataset_dir / "train.jsonl"
@@ -58,6 +61,22 @@ def run_finetune_if_ready(
             adapter_block=adapter_block,
         )
         update_run(conn, run_id, gguf_path=str(gguf_path))
+
+        # P0-2 Shadow Gate：統計顯著勝出才 deploy
+        gate = run_gate(gguf_path=gguf_path, adapter_block=adapter_block, conn=conn)
+        update_run(conn, run_id,
+                   error_msg=f"gate: {gate.reason} (win_rate={gate.win_rate:.3f})",
+                   status="gate_eval")
+
+        if not gate.passed:
+            update_run(conn, run_id,
+                       status="gate_rejected",
+                       finished_at="datetime('now')")
+            logger.warning(
+                "Shadow gate 拒絕 block%d：%s",
+                adapter_block, gate.reason,
+            )
+            return {"status": "gate_rejected", "run_id": run_id, "gate": vars(gate)}
 
         model_tag = push_to_ollama(gguf_path=gguf_path, adapter_block=adapter_block)
 
