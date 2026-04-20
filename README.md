@@ -122,3 +122,28 @@ python3 -m layer_3_pipeline.runner --block 1 --force
 當前版本：**v0.6.0**（2026-04-20）
 
 詳見 [CHANGELOG.md](CHANGELOG.md)
+
+---
+
+## 參考來源
+
+### 學術論文
+
+| # | 論文 | arXiv | 對應設計 |
+|---|------|-------|---------|
+| 1 | **Self-Evolving LLMs via Continual Instruction Tuning** (MoE-CL) | [2509.18133](https://arxiv.org/html/2509.18133v4) | Layer 3 雙 LoRA expert（block1/block2）+ shared expert 架構；LoRA rank=8, lr=1e-4 |
+| 2 | **SEAL: Self-Adapting Language Models** | [2506.10943](https://arxiv.org/html/2506.10943) | Layer 2 ReSTEM^EM 三方 Judge 投票；只保留高信心樣本的 SFT 策略 |
+| 3 | **From RAG to Memory** (HippoRAG 2) | [2502.14802](https://arxiv.org/html/2502.14802v1) | Layer 1 RAG 升級路徑；FTS5 → embedding + 知識圖譜的演進方向 |
+| 4 | **FOREVER: Forgetting Curve Memory Replay** | [2601.03938](https://arxiv.org/html/2601.03938v1) | Layer 3 Ebbinghaus 間隔 {1,2,4,7,15,30} 日觸發訓練；70/20/10 訓練比例；記憶緩衝區 2% 上限 |
+
+### 開源專案
+
+| 專案 | 作者 | 用途 |
+|------|------|------|
+| [Claudest](https://github.com/gupsammy/claudest) | @gupsammy | Layer 1 Stop Hook 架構參考（claude-memory plugin 設計靈感） |
+
+### 技術文章
+
+| 標題 | 來源 | 用途 |
+|------|------|------|
+| [How my $600 Mac Mini Runs a 35B AI Model](https://x.com/leopardracer/status/2043631410045452360) | @leopardracer | 本地 Mac 運行 35B 模型的環境配置參考（Ollama + llama.cpp 調優） |
