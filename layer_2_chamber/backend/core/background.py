@@ -134,6 +134,13 @@ def setup_scheduler(app, conn_factory):
         id="finetune_check", replace_existing=True,
     )
 
+    # 每日 UTC 00:05 重置 teacher 每日額度旗標
+    scheduler.add_job(
+        lambda: _reset_daily_limits(conn_factory),
+        trigger="cron", hour=0, minute=5,
+        id="daily_limit_reset", replace_existing=True,
+    )
+
     return scheduler
 
 
@@ -156,6 +163,17 @@ def _run_paraphrase_job(conn_factory) -> None:
     from ..services.paraphrase_service import paraphrase_sparse_instructions
     stats = paraphrase_sparse_instructions(conn_factory)
     logger.info("同義說法補充完成：%s", stats)
+
+
+def _reset_daily_limits(conn_factory) -> None:
+    """每日 UTC 00:05 重置所有 teacher 的 is_daily_limit_reached → 0"""
+    conn = conn_factory()
+    try:
+        conn.execute("UPDATE teachers SET is_daily_limit_reached = 0")
+        conn.commit()
+        logger.info("Teacher 每日額度已重置")
+    finally:
+        conn.close()
 
 
 def _run_finetune_check(conn_factory) -> None:

@@ -103,9 +103,12 @@ def get_today_usage(conn: sqlite3.Connection, teacher_id: int) -> int:
 
 
 def is_quota_available(conn: sqlite3.Connection, teacher: sqlite3.Row) -> bool:
-    """檢查 Teacher 今日配額是否還有餘裕"""
+    """檢查 Teacher 今日配額是否還有餘裕（達限時自動標記）"""
     used = get_today_usage(conn, teacher["id"])
-    return used < teacher["daily_limit"]
+    if used >= teacher["daily_limit"]:
+        _mark_daily_limit_reached(conn, teacher["id"])
+        return False
+    return True
 
 
 # ── Keychain ─────────────────────────────────────────────────────────────
@@ -155,23 +158,12 @@ def score_sample(
     if not first_teacher:
         return {"score": None, "status": "pending", "reason": "所有 Teacher 配額已滿", "teacher_id": None}
 
-    first_result = _call_teacher(first_teacher, instruction, input_text, output)
+    first_result = _call_teacher(first_teacher, instruction, input_text, output, conn, sample_id)
     if first_result is None:
         return {"score": None, "status": "pending", "reason": "Teacher API 呼叫失敗", "teacher_id": first_teacher["id"]}
 
-    _log_usage(conn, first_teacher["id"], sample_id)
-    first_score = first_result["score"]
-
-    # API 呼叫失敗（非配額問題）→ 嘗試 fallback teacher
-    if first_result is None:
-        fallback = _pick_available_teacher(conn, teachers, exclude_id=first_teacher["id"])
-        if fallback:
-            first_result = _call_teacher(fallback, instruction, input_text, output)
-            if first_result:
-                _log_usage(conn, fallback["id"], sample_id)
-                first_teacher = fallback
-        if first_result is None:
-            return {"score": None, "status": "pending", "reason": "所有 Teacher API 呼叫失敗", "teacher_id": first_teacher["id"]}
+    _log_usage(conn, first_teacher["id"], sample_id,
+               first_result.get("tokens_used"), first_result.get("response_status", "success"))
     first_score = first_result["score"]
 
     # 快速路徑：自動 approved 或 rejected
@@ -190,12 +182,13 @@ def score_sample(
         _update_sample_score(conn, sample_id, first_score, first_result["reason"], "needs_review")
         return {"score": first_score, "status": "needs_review", "reason": "需人工複審（無第二裁判）", "teacher_id": first_teacher["id"]}
 
-    second_result = _call_teacher(second_teacher, instruction, input_text, output)
+    second_result = _call_teacher(second_teacher, instruction, input_text, output, conn, sample_id)
     if second_result is None:
         _update_sample_score(conn, sample_id, first_score, first_result["reason"], "needs_review")
         return {"score": first_score, "status": "needs_review", "reason": "第二裁判呼叫失敗", "teacher_id": first_teacher["id"]}
 
-    _log_usage(conn, second_teacher["id"], sample_id)
+    _log_usage(conn, second_teacher["id"], sample_id,
+               second_result.get("tokens_used"), second_result.get("response_status", "success"))
     second_score = second_result["score"]
 
     # 差距 > 2 → needs_review
@@ -221,6 +214,8 @@ def _pick_available_teacher(
     for t in teachers:
         if exclude_id and t["id"] == exclude_id:
             continue
+        if t["is_daily_limit_reached"]:
+            continue  # 已達限，硬性跳過
         if is_quota_available(conn, t):
             return t
     return None
@@ -231,14 +226,17 @@ def _call_teacher(
     instruction: str,
     input_text: str,
     output: str,
+    conn: sqlite3.Connection,
+    sample_id: int,
 ) -> dict | None:
     """
-    呼叫 Teacher API（OpenAI-compatible）。
-    回傳 {'score': float, 'reason': str} 或 None（失敗時）。
+    呼叫 Teacher API，回傳 {'score': float, 'reason': str, 'tokens_used': int, 'response_status': str}
+    或 None（quota_exceeded / error，已於內部寫 log）。
     """
     api_key = get_api_key(teacher["keychain_ref"])
     if not api_key:
         logger.warning("Teacher %s 無法取得 API Key", teacher["name"])
+        _log_usage(conn, teacher["id"], sample_id, tokens_used=0, response_status="error")
         return None
 
     try:
@@ -249,25 +247,35 @@ def _call_teacher(
         )
         # Gemini 原生 REST（直接呼叫 /v1beta/models/，不走 OpenAI-compat）
         if "generativelanguage.googleapis.com" in teacher["api_base"]:
-            raw = _call_gemini_rest(api_key, teacher["model_id"], prompt)
+            raw, tokens_used, status = _call_gemini_rest(api_key, teacher["model_id"], prompt)
         else:
-            raw = _call_openai_compat(api_key, teacher["api_base"], teacher["model_id"], prompt)
+            raw, tokens_used, status = _call_openai_compat(api_key, teacher["api_base"], teacher["model_id"], prompt)
+
+        if status == "quota_exceeded":
+            _log_usage(conn, teacher["id"], sample_id, tokens_used=0, response_status="quota_exceeded")
+            _mark_daily_limit_reached(conn, teacher["id"])
+            return None
 
         if raw is None:
+            _log_usage(conn, teacher["id"], sample_id, tokens_used=0, response_status="error")
             return None
+
         data = json.loads(_strip_markdown(raw))
         score = float(data["score"])
         reason = str(data.get("reason", ""))
-        return {"score": max(0.0, min(10.0, score)), "reason": reason}
+        return {"score": max(0.0, min(10.0, score)), "reason": reason,
+                "tokens_used": tokens_used, "response_status": "success"}
 
     except Exception as e:
         logger.error("Teacher %s 評分失敗：%s", teacher["name"], e)
+        _log_usage(conn, teacher["id"], sample_id, tokens_used=0, response_status="error")
         return None
 
 
-def _call_gemini_rest(api_key: str, model_id: str, prompt: str) -> str | None:
-    """Gemini 原生 REST API 呼叫（/v1beta/models/{model}:generateContent?key=...）"""
+def _call_gemini_rest(api_key: str, model_id: str, prompt: str) -> tuple[str | None, int, str]:
+    """Gemini 原生 REST API 呼叫，回傳 (text, tokens, status)"""
     import urllib.request
+    import urllib.error
 
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_id}:generateContent?key={api_key}"
     body = json.dumps({
@@ -283,15 +291,22 @@ def _call_gemini_rest(api_key: str, model_id: str, prompt: str) -> str | None:
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:
             data = json.loads(resp.read())
-            return data["candidates"][0]["content"]["parts"][0]["text"].strip()
+            text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+            tokens = data.get("usageMetadata", {}).get("totalTokenCount", 0)
+            return text, tokens, "success"
+    except urllib.error.HTTPError as e:
+        if e.code == 429:
+            return None, 0, "quota_exceeded"
+        logger.error("Gemini REST 失敗 HTTP %s", e.code)
+        return None, 0, "error"
     except Exception as e:
         logger.error("Gemini REST 呼叫失敗：%s", e)
-        return None
+        return None, 0, "error"
 
 
-def _call_openai_compat(api_key: str, api_base: str, model_id: str, prompt: str) -> str | None:
-    """OpenAI-compatible 端點呼叫（Mistral 等其他 Teacher）"""
-    from openai import OpenAI
+def _call_openai_compat(api_key: str, api_base: str, model_id: str, prompt: str) -> tuple[str | None, int, str]:
+    """OpenAI-compatible 端點呼叫（Mistral 等其他 Teacher），回傳 (text, tokens, status)"""
+    from openai import OpenAI, RateLimitError
     client = OpenAI(api_key=api_key, base_url=api_base)
     try:
         resp = client.chat.completions.create(
@@ -300,10 +315,14 @@ def _call_openai_compat(api_key: str, api_base: str, model_id: str, prompt: str)
             max_tokens=150,
             temperature=0.1,
         )
-        return resp.choices[0].message.content.strip()
+        content = resp.choices[0].message.content.strip()
+        tokens = resp.usage.total_tokens if resp.usage else 0
+        return content, tokens, "success"
+    except RateLimitError:
+        return None, 0, "quota_exceeded"
     except Exception as e:
         logger.error("OpenAI-compat 呼叫失敗：%s", e)
-        return None
+        return None, 0, "error"
 
 
 def _strip_markdown(text: str) -> str:
@@ -333,11 +352,23 @@ def _update_sample_score(
     conn.commit()
 
 
+def _mark_daily_limit_reached(conn: sqlite3.Connection, teacher_id: int) -> None:
+    conn.execute(
+        "UPDATE teachers SET is_daily_limit_reached = 1 WHERE id = ?", (teacher_id,)
+    )
+    conn.commit()
+    logger.warning("Teacher id=%s 已達每日額度上限，標記停用", teacher_id)
+
+
 def _log_usage(
-    conn: sqlite3.Connection, teacher_id: int, sample_id: int
+    conn: sqlite3.Connection,
+    teacher_id: int,
+    sample_id: int,
+    tokens_used: int | None = None,
+    response_status: str = "success",
 ) -> None:
     conn.execute(
-        "INSERT INTO teacher_usage_logs (teacher_id, sample_id) VALUES (?, ?)",
-        (teacher_id, sample_id),
+        "INSERT INTO teacher_usage_logs (teacher_id, sample_id, tokens_used, response_status) VALUES (?, ?, ?, ?)",
+        (teacher_id, sample_id, tokens_used, response_status),
     )
     conn.commit()

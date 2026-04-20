@@ -104,10 +104,10 @@ def _collect_votes(
     """呼叫最多 3 個可用 Teacher，蒐集投票。"""
     votes = []
     for teacher in available_teachers[:3]:
-        result = _call_teacher(teacher, instruction, input_text, output)
+        result = _call_teacher(teacher, instruction, input_text, output, conn, sample_id)
         if result is None:
             continue
-        _log_usage(conn, teacher["id"], sample_id)
+        _log_usage(conn, teacher["id"], sample_id, result.get("tokens_used"))
         votes.append({
             "teacher_id": teacher["id"],
             "teacher_name": teacher["name"],

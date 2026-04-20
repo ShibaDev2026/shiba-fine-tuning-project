@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS teachers (
     priority      INTEGER NOT NULL DEFAULT 0,     -- 數字越小越優先
     daily_limit   INTEGER NOT NULL DEFAULT 250,   -- 每日請求上限
     is_active     INTEGER NOT NULL DEFAULT 1,     -- 0=停用
+    is_daily_limit_reached INTEGER NOT NULL DEFAULT 0, -- 1=當日額度耗盡
     created_at    TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -64,7 +65,8 @@ CREATE TABLE IF NOT EXISTS teacher_usage_logs (
     teacher_id    INTEGER NOT NULL REFERENCES teachers(id),
     used_at       TEXT NOT NULL DEFAULT (datetime('now')),
     sample_id     INTEGER REFERENCES training_samples(id),
-    tokens_used   INTEGER                         -- 可選，記錄 token 消耗
+    tokens_used   INTEGER,                        -- 可選，記錄 token 消耗
+    response_status TEXT                          -- 'success' | 'quota_exceeded' | 'error'
 );
 
 -- ── 索引 ─────────────────────────────────────────────────────────────

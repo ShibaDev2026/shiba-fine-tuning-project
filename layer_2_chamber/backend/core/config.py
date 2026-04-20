@@ -106,6 +106,19 @@ def _run_refiner_migration(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def _run_quota_migration(conn: sqlite3.Connection) -> None:
+    """幂等 migration：新增配額監控欄位"""
+    for sql in [
+        "ALTER TABLE teachers ADD COLUMN is_daily_limit_reached INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE teacher_usage_logs ADD COLUMN response_status TEXT",
+    ]:
+        try:
+            conn.execute(sql)
+        except Exception:
+            pass  # duplicate column name → 已執行過，忽略
+    conn.commit()
+
+
 def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
     """檢查資料表是否存在"""
     row = conn.execute(
@@ -137,6 +150,8 @@ def init_layer2_db() -> sqlite3.Connection:
 
     # 精煉器欄位 migration（幂等）
     _run_refiner_migration(conn)
+    # 配額監控欄位 migration（幂等）
+    _run_quota_migration(conn)
 
     return conn
 

@@ -3,6 +3,23 @@
 所有版本變更依照 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/) 格式記錄。
 版本號遵循 [Semantic Versioning](https://semver.org/lang/zh-TW/)。
 
+## [0.7.0] - 2026-04-21
+
+### Added
+
+- **Teacher API 配額監控與管理**
+  - `teachers` 表新增 `is_daily_limit_reached` 欄位（標記當日額度耗盡）
+  - `teacher_usage_logs` 表新增 `response_status` 欄位（`success` / `quota_exceeded` / `error`）
+  - `config.py` 加幂等 migration（`_run_quota_migration`），lifespan 啟動時自動補欄位
+  - `_call_gemini_rest` / `_call_openai_compat` 改回傳 `(text, tokens, status)` tuple，捕捉 HTTP 429 / RateLimitError
+  - `_call_teacher` 接收 `conn` + `sample_id`，quota_exceeded / error 皆內部寫 log，成功回傳 `tokens_used`
+  - `_mark_daily_limit_reached`：helper，標記 teacher 並 WARNING log
+  - `is_quota_available` 計數達限時自動呼叫 `_mark_daily_limit_reached`
+  - `_pick_available_teacher` 硬性排除 `is_daily_limit_reached=1` 的 teacher
+  - `_log_usage` 新增 `tokens_used` / `response_status` optional 參數
+  - `background.py` 新增 UTC 00:05 每日重置排程（`_reset_daily_limits`）
+  - `routes_teachers.py`：`GET /api/v1/teachers`（LEFT JOIN 當日用量）/ `PATCH /api/v1/teachers/{id}`（修改 daily_limit / is_active）
+
 ## [0.6.0] - 2026-04-20
 
 ### Added
