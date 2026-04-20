@@ -208,8 +208,8 @@ def _vector_search(query: str, top_n: int = 3) -> list[dict]:
             continue
 
     scored.sort(key=lambda x: x["score"], reverse=True)
-    # 只回傳相似度 > 0.5 的結果
-    return [r for r in scored[:top_n] if r["score"] > 0.5]
+    # 只回傳相似度 > 0.35 的結果（降低門檻以提高召回率）
+    return [r for r in scored[:top_n] if r["score"] > 0.35]
 
 
 def _build_exchange_context(exchanges: list[dict], token_budget: int = 500) -> str:

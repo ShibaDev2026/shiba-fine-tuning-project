@@ -272,7 +272,11 @@ def _call_gemini_rest(api_key: str, model_id: str, prompt: str) -> str | None:
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_id}:generateContent?key={api_key}"
     body = json.dumps({
         "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {"maxOutputTokens": 150, "temperature": 0.1},
+        "generationConfig": {
+            "maxOutputTokens": 150,
+            "temperature": 0.1,
+            "responseMimeType": "application/json",  # 強制回傳合法 JSON，避免 unquoted keys
+        },
     }).encode()
 
     req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"})
