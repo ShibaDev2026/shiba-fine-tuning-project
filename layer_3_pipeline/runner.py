@@ -45,6 +45,12 @@ def run_finetune_if_ready(
     export_result = export_dataset(conn, dataset_path, adapter_block=adapter_block, since_id=since_id)
     total = export_result["total"]
 
+    # F2：取得 approved 樣本數供動態 rank 決策
+    approved_count = conn.execute(
+        "SELECT COUNT(*) FROM training_samples WHERE status='approved' AND adapter_block=?",
+        (adapter_block,),
+    ).fetchone()[0]
+
     run_id = create_run(conn, adapter_block, total, str(dataset_path))
 
     try:
@@ -52,6 +58,7 @@ def run_finetune_if_ready(
             dataset_path=dataset_path,
             adapter_block=adapter_block,
             output_dir=work_dir / "adapters",
+            approved_count=approved_count,
         )
         update_run(conn, run_id, adapter_path=str(adapter_dir))
 

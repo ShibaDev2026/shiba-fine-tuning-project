@@ -18,7 +18,6 @@ import sqlite3
 from .teacher_service import (
     get_active_teachers,
     _call_teacher,        # noqa: PLC2701
-    _log_usage,           # noqa: PLC2701
     _update_sample_score, # noqa: PLC2701
     is_quota_available,
 )
@@ -107,7 +106,7 @@ def _collect_votes(
         result = _call_teacher(teacher, instruction, input_text, output, conn, sample_id)
         if result is None:
             continue
-        _log_usage(conn, teacher["id"], sample_id, result.get("tokens_used"))
+        # _call_teacher 已內部處理 log_usage 與 requests_today 更新
         votes.append({
             "teacher_id": teacher["id"],
             "teacher_name": teacher["name"],

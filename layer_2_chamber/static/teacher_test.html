@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Shiba Teacher 測試</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .dot-pulse { animation: pulse 1.5s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .3; } }
+    </style>
+</head>
+<body class="bg-gray-900 text-gray-100 min-h-screen p-6">
+    <div class="max-w-5xl mx-auto">
+        <h1 class="text-2xl font-bold mb-1">Shiba Teacher 測試頁</h1>
+        <p class="text-gray-400 text-sm mb-5">對所有啟用中的 Teacher 發送測試 prompt，驗證連線與回應品質</p>
+
+        <div class="mb-5 flex gap-3 items-center">
+            <input id="test-prompt" type="text"
+                   value="請用一句話介紹你自己。"
+                   class="flex-1 bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm focus:outline-none focus:border-blue-400">
+            <button id="test-all-btn"
+                    onclick="testAll()"
+                    class="bg-blue-600 hover:bg-blue-700 active:bg-blue-800 px-5 py-2 rounded text-sm font-semibold transition-colors">
+                Test All
+            </button>
+            <button onclick="loadTeachers()"
+                    class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded text-sm transition-colors">
+                重新整理
+            </button>
+        </div>
+
+        <div id="teachers-grid" class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div class="text-gray-500 text-sm">載入中...</div>
+        </div>
+    </div>
+
+    <script>
+        let teachers = [];
+
+        async function loadTeachers() {
+            try {
+                const res = await fetch('/api/v1/teachers');
+                teachers = await res.json();
+                renderCards();
+            } catch (e) {
+                document.getElementById('teachers-grid').innerHTML =
+                    `<div class="text-red-400 text-sm">載入失敗：${e.message}</div>`;
+            }
+        }
+
+        function quotaLabel(t) {
+            const lim = t.daily_request_limit;
+            const used = t.today_requests ?? 0;
+            if (lim == null) return '<span class="text-green-400">∞ unlimited</span>';
+            const remain = Math.max(0, lim - used);
+            const pct = lim > 0 ? Math.round(remain / lim * 100) : 0;
+            const color = pct > 50 ? 'text-green-400' : pct > 20 ? 'text-yellow-400' : 'text-red-400';
+            return `<span class="${color}">${remain}/${lim} req 剩餘</span>`;
+        }
+
+        function renderCards() {
+            const grid = document.getElementById('teachers-grid');
+            if (!teachers.length) {
+                grid.innerHTML = '<div class="text-gray-500 text-sm">無 Teacher，請執行 setup_teachers.py --setup</div>';
+                return;
+            }
+            grid.innerHTML = teachers.map(t => `
+                <div id="card-${t.id}" class="bg-gray-800 rounded-lg p-4 border border-gray-700">
+                    <div class="flex items-center justify-between mb-2">
+                        <div class="flex items-center gap-2">
+                            <span id="dot-${t.id}" class="w-3 h-3 rounded-full ${t.is_active ? 'bg-gray-500' : 'bg-gray-700'}"></span>
+                            <span class="font-medium text-sm">${t.name}</span>
+                            ${!t.is_active ? '<span class="text-xs text-gray-500 ml-1">（停用）</span>' : ''}
+                        </div>
+                        ${t.is_active ? `<button onclick="testOne(${t.id})"
+                                class="text-xs bg-gray-700 hover:bg-blue-600 px-3 py-1 rounded transition-colors">
+                            Test
+                        </button>` : ''}
+                    </div>
+                    <div class="text-xs text-gray-400 mb-2 flex flex-wrap gap-2">
+                        <span class="font-mono">${t.model_id}</span>
+                        <span>·</span>
+                        ${quotaLabel(t)}
+                        ${t.today_tokens > 0 ? `<span class="text-gray-500">· tokens: ${t.today_tokens}</span>` : ''}
+                    </div>
+                    <div id="result-${t.id}" class="text-sm mt-1 hidden"></div>
+                </div>
+            `).join('');
+        }
+
+        async function testOne(teacherId) {
+            const prompt = document.getElementById('test-prompt').value.trim();
+            if (!prompt) { alert('請輸入測試 prompt'); return; }
+
+            const dot = document.getElementById(`dot-${teacherId}`);
+            const result = document.getElementById(`result-${teacherId}`);
+
+            dot.className = 'w-3 h-3 rounded-full bg-yellow-400 dot-pulse';
+            result.className = 'text-sm mt-1';
+            result.textContent = '發送中...';
+
+            try {
+                const res = await fetch(`/api/v1/teachers/${teacherId}/test`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ prompt }),
+                });
+                const data = await res.json();
+
+                if (data.error) {
+                    dot.className = 'w-3 h-3 rounded-full bg-red-500';
+                    result.className = 'text-sm mt-1 text-red-400';
+                    result.textContent = `✗ ${data.error}`;
+                } else {
+                    dot.className = 'w-3 h-3 rounded-full bg-green-400';
+                    const preview = (data.response || '').length > 100
+                        ? data.response.slice(0, 100) + '…'
+                        : (data.response || '（空回應）');
+                    result.className = 'text-sm mt-1';
+                    result.innerHTML = `
+                        <div class="text-gray-200 leading-relaxed">${escHtml(preview)}</div>
+                        <div class="text-xs text-gray-500 mt-1">
+                            in: ${data.input_tokens} · out: ${data.output_tokens} · ${data.latency_ms} ms
+                        </div>`;
+                }
+            } catch (e) {
+                dot.className = 'w-3 h-3 rounded-full bg-red-500';
+                result.className = 'text-sm mt-1 text-red-400';
+                result.textContent = `✗ ${e.message}`;
+            }
+        }
+
+        async function testAll() {
+            const btn = document.getElementById('test-all-btn');
+            btn.disabled = true;
+            btn.textContent = '測試中...';
+
+            const active = teachers.filter(t => t.is_active);
+            await Promise.all(active.map(t => testOne(t.id)));
+
+            btn.disabled = false;
+            btn.textContent = 'Test All';
+        }
+
+        function escHtml(str) {
+            return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+        }
+
+        loadTeachers();
+    </script>
+</body>
+</html>

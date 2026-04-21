@@ -166,12 +166,20 @@ def _run_paraphrase_job(conn_factory) -> None:
 
 
 def _reset_daily_limits(conn_factory) -> None:
-    """每日 UTC 00:05 重置所有 teacher 的 is_daily_limit_reached → 0"""
+    """每日 UTC 00:05 重置所有 teacher 的配額旗標與今日計數器"""
     conn = conn_factory()
     try:
-        conn.execute("UPDATE teachers SET is_daily_limit_reached = 0")
+        conn.execute("""
+            UPDATE teachers SET
+                is_daily_limit_reached = 0,
+                requests_today         = 0,
+                input_tokens_today     = 0,
+                output_tokens_today    = 0,
+                quota_exhausted_at     = NULL,
+                quota_exhausted_type   = NULL
+        """)
         conn.commit()
-        logger.info("Teacher 每日額度已重置")
+        logger.info("Teacher 每日配額已重置")
     finally:
         conn.close()
 

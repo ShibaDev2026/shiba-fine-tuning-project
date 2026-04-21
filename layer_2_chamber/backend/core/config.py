@@ -119,6 +119,29 @@ def _run_quota_migration(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def _run_token_quota_migration(conn: sqlite3.Connection) -> None:
+    """幂等 migration：新增 token 維度配額與今日計數欄位"""
+    for sql in [
+        # teachers 新欄位
+        "ALTER TABLE teachers ADD COLUMN daily_request_limit INTEGER DEFAULT 250",
+        "ALTER TABLE teachers ADD COLUMN daily_token_limit INTEGER DEFAULT NULL",
+        "ALTER TABLE teachers ADD COLUMN quota_reset_period TEXT DEFAULT 'daily'",
+        "ALTER TABLE teachers ADD COLUMN requests_today INTEGER DEFAULT 0",
+        "ALTER TABLE teachers ADD COLUMN input_tokens_today INTEGER DEFAULT 0",
+        "ALTER TABLE teachers ADD COLUMN output_tokens_today INTEGER DEFAULT 0",
+        "ALTER TABLE teachers ADD COLUMN quota_exhausted_at TEXT DEFAULT NULL",
+        "ALTER TABLE teachers ADD COLUMN quota_exhausted_type TEXT DEFAULT NULL",
+        # teacher_usage_logs 新欄位（保留 tokens_used = input + output 合計）
+        "ALTER TABLE teacher_usage_logs ADD COLUMN input_tokens INTEGER DEFAULT 0",
+        "ALTER TABLE teacher_usage_logs ADD COLUMN output_tokens INTEGER DEFAULT 0",
+    ]:
+        try:
+            conn.execute(sql)
+        except Exception:
+            pass  # 欄位已存在，忽略
+    conn.commit()
+
+
 def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
     """檢查資料表是否存在"""
     row = conn.execute(
@@ -152,6 +175,8 @@ def init_layer2_db() -> sqlite3.Connection:
     _run_refiner_migration(conn)
     # 配額監控欄位 migration（幂等）
     _run_quota_migration(conn)
+    # Token 維度配額 migration（幂等）
+    _run_token_quota_migration(conn)
 
     return conn
 

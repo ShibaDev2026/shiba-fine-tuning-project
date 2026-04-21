@@ -29,6 +29,9 @@ logger = logging.getLogger(__name__)
 _EBBINGHAUS_BUCKETS = [1, 2, 4, 7, 15, 30]
 _STABLE_SCORE_MIN = 8.5  # 歷史樣本最低分數門檻
 
+# F3：外部通用指令集目錄（放 Alpaca 格式 .jsonl）
+_EXTERNAL_DATASET_DIR = Path.home() / ".local-brain" / "external_dataset"
+
 
 def export_dataset(
     conn: sqlite3.Connection,
@@ -51,15 +54,17 @@ def export_dataset(
     new_samples = _fetch_new_samples(conn, adapter_block, since_id)
     replay_samples = _fetch_ebbinghaus_replay(conn, adapter_block, since_id)
 
-    # 70/20 比例（weight 加權展開 new_samples；10% 通用指令集由外部注入）
+    # 70/20/10 比例計算
     new_count = len(new_samples)
     replay_target = _calc_replay_target(new_count)
     replay_samples = replay_samples[:replay_target]
 
-    # P1-3：依 weight 展開 new_samples（weight=1.5 → 出現 1-2 次；weight=2.0 → 出現 2 次）
     expanded_new = _expand_by_weight(new_samples)
 
-    all_samples = expanded_new + replay_samples
+    # F3：10% 槽位注入外部通用指令集（Alpaca JSONL）
+    external_samples = _load_external_dataset(new_count)
+
+    all_samples = expanded_new + replay_samples + external_samples
     random.shuffle(all_samples)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -77,6 +82,7 @@ def export_dataset(
         "new": new_count,
         "new_expanded": len(expanded_new),
         "replay": len(replay_samples),
+        "external": len(external_samples),
         "total": len(all_samples),
         "path": str(output_path),
     }
@@ -204,3 +210,40 @@ def _calc_stable_target(new_count: int) -> int:
     if new_count == 0:
         return 0
     return round(new_count * 20 / 70)
+
+
+def _load_external_dataset(new_count: int) -> list[dict]:
+    """
+    F3：從 ~/.local-brain/external_dataset/*.jsonl 載入外部通用指令集。
+    目標數量 = new_count 的 1/7（維持 10% 槽位比例）。
+    目錄不存在或無 .jsonl 時靜默跳過。
+    """
+    target = max(0, round(new_count / 7))
+    if target == 0 or not _EXTERNAL_DATASET_DIR.exists():
+        return []
+
+    records: list[dict] = []
+    for jsonl_file in sorted(_EXTERNAL_DATASET_DIR.glob("*.jsonl")):
+        try:
+            with jsonl_file.open(encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    obj = json.loads(line)
+                    records.append({
+                        "instruction": obj.get("instruction", ""),
+                        "input": obj.get("input", "") or "",
+                        "output": obj.get("output", ""),
+                        "adapter_block": None,  # 通用，不歸屬特定 block
+                    })
+        except Exception as e:
+            logger.warning("外部資料集讀取失敗 %s：%s", jsonl_file.name, e)
+
+    if not records:
+        return []
+
+    random.shuffle(records)
+    selected = records[:target]
+    logger.info("外部資料集注入 %d 筆（目錄：%s）", len(selected), _EXTERNAL_DATASET_DIR)
+    return selected

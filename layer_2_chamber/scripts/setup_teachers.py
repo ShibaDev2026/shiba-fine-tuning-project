@@ -8,6 +8,7 @@ setup_teachers.py — 初始化 Teacher 設定
 
 執行：
     python layer_2_chamber/scripts/setup_teachers.py --setup
+    python layer_2_chamber/scripts/setup_teachers.py --setup --dry-run
     python layer_2_chamber/scripts/setup_teachers.py --verify
     python layer_2_chamber/scripts/setup_teachers.py --list
 """
@@ -37,6 +38,9 @@ TEACHERS = [
         "keychain_ref": "gemini-api-key",
         "priority": 0,
         "daily_limit": 250,
+        "daily_request_limit": 250,
+        "daily_token_limit": None,
+        "quota_reset_period": "daily",
     },
     {
         "name": "Gemini 2.5 Flash-Lite",
@@ -45,6 +49,54 @@ TEACHERS = [
         "keychain_ref": "gemini-api-key",  # 共用同一組 key
         "priority": 1,
         "daily_limit": 1000,
+        "daily_request_limit": 1000,
+        "daily_token_limit": None,
+        "quota_reset_period": "daily",
+    },
+    # ── 新增 Teacher（Phase D）─────────────────────────────────────
+    {
+        "name": "Grok 3 Mini",
+        "model_id": "grok-3-mini",
+        "api_base": "https://api.x.ai/v1",
+        "keychain_ref": "xai-api-key",  # 需手動設定
+        "priority": 2,
+        "daily_limit": 25,
+        "daily_request_limit": 25,
+        "daily_token_limit": 131072,
+        "quota_reset_period": "daily",
+    },
+    {
+        "name": "GitHub Models GPT-4o-mini",
+        "model_id": "gpt-4o-mini",
+        "api_base": "https://models.inference.ai.azure.com",
+        "keychain_ref": "github-models-token",  # 需手動設定
+        "priority": 3,
+        "daily_limit": 150,
+        "daily_request_limit": 150,
+        "daily_token_limit": 1200000,
+        "quota_reset_period": "daily",
+    },
+    {
+        "name": "Mistral 7B",
+        "model_id": "open-mistral-7b",
+        "api_base": "https://api.mistral.ai/v1",
+        "keychain_ref": "mistral-api-key",  # 需手動設定
+        "priority": 4,
+        "daily_limit": 9999,
+        "daily_request_limit": None,      # 無請求數上限
+        "daily_token_limit": 33000000,    # 1B token/月 ÷ 30 天
+        "quota_reset_period": "daily",
+    },
+    {
+        "name": "Local Qwen 7B",
+        "model_id": "qwen2.5:7b",
+        "api_base": "http://localhost:11434/v1",
+        "keychain_ref": None,             # 本地無需 key（C3）
+        "priority": 5,                    # 最後備援，避免自評循環依賴
+        "daily_limit": 9999,
+        "daily_request_limit": None,
+        "daily_token_limit": None,
+        "quota_reset_period": "none",
     },
 ]
 
@@ -55,19 +107,29 @@ _TEST_SAMPLE = {
 }
 
 
-def cmd_setup():
+def cmd_setup(dry_run: bool = False):
     """互動式輸入 API Key → 存 Keychain → seed DB"""
     print("=== Layer 2 Teacher 設定 ===\n")
+    if dry_run:
+        print("[dry-run] 只顯示將插入的 teacher 資料，不寫入\n")
+        for t in TEACHERS:
+            print(f"  → {t['name']:<30} model={t['model_id']}")
+            print(f"     api_base={t['api_base']}")
+            print(f"     priority={t['priority']}  daily_request_limit={t.get('daily_request_limit')}  "
+                  f"daily_token_limit={t.get('daily_token_limit')}  "
+                  f"quota_reset_period={t.get('quota_reset_period')}  keychain_ref={t['keychain_ref']}")
+            print()
+        return
 
-    # 收集需要 key 的唯一 keychain_ref
-    refs = {t["keychain_ref"] for t in TEACHERS}
+    # 收集需要 key 的唯一 keychain_ref（None = 本地無需 key）
+    refs = {t["keychain_ref"] for t in TEACHERS if t["keychain_ref"] is not None}
     for ref in refs:
         existing = get_api_key(ref)
         if existing:
             print(f"✓ Keychain '{ref}' 已存在，跳過")
             continue
 
-        key = getpass.getpass(f"請輸入 '{ref}' 的 API Key: ").strip()
+        key = getpass.getpass(f"請輸入 '{ref}' 的 API Key（留空跳過）: ").strip()
         if not key:
             print(f"✗ 跳過 '{ref}'（未輸入）")
             continue
@@ -86,6 +148,9 @@ def cmd_setup():
             keychain_ref=t["keychain_ref"],
             priority=t["priority"],
             daily_limit=t["daily_limit"],
+            daily_request_limit=t.get("daily_request_limit"),
+            daily_token_limit=t.get("daily_token_limit"),
+            quota_reset_period=t.get("quota_reset_period", "daily"),
         )
         print(f"✓ Teacher '{t['name']}' id={tid}")
     conn.close()
@@ -119,17 +184,21 @@ def cmd_verify():
 def cmd_list():
     """列出目前 DB 的 Teacher 狀態"""
     conn = init_layer2_db()
-    teachers = get_active_teachers(conn)
+    rows = conn.execute("SELECT * FROM teachers ORDER BY priority").fetchall()
     conn.close()
 
-    if not teachers:
+    if not rows:
         print("（無 Teacher，請執行 --setup）")
         return
 
-    print(f"{'ID':<4} {'名稱':<25} {'模型':<25} {'優先':<6} {'限額/日':<8} {'啟用'}")
-    print("-" * 75)
-    for t in teachers:
-        print(f"{t['id']:<4} {t['name']:<25} {t['model_id']:<25} {t['priority']:<6} {t['daily_limit']:<8} {'✓' if t['is_active'] else '✗'}")
+    print(f"{'ID':<4} {'名稱':<28} {'模型':<22} {'優先':<4} {'Req限額':<8} {'啟用'}")
+    print("-" * 80)
+    for t in rows:
+        try:
+            req_lim = t["daily_request_limit"] or "∞"
+        except Exception:
+            req_lim = t["daily_limit"]
+        print(f"{t['id']:<4} {t['name']:<28} {t['model_id']:<22} {t['priority']:<4} {str(req_lim):<8} {'✓' if t['is_active'] else '✗'}")
 
 
 def _save_keychain(ref: str, key: str) -> None:
@@ -191,10 +260,11 @@ if __name__ == "__main__":
     group.add_argument("--setup", action="store_true", help="初始化 Keychain + seed DB")
     group.add_argument("--verify", action="store_true", help="驗證 API 連線")
     group.add_argument("--list", action="store_true", help="列出現有 Teacher")
+    parser.add_argument("--dry-run", action="store_true", help="只印出將插入的資料，不寫入")
     args = parser.parse_args()
 
     if args.setup:
-        cmd_setup()
+        cmd_setup(dry_run=args.dry_run)
     elif args.verify:
         cmd_verify()
     elif args.list:
