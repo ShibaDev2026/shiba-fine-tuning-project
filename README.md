@@ -67,7 +67,20 @@
 | 分類（Fast） | gemma3:2b（think: false） |
 | 壓縮（Primary） | gemma3:4b（think: false） |
 | 回應（Response） | qwen3:30b-a3b → shiba-block1 |
-| Judge（初裁） | Gemini 2.5 Flash（免費 250 req/day） |
+| Judge（初裁） | Gemini 2.5 Flash（250 req/day）|
+
+### Teacher 評分池（v0.8.0，priority 順序）
+
+| 優先 | Teacher | 模型 | 每日上限 |
+|------|---------|------|---------|
+| 0 | Gemini 2.5 Flash | gemini-2.5-flash | 250 req |
+| 1 | Gemini 2.5 Flash-Lite | gemini-2.5-flash-lite | 1,000 req |
+| 2 | Grok 3 Mini | grok-3-mini | 25 req / 128k token |
+| 3 | GitHub GPT-4o-mini | gpt-4o-mini | 150 req / 1.2M token |
+| 4 | Mistral 7B | open-mistral-7b | 33M token |
+| 5 | Local Qwen 7B | qwen2.5:7b | 無限（最後備援）|
+
+> Local Qwen 7B 設為 priority=5 最後備援，避免模型自評導致的循環依賴。
 
 ## LoRA Adapter
 
@@ -90,15 +103,23 @@ export OLLAMA_KEEP_ALIVE=10m
 # Layer 1 hooks 安裝
 cd layer_1_memory && bash setup.sh
 
-# Layer 2 背景服務
-cd layer_2_chamber/backend
-uvicorn main:app --reload --port 8000
+# Layer 2 設定 Teacher API Key（首次）
+python3 layer_2_chamber/scripts/setup_teachers.py --setup
 
-# 手動觸發評分
-python3 -m layer_2_chamber.backend.core.background score_pending
+# Layer 2 常駐服務（LaunchD）
+bash layer_2_chamber/scripts/setup_launchd.sh
 
-# 手動觸發訓練（block 1）
-python3 -m layer_3_pipeline.runner --block 1 --force
+# 或手動啟動（開發用）
+cd layer_2_chamber/backend && uvicorn main:app --reload --port 8000
+
+# 手動批次評分 pending 樣本
+python3 layer_2_chamber/scripts/run_scorer.py
+
+# 系統狀態診斷
+python3 layer_2_chamber/scripts/brain_status.py
+
+# Teacher 連線測試（瀏覽器）
+open http://localhost:8000/teacher-test
 ```
 
 ## 資料庫
@@ -117,9 +138,18 @@ python3 -m layer_3_pipeline.runner --block 1 --force
 | `router_decisions` | 路由決策與採納率 |
 | `finetune_runs` | 訓練執行記錄 |
 
-## 版本
+## 版本歷程
 
-當前版本：**v0.6.0**（2026-04-20）
+當前版本：**v0.8.0**（2026-04-21）
+
+| 版本 | 日期 | 主要內容 |
+|------|------|---------|
+| v0.8.0 | 2026-04-21 | Teacher 擴充（6 個評分池）、Token 維度配額、LaunchD 常駐、冷啟動保護（few-shot / 動態 rank）、診斷 CLI |
+| v0.7.0 | 2026-04-21 | Teacher 配額監控（is_daily_limit_reached、每日重置排程）、routes_teachers API |
+| v0.6.0 | 2026-04-20 | 自我監督閉環：P0-1 Telemetry / P0-2 Shadow Gate / P1-1 動態觸發 / P1-2 多 Judge / P1-3 weight |
+| v0.5.0 | 2026-04-19 | Layer 0 路由層（Gemma 分類 + 壓縮）|
+| v0.4.0 | 2026-04-19 | Layer 3 Fine-tuning Pipeline（MLX LoRA → GGUF → Ollama）|
+| v0.1.0 | 2026-04-17 | Layer 1 記憶層 + Layer 2 精神時光屋 基礎架構 |
 
 詳見 [CHANGELOG.md](CHANGELOG.md)
 

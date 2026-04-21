@@ -3,6 +3,51 @@
 所有版本變更依照 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/) 格式記錄。
 版本號遵循 [Semantic Versioning](https://semver.org/lang/zh-TW/)。
 
+## [0.8.0] - 2026-04-21
+
+### Added
+
+- **Phase A — 管線穩定性**
+  - `layer_2_chamber/scripts/run_scorer.py`：獨立 Scorer CLI，直接呼叫 `score_pending_samples`，不依賴 FastAPI / APScheduler，支援批次輪詢直到配額耗盡
+  - `layer_2_chamber/scripts/setup_launchd.sh`：產生並載入 `com.shiba.layer2` LaunchAgent（KeepAlive + RunAtLoad，log → `~/.local-brain/layer2.log`）
+
+- **Phase B — DB Schema 擴充**
+  - `teachers` 表新增 8 欄位：`daily_request_limit`、`daily_token_limit`、`quota_reset_period`（`daily`/`monthly`/`none`）、`requests_today`、`input_tokens_today`、`output_tokens_today`、`quota_exhausted_at`、`quota_exhausted_type`
+  - `teacher_usage_logs` 表新增 `input_tokens`、`output_tokens` 分拆欄位（`tokens_used` 保留為合計）
+  - `config.py` 新增 `_run_token_quota_migration`（幂等，lifespan 自動執行）
+
+- **Phase C — Teacher Service 升級**
+  - C1 雙維度配額：`_pick_available_teacher` 新增 `requests_today >= daily_request_limit` 與 `token 總量 >= daily_token_limit` 兩層排除
+  - C2 Input/Output 分拆：`_call_gemini_rest` 改用 `promptTokenCount` / `candidatesTokenCount`；`_call_openai_compat` 改用 `prompt_tokens` / `completion_tokens`；簽名改為回傳 `(text, input_t, output_t, status)`
+  - C2 `_log_usage` 統一至 `_call_teacher` 內部處理，新增 `_record_teacher_usage`（更新 `requests_today` / `input_tokens_today` / `output_tokens_today`）
+  - C3 `keychain_ref = NULL` 支援：本地 Qwen 跳過 Keychain，傳入 dummy `"none"` key
+  - 新增 `_mark_quota_exhausted`（記錄耗盡時間與類型）、`call_teacher_for_test`（測試用，不計入 usage log）
+  - `multi_judge.py` 移除重複的 `_log_usage` 呼叫（已由 `_call_teacher` 內部統一處理）
+
+- **Phase D — 新 Teacher 預填**
+  - `setup_teachers.py` 擴充 4 個新 Teacher：Grok 3 Mini（priority=2）、GitHub GPT-4o-mini（priority=3）、Mistral 7B（priority=4）、Local Qwen 7B（priority=5，keychain_ref=NULL）
+  - 現有 Gemini Flash / Flash-Lite 更新 `daily_request_limit` 欄位
+  - 新增 `--dry-run` 參數（只印出將插入的資料，不寫入 DB）
+
+- **Phase E — Teacher 前端測試頁**
+  - `POST /api/v1/teachers/{id}/test`：發送任意 prompt，回傳 response + input/output tokens + latency_ms
+  - `GET /teacher-test`：返回 `static/teacher_test.html`（Tailwind CSS CDN + Test All 並行測試）
+
+- **Phase F — 冷啟動品質改善**
+  - F1 Few-shot 校準：`_SCORE_PROMPT` 嵌入 YAML 校準範例（3 個 9-10 分 + 3 個 2-4 分，針對 code/debugging/git_ops）
+  - F2 動態 LoRA rank：`mlx_trainer.py` 依 `approved_count` 動態設定 rank（<50 → rank=8 防過擬合；≥50 → rank=16）；`runner.py` 傳入 `approved_count`
+  - F3 外部資料集：`dataset_formatter.py` 新增 `_load_external_dataset`，從 `~/.local-brain/external_dataset/*.jsonl` 讀取 Alpaca JSONL，注入 10% 槽位；目錄不存在靜默跳過
+
+- **Phase G — 診斷 CLI**
+  - `layer_2_chamber/scripts/brain_status.py`：一鍵顯示 Pipeline（pending/approved/block 進度）、Teacher 配額狀態（含 token 用量）、外部資料集配置狀況
+
+### Changed
+
+- `background.py` `_reset_daily_limits`：每日重置擴充至清除 `requests_today`、`input_tokens_today`、`output_tokens_today`、`quota_exhausted_at`、`quota_exhausted_type`
+- `routes_teachers.py` `_LIST_SQL`：改用 `requests_today` 欄位計算配額剩餘，支援新的 `daily_request_limit` / `daily_token_limit` 欄位
+
+---
+
 ## [0.7.0] - 2026-04-21
 
 ### Added
