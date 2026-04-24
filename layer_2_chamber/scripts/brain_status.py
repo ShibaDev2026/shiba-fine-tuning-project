@@ -12,9 +12,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from layer_2_chamber.backend.core.config import DB_PATH, init_layer2_db
+from shiba_config import CONFIG
 
 BLOCK_THRESHOLD = 30
-EXTERNAL_DATASET_DIR = Path.home() / ".local-brain" / "external_dataset"
+EXTERNAL_DATASET_DIR = CONFIG.paths.external_dataset
 
 
 def main():

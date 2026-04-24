@@ -1,13 +1,19 @@
-"""Layer 2 設定與資料庫初始化"""
+"""Layer 2 設定與資料庫初始化
+
+路徑與 URL 統一由 shiba_config.CONFIG 提供，本檔只保留 Layer 2 特有欄位
+（精煉器模型參數、Schema 路徑、表清單、migration 等）。
+"""
 import sqlite3
 from pathlib import Path
 
-# ── 路徑設定 ─────────────────────────────────────────────────────────
-DB_PATH      = Path.home() / ".local-brain" / "shiba-brain.db"
+from shiba_config import CONFIG
+
+# ── 路徑設定（對外維持 DB_PATH 名稱，值來自 CONFIG）────────────────
+DB_PATH      = CONFIG.paths.db
 SCHEMA_PATH  = Path(__file__).parent.parent / "db" / "schema_layer2.sql"
 
-# ── Qwen 精煉器設定 ──────────────────────────────────────────────────
-OLLAMA_BASE_URL     = "http://localhost:11434"
+# ── Qwen 精煉器設定（OLLAMA_BASE_URL 依 runtime 擇一，由 CONFIG 提供）
+OLLAMA_BASE_URL     = CONFIG.services.ollama_base_url
 REFINER_MODEL       = "qwen3.6:35b-a3b-nvfp4"
 REFINER_BATCH_LIMIT = 10
 REFINER_TIMEOUT     = 120  # seconds
@@ -157,7 +163,7 @@ def init_layer2_db() -> sqlite3.Connection:
     回傳已啟用 WAL + foreign_keys 的 connection。
     """
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     conn.row_factory = sqlite3.Row
 
     # WAL 模式減少 Layer 1 hook 與 Layer 2 API 的寫入競爭

@@ -23,14 +23,16 @@ from pathlib import Path
 
 import sqlite3
 
+from shiba_config import CONFIG
+
 logger = logging.getLogger(__name__)
 
 # Ebbinghaus 分桶（FOREVER 論文間隔，單位：天）
 _EBBINGHAUS_BUCKETS = [1, 2, 4, 7, 15, 30]
 _STABLE_SCORE_MIN = 8.5  # 歷史樣本最低分數門檻
 
-# F3：外部通用指令集目錄（放 Alpaca 格式 .jsonl）
-_EXTERNAL_DATASET_DIR = Path.home() / ".local-brain" / "external_dataset"
+# F3：外部通用指令集目錄（路徑由 CONFIG 提供，放 Alpaca 格式 .jsonl）
+_EXTERNAL_DATASET_DIR = CONFIG.paths.external_dataset
 
 
 def export_dataset(
@@ -214,7 +216,7 @@ def _calc_stable_target(new_count: int) -> int:
 
 def _load_external_dataset(new_count: int) -> list[dict]:
     """
-    F3：從 ~/.local-brain/external_dataset/*.jsonl 載入外部通用指令集。
+    F3：從 CONFIG.paths.external_dataset/*.jsonl 載入外部通用指令集。
     目標數量 = new_count 的 1/7（維持 10% 槽位比例）。
     目錄不存在或無 .jsonl 時靜默跳過。
     """

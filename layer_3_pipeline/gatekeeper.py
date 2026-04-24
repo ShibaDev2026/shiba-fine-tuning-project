@@ -20,9 +20,11 @@ import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from shiba_config import CONFIG
+
 logger = logging.getLogger(__name__)
 
-OLLAMA_BASE = "http://localhost:11434"
+OLLAMA_BASE = CONFIG.services.ollama_base_url
 OLLAMA_TIMEOUT = 60
 JUDGE_NUM_PREDICT = 32       # judge 只需回答 A/B
 RESPONSE_NUM_PREDICT = 256   # 評估用回應不需太長

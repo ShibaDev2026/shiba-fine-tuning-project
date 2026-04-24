@@ -3,6 +3,36 @@
 所有版本變更依照 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/) 格式記錄。
 版本號遵循 [Semantic Versioning](https://semver.org/lang/zh-TW/)。
 
+## [0.9.0] - 2026-04-24
+
+### Added
+
+- **Phase 1 — 設定集中化（Vue 3 + docker-compose 重構前置作業）**
+  - `config/shiba.yaml`：全專案唯一 source of truth（paths / services / runtime）
+  - `shiba_config.py`（專案根）：frozen dataclass singleton，依 `SHIBA_RUNTIME` env 自動擇一 host/docker URL
+  - `data/`、`backups/` 骨架（`.gitkeep` 占位，DB/log/queue 依 `.gitignore` 排除）
+  - Layer 1 hooks 檔頭 SHIBA_PROJECT_ROOT env pattern：同時支援專案原位與 `~/.claude/plugins/local-brain/` plugin 同步兩種部署
+
+- **Phase 0 — 路由層儀表板後端（前端支援端點）**
+  - `routes_router.py`：`/api/v1/router/decisions`（日期篩選 + 分頁）、`/status`（Ollama 連線探測）、`/decisions/{id}/adopt`（採納更新）
+  - `routes_memory.py`：`/api/v1/memory/sessions`（日期篩選 + 分頁）、`/sessions/{id}/messages`、`/stats`
+  - `routes_finetune.py` 擴充：`/trigger-status`（各 block 距觸發條件距離）、`/ollama-status`
+  - `main.py` 啟用 CORS middleware + 註冊新 router
+
+### Changed
+
+- **Phase 1 呼叫點改寫（15+ 處硬寫路徑 → `CONFIG`）**
+  - Layer 0：`router/classifier/compressor/telemetry.py` 的 `OLLAMA_BASE`、`DB_PATH` 讀 `CONFIG`
+  - Layer 1：`lib/db.py`、`lib/embedder.py` 改讀 `CONFIG`；`config.yaml` 瘦身只留邏輯調參（rag / decay / event_importance / logging.level）
+  - Layer 2：`core/config.py`、`extraction/dataset_formatter.py`、`scripts/brain_status.py`、`scripts/setup_teachers.py` 全部改讀 `CONFIG`
+  - Layer 3：`db.py`、`gatekeeper.py` 改讀 `CONFIG`；`runner.py` 的 `_DEFAULT_WORK_DIR` 刻意保留硬寫並加註解（MLX 訓練工作區為 Layer 3 私有實作細節，不跨 layer）
+
+- **資料遷移**：`~/.local-brain/shiba-brain.db{,-wal,-shm}` + `logs/` + `queue/` → 專案 `./data/`（36 sessions 保留、integrity ok）
+
+### Fixed
+
+- 清除搬檔後一個 1.5 個月前遺留的 ghost uvicorn process（讀舊 config.py 把 `~/.local-brain/shiba-brain.db` 重建為 4096 byte 空殼）
+
 ## [0.8.0] - 2026-04-21
 
 ### Added

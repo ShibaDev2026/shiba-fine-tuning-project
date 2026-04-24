@@ -109,8 +109,8 @@ python3 layer_2_chamber/scripts/setup_teachers.py --setup
 # Layer 2 常駐服務（LaunchD）
 bash layer_2_chamber/scripts/setup_launchd.sh
 
-# 或手動啟動（開發用）
-cd layer_2_chamber/backend && uvicorn main:app --reload --port 8000
+# 或手動啟動（開發用，自專案根執行）
+uvicorn layer_2_chamber.backend.main:app --reload --port 8000
 
 # 手動批次評分 pending 樣本
 python3 layer_2_chamber/scripts/run_scorer.py
@@ -124,7 +124,9 @@ open http://localhost:8000/teacher-test
 
 ## 資料庫
 
-路徑：`~/.local-brain/shiba-brain.db`（Layer 1–3 共用）
+路徑：`./data/shiba-brain.db`（專案根相對，v0.9.0 搬遷）— Layer 1–3 共用，實際位置由 `config/shiba.yaml` 決定
+
+> 所有路徑、port、URL 統一讀 `shiba_config.CONFIG`（來源 `config/shiba.yaml`），執行環境透過 `SHIBA_RUNTIME=host|docker` env 區分 Ollama / Layer 3 URL。
 
 主要資料表：
 
@@ -140,10 +142,11 @@ open http://localhost:8000/teacher-test
 
 ## 版本歷程
 
-當前版本：**v0.8.0**（2026-04-21）
+當前版本：**v0.9.0**（2026-04-24）
 
 | 版本 | 日期 | 主要內容 |
 |------|------|---------|
+| v0.9.0 | 2026-04-24 | Phase 1 設定集中化（`config/shiba.yaml` + `shiba_config.py`）、DB 搬入 `./data/`、Layer 0 儀表板後端端點（router / memory / finetune trigger-status）|
 | v0.8.0 | 2026-04-21 | Teacher 擴充（6 個評分池）、Token 維度配額、LaunchD 常駐、冷啟動保護（few-shot / 動態 rank）、診斷 CLI |
 | v0.7.0 | 2026-04-21 | Teacher 配額監控（is_daily_limit_reached、每日重置排程）、routes_teachers API |
 | v0.6.0 | 2026-04-20 | 自我監督閉環：P0-1 Telemetry / P0-2 Shadow Gate / P1-1 動態觸發 / P1-2 多 Judge / P1-3 weight |

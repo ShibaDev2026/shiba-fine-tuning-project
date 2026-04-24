@@ -6,10 +6,12 @@ import logging
 import urllib.request
 from typing import Literal
 
+from shiba_config import CONFIG
+
 logger = logging.getLogger(__name__)
 
 CLASSIFIER_MODEL = "gemma3:2b"
-OLLAMA_BASE = "http://localhost:11434"
+OLLAMA_BASE = CONFIG.services.ollama_base_url
 ROUTER_TIMEOUT = 30  # 預留 model swap 時間（OLLAMA_MAX_LOADED_MODELS=1）
 
 _CLASSIFY_PROMPT = """\

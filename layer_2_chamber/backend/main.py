@@ -23,12 +23,15 @@ import logging
 import sqlite3
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from .api.routes_dashboard import router as dashboard_router
 from .api.routes_dataset import router as dataset_router
 from .api.routes_mcp import router as mcp_router
 from .api.routes_finetune import router as finetune_router
 from .api.routes_teachers import router as teachers_router, html_router as teacher_html_router
+from .api.routes_router import router as router_router
+from .api.routes_memory import router as memory_router
 from .core.background import setup_scheduler
 from .core.config import DB_PATH, init_layer2_db
 
@@ -70,6 +73,15 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # 開發用途
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.include_router(router_router)
+app.include_router(memory_router)
 app.include_router(dashboard_router)
 app.include_router(dataset_router)
 app.include_router(mcp_router)

@@ -16,6 +16,9 @@ from layer_2_chamber.backend.extraction.dataset_formatter import export_dataset
 
 logger = logging.getLogger(__name__)
 
+# Layer 3 host 獨立服務的 MLX 訓練工作區（checkpoint / adapter / GGUF 中間產物）
+# 刻意不進 config/shiba.yaml：此路徑為 Layer 3 私有實作細節，
+# 與 docker 生態無關（MPS 需求 → host only），也無跨 layer 共用需求。
 _DEFAULT_WORK_DIR = Path.home() / ".local-brain" / "finetune"
 
 

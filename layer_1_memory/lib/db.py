@@ -1,6 +1,9 @@
 """
 db.py — SQLite 連線管理、WAL 設定、init_db、基本 CRUD
 支援舊版 DB 自動 migration（PRAGMA table_info 檢查欄位後再 ALTER）
+
+DB 路徑來自 shiba_config.CONFIG（全專案唯一 source of truth）。
+Layer 1 專屬的邏輯參數（RAG / decay / event_importance）仍放 layer_1_memory/config.yaml。
 """
 
 import json
@@ -11,29 +14,15 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-import yaml
+from shiba_config import CONFIG
 
 # 設定 logger
 logger = logging.getLogger(__name__)
 
-# 讀取設定檔（config.yaml 同層上兩層）
-_CONFIG_PATH = Path(__file__).parent.parent / "config.yaml"
-_CONFIG_CACHE: dict | None = None
-
-
-def _load_config() -> dict:
-    """讀取 config.yaml；模組級快取，同 process 只讀檔一次"""
-    global _CONFIG_CACHE
-    if _CONFIG_CACHE is None:
-        with open(_CONFIG_PATH, "r", encoding="utf-8") as f:
-            _CONFIG_CACHE = yaml.safe_load(f)
-    return _CONFIG_CACHE
-
 
 def get_db_path() -> Path:
-    """從 config.yaml 取得 DB 絕對路徑"""
-    cfg = _load_config()
-    path = Path(cfg["db"]["path"]).expanduser()
+    """回傳 DB 絕對路徑（來自 CONFIG）；同步確保父目錄存在"""
+    path = CONFIG.paths.db
     path.parent.mkdir(parents=True, exist_ok=True)
     return path
 

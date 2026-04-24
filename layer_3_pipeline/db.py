@@ -4,7 +4,9 @@
 import sqlite3
 from pathlib import Path
 
-DB_PATH = Path.home() / ".local-brain" / "shiba-brain.db"
+from shiba_config import CONFIG
+
+DB_PATH = CONFIG.paths.db
 
 
 def get_connection() -> sqlite3.Connection:

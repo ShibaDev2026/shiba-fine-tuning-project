@@ -37,12 +37,21 @@ import traceback
 from datetime import datetime, timezone
 from pathlib import Path
 
-# 將 lib/ 加入 sys.path（無論從哪裡執行）
+# 將 lib/ 與專案根加入 sys.path（無論從哪裡執行，包含 ~/.claude/plugins/ 同步版）
 _HOOK_DIR = Path(__file__).parent
 _LAYER1_DIR = _HOOK_DIR.parent
+
+# 專案根：優先讀 SHIBA_PROJECT_ROOT env（hook 若被複製到 plugin 目錄，
+# 只有 env 能指回真正的專案根）；未設時 fallback 到 _LAYER1_DIR.parent。
+_PROJECT_ROOT = Path(
+    os.environ.get("SHIBA_PROJECT_ROOT", str(_LAYER1_DIR.parent))
+).resolve()
+
 sys.path.insert(0, str(_LAYER1_DIR))
+sys.path.insert(0, str(_PROJECT_ROOT))
 
 import yaml
+from shiba_config import CONFIG
 from lib.classifier import classify_session
 from lib.db import (
     deactivate_old_branches,
@@ -67,17 +76,22 @@ _CONFIG_PATH = _LAYER1_DIR / "config.yaml"
 
 
 def _load_config() -> dict:
+    """讀 Layer 1 專屬邏輯參數（rag / decay / event_importance / logging.level）。
+
+    路徑（DB / logs / queue）不在此檔，由 shiba_config.CONFIG 提供。
+    """
     with open(_CONFIG_PATH, "r", encoding="utf-8") as f:
         return yaml.safe_load(f)
 
 
 def _setup_logging(config: dict) -> None:
-    """初始化 file logger"""
-    log_path = Path(config["logging"]["path"]).expanduser()
+    """初始化 file logger — log 檔路徑來自 CONFIG.paths.logs_dir"""
+    log_path = CONFIG.paths.logs_dir / "memory.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
+    level_name = (config.get("logging") or {}).get("level", "INFO")
     logging.basicConfig(
         filename=str(log_path),
-        level=logging.INFO,
+        level=getattr(logging, level_name, logging.INFO),
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
@@ -90,10 +104,10 @@ def _setup_logging(config: dict) -> None:
 def _write_to_queue(payload: dict, config: dict) -> None:
     """
     寫入 fallback queue，Chamber 啟動後自動補同步。
-    queue 路徑：~/.local-brain/queue/<session-uuid>.json
+    queue 路徑來自 CONFIG.paths.queue_dir（不依賴 config.yaml）。
     """
     try:
-        queue_dir = Path(config["queue"]["path"]).expanduser()
+        queue_dir = CONFIG.paths.queue_dir
         queue_dir.mkdir(parents=True, exist_ok=True)
         session_uuid = payload.get("session_uuid", "unknown")
         queue_file = queue_dir / f"{session_uuid}.json"

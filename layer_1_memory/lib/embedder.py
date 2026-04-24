@@ -5,15 +5,20 @@ import math
 import urllib.request
 import urllib.error
 
+from shiba_config import CONFIG
+
 EMBED_MODEL = "nomic-embed-text"
 EMBED_DIM   = 768
 
 
-def get_embedding(text: str, base_url: str = "http://localhost:11434") -> list[float] | None:
+def get_embedding(text: str, base_url: str | None = None) -> list[float] | None:
     """
     向 Ollama 請求 embedding 向量。
+    base_url 未指定時依 runtime 從 CONFIG 讀取。
     Ollama 離線或失敗時回傳 None（由呼叫端 fallback 到 FTS5）。
     """
+    if base_url is None:
+        base_url = CONFIG.services.ollama_base_url
     payload = json.dumps({"model": EMBED_MODEL, "prompt": text}).encode()
     req = urllib.request.Request(
         f"{base_url}/api/embeddings",

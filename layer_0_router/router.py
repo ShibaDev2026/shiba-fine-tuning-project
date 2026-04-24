@@ -6,6 +6,8 @@ import logging
 import time
 import urllib.request
 
+from shiba_config import CONFIG
+
 from .classifier import classify_prompt
 from .compressor import compress_context
 from .telemetry import record_decision
@@ -13,7 +15,7 @@ from .telemetry import record_decision
 logger = logging.getLogger(__name__)
 
 LOCAL_MODEL = "qwen3:30b-a3b"  # 未來換成 shiba-block1:YYYYMMDD
-OLLAMA_BASE = "http://localhost:11434"
+OLLAMA_BASE = CONFIG.services.ollama_base_url
 QWEN_TIMEOUT = 30
 
 

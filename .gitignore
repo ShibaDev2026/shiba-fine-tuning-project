@@ -20,4 +20,18 @@ CLAUDE.md
 
 # 本地資料（不進版控）
 *.db
+*.db-wal
+*.db-shm
 *.log
+
+# 專案本地執行產物
+data/logs/
+data/queue/
+backups/*.db
+
+# IDE 與 Claude Code 本地設定
+.idea/.name
+.claude/
+
+# 舊前端（Phase 3-4 重寫，暫不入版控）
+frontend/

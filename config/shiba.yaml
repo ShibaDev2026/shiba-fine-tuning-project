@@ -1,0 +1,38 @@
+# shiba-fine-tuning-project 全專案唯一 source of truth
+# 所有相對路徑以「本檔案所在專案根」為基準，載入時自動轉絕對路徑
+# 呼叫方統一入口：from shiba_config import CONFIG
+#
+# 禁止在程式碼硬寫：DB 路徑、~/.local-brain、Ollama URL、Layer 3 URL
+# 新增 key 前先確認是否真屬「全專案共用」才加入
+
+# ----------------------------------------------------------------
+# 路徑（相對專案根，程式載入時轉絕對）
+# ----------------------------------------------------------------
+paths:
+  db: data/shiba-brain.db                 # SQLite 主檔（Layer 1/2/3 共用）
+  logs_dir: data/logs                     # hook/layer 日誌
+  queue_dir: data/queue                   # Layer 1 hook 排隊目錄
+  backups_dir: backups                    # scripts/db_backup.sh 輸出
+  external_dataset: data/external_dataset # Layer 2 通用指令集（Alpaca 等）
+
+# ----------------------------------------------------------------
+# 服務 port 與 URL
+# ----------------------------------------------------------------
+services:
+  backend_port: 8000                      # Layer 2 FastAPI（compose 內）
+  frontend_port: 9590                     # Nginx 對外唯一入口
+  layer3_port: 8001                       # Layer 3 launchd FastAPI（host）
+
+  # Ollama / Layer 3 URL：host 與 docker 兩組，載入時依 SHIBA_RUNTIME 擇一
+  ollama_base_url_host: http://localhost:11434
+  ollama_base_url_docker: http://host.docker.internal:11434
+  layer3_base_url_host: http://localhost:8001
+  layer3_base_url_docker: http://host.docker.internal:8001
+
+# ----------------------------------------------------------------
+# Runtime（由環境變數決定執行環境）
+# ----------------------------------------------------------------
+runtime:
+  # container 內由 docker-compose 設 SHIBA_RUNTIME=docker
+  # host 未設時預設 'host'
+  environment_var: SHIBA_RUNTIME

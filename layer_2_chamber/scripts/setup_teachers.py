@@ -28,6 +28,7 @@ from layer_2_chamber.backend.services.teacher_service import (
     get_api_key,
     upsert_teacher,
 )
+from shiba_config import CONFIG
 
 # ── Teacher 定義（對應 CLAUDE.md 免費師父清單）────────────────────────
 TEACHERS = [
@@ -90,7 +91,8 @@ TEACHERS = [
     {
         "name": "Local Qwen 7B",
         "model_id": "qwen2.5:7b",
-        "api_base": "http://localhost:11434/v1",
+        # 本地 Ollama 位置依 runtime 擇一：host→localhost、docker→host.docker.internal
+        "api_base": f"{CONFIG.services.ollama_base_url}/v1",
         "keychain_ref": None,             # 本地無需 key（C3）
         "priority": 5,                    # 最後備援，避免自評循環依賴
         "daily_limit": 9999,

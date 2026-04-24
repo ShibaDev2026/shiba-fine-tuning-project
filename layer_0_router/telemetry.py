@@ -6,9 +6,11 @@ import logging
 import sqlite3
 from pathlib import Path
 
+from shiba_config import CONFIG
+
 logger = logging.getLogger(__name__)
 
-DB_PATH = Path.home() / ".local-brain" / "shiba-brain.db"
+DB_PATH = CONFIG.paths.db
 
 # 否定採納的中英文關鍵字（觸發 auto rejected）
 _REJECTION_KEYWORDS = [

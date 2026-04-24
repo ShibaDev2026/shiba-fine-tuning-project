@@ -5,10 +5,12 @@ import json
 import logging
 import urllib.request
 
+from shiba_config import CONFIG
+
 logger = logging.getLogger(__name__)
 
 COMPRESSOR_MODEL = "gemma3:4b"
-OLLAMA_BASE = "http://localhost:11434"
+OLLAMA_BASE = CONFIG.services.ollama_base_url
 COMPRESS_TIMEOUT = 30  # 預留 model swap 時間
 _MIN_LEN_TO_COMPRESS = 200
 
