@@ -1,0 +1,43 @@
+# Build context 精簡：不複製進 image 的項目
+# （對應 .gitignore 但更嚴格，避免大檔案拖慢 docker build）
+
+# Python 產物
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Git / IDE / Claude
+.git/
+.gitignore
+.gitattributes
+.idea/
+.claude/
+
+# 本地資料（bind-mount 進入 container，不進 image）
+data/
+backups/
+*.db
+*.db-wal
+*.db-shm
+*.log
+
+# 舊前端（Phase 3-4 重寫，不需要進後端 image）
+frontend/
+
+# 文件與 plan（runtime 不需要）
+docs/
+*.md
+!README.md
+
+# macOS
+.DS_Store
+
+# Docker 本身
+docker-compose.yml
+.dockerignore

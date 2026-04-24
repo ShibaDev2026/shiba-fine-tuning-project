@@ -14,6 +14,7 @@ teacher_service.py — Teacher CRUD 與評分呼叫
 
 import json
 import logging
+import os
 import subprocess
 from datetime import date, datetime, timezone
 from typing import Any
@@ -175,11 +176,23 @@ def is_quota_available(conn: sqlite3.Connection, teacher: sqlite3.Row) -> bool:
 
 # ── Keychain ─────────────────────────────────────────────────────────────
 
+def _env_key_name(keychain_ref: str) -> str:
+    """將 keychain_ref 轉成 env 變數名（大寫、非英數底線 → 底線）。
+    e.g. "shiba-gemini-flash-api-key" → "SHIBA_TEACHER_KEY_SHIBA_GEMINI_FLASH_API_KEY"
+    """
+    safe = "".join(c if c.isalnum() else "_" for c in keychain_ref)
+    return f"SHIBA_TEACHER_KEY_{safe.upper()}"
+
+
 def get_api_key(keychain_ref: str) -> str | None:
     """
-    從 macOS Keychain 取得 API Key。
-    keychain_ref 為 Keychain item 的 service name。
+    取得 Teacher API Key。先試 macOS Keychain，失敗 fallback 環境變數。
+
+    - Host（macOS）：subprocess 呼叫 `security find-generic-password` 讀 Keychain
+    - Docker / Linux：Keychain 不存在，直接走 env fallback
+      env 名稱規則見 `_env_key_name`，docker-compose 透過 `.env` 注入
     """
+    # 1) macOS Keychain（host 環境）
     try:
         result = subprocess.run(
             ["security", "find-generic-password", "-s", keychain_ref, "-w"],
@@ -187,11 +200,20 @@ def get_api_key(keychain_ref: str) -> str | None:
         )
         if result.returncode == 0:
             return result.stdout.strip()
-        logger.warning("Keychain 找不到 ref=%s", keychain_ref)
-        return None
+    except FileNotFoundError:
+        # `security` 指令不存在（非 macOS，例如 docker container）— 靜默改走 env
+        pass
     except Exception as e:
-        logger.error("Keychain 存取失敗 ref=%s: %s", keychain_ref, e)
-        return None
+        logger.warning("Keychain 存取例外 ref=%s: %s（嘗試 env fallback）", keychain_ref, e)
+
+    # 2) 環境變數 fallback
+    env_name = _env_key_name(keychain_ref)
+    value = os.environ.get(env_name)
+    if value:
+        return value.strip()
+
+    logger.warning("API Key 找不到：Keychain 與 env(%s) 皆無 ref=%s", env_name, keychain_ref)
+    return None
 
 
 # ── 評分呼叫 ─────────────────────────────────────────────────────────────

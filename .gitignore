@@ -33,5 +33,8 @@ backups/*.db
 .idea/.name
 .claude/
 
+# Docker .env（含 Teacher API key，絕對不進版控）
+.env
+
 # 舊前端（Phase 3-4 重寫，暫不入版控）
 frontend/
