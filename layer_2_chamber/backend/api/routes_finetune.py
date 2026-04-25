@@ -4,20 +4,31 @@
 import sqlite3
 import subprocess
 from datetime import datetime
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
+import httpx
+
 from ..core.config import get_db
+from shiba_config import CONFIG
 
 router = APIRouter(prefix="/api/v1/finetune", tags=["finetune"])
+
+# Layer 3 host 服務 URL（host 環境 localhost:8001，docker 環境 host.docker.internal:8001）
+_L3_BASE = CONFIG.services.layer3_base_url
 
 EBBINGHAUS_INTERVALS = [1, 2, 4, 7, 15, 30]
 
 
 @router.post("/trigger/{adapter_block}")
-def trigger_finetune(adapter_block: int, conn: sqlite3.Connection = Depends(get_db)):
-    """手動觸發指定 block 的 fine-tune（threshold=0，不受樣本數限制）"""
-    from layer_3_pipeline.runner import run_finetune_if_ready
-    result = run_finetune_if_ready(conn, adapter_block=adapter_block, threshold=0)
-    return result or {"status": "skipped", "reason": "no approved samples"}
+def trigger_finetune(adapter_block: int):
+    """轉發手動觸發至 Layer 3 host 服務（HTTP POST）"""
+    try:
+        resp = httpx.post(f"{_L3_BASE}/trigger/{adapter_block}", timeout=600)
+        resp.raise_for_status()
+        return resp.json()
+    except httpx.ConnectError:
+        raise HTTPException(status_code=503, detail="Layer 3 服務未啟動（請執行 setup_layer3_launchd.sh）")
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=502, detail=f"Layer 3 回應錯誤：{e.response.text}")
 
 
 @router.get("/runs")

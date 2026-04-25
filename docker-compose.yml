@@ -1,0 +1,24 @@
+services:
+  backend:
+    build: ./layer_2_chamber/backend
+    expose:
+      - "8000"
+    working_dir: /app
+    volumes:
+      - ./:/app:ro          # 整個專案唯讀掛入（讀 config + 跨 layer import）
+      - ./data:/app/data    # DB + logs + queue（可寫）
+      - ./backups:/app/backups  # 備份輸出（可寫）
+    environment:
+      - SHIBA_RUNTIME=docker
+      - PYTHONPATH=/app
+    extra_hosts:
+      - "host.docker.internal:host-gateway"  # 讓 Ollama（host）可被 container 存取
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend-vue
+    ports:
+      - "9590:80"
+    depends_on:
+      - backend
+    restart: unless-stopped

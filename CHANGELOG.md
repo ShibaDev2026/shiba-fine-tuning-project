@@ -3,6 +3,37 @@
 所有版本變更依照 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/) 格式記錄。
 版本號遵循 [Semantic Versioning](https://semver.org/lang/zh-TW/)。
 
+## [1.0.0] - 2026-04-25
+
+### Added
+
+- **Phase 3 — Vue 3 + Vite 前端 bootstrap**
+  - `frontend-vue/`：Vue 3 + TypeScript + Vite 8 + vue-router 4 + Pinia
+  - `tailwind.config.js`：全部 CSS 設計 token 轉換（colors / fontFamily / fontSize / borderRadius / boxShadow）
+  - `src/style.css`：Google Fonts（Noto Sans TC / IBM Plex Mono / Space Grotesk）+ Tailwind base
+
+- **Phase 4 — 元件搬遷（React CDN → Vue 3 SFC）**
+  - 10 shared 元件：Badge、StatusDot、QuotaBar、DataTable、DetailPanel、SectionHeader、StatCard、Btn、Pagination、DateFilterBar
+  - 2 圖表元件：MemoryBarChart（Chart.js stacked bar）、RouterDonut（doughnut）
+  - Sidebar（vue-router-link + backend 狀態探測）
+  - 4 Phase views：PhaseRouter（決策紀錄 + donut + 對話脈絡）、PhaseMemory（sessions + 趨勢圖）、PhaseTeachers（師父配額 + 投票）、PhasePipeline（flow 動畫 + Ollama 資源）
+  - `src/api/client.ts`（native fetch wrapper，base `/api/v1`）、`src/api/dateFilter.ts`（共用日期 QS 建構器）
+
+- **Phase 5 — docker-compose 整合**
+  - `frontend-vue/Dockerfile`：multi-stage（node:20-alpine build → nginx:alpine serve）
+  - `frontend-vue/nginx.conf`：SPA fallback + `/api/` proxy → backend:8000
+  - `docker-compose.yml`：frontend:9590 + backend:8000（internal） + `./data` / `./backups` volume
+
+- **Phase 6 — Layer 3 獨立服務**
+  - `layer_3_pipeline/server.py`：FastAPI :8001，`/health` / `/trigger/{block}` / `/runs`
+  - `com.shiba.layer3.plist` + `setup_layer3_launchd.sh`：launchd 常駐安裝腳本
+  - Layer 2 `routes_finetune.py` + `background.py`：direct import → HTTP POST（`httpx`）至 Layer 3；Layer 3 掛掉時 log warning 不拋異常
+  - `requirements.txt` 補 `httpx==0.28.1`
+
+- **Phase 7 — 收尾**
+  - `scripts/db_backup.sh`：SQLite `.backup` 確保 WAL 一致性，路徑從 `config/shiba.yaml` 讀取
+  - `frontend/_legacy_react_cdn/`：舊 React CDN 原始碼重命名保留
+
 ## [0.9.0] - 2026-04-24
 
 ### Added

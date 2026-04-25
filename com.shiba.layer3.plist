@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- launchd plist：Shiba Layer 3 Pipeline（host 常駐，需要 MPS / MLX）-->
+<!-- 安裝：bash setup_layer3_launchd.sh -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.shiba.layer3</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/opt/python@3.14/bin/python3</string>
+    <string>-m</string>
+    <string>uvicorn</string>
+    <string>layer_3_pipeline.server:app</string>
+    <string>--host</string>
+    <string>127.0.0.1</string>
+    <string>--port</string>
+    <string>8001</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>PROJECT_ROOT_PLACEHOLDER</string>
+
+  <!-- stdout / stderr 輸出至 data/logs/ -->
+  <key>StandardOutPath</key>
+  <string>PROJECT_ROOT_PLACEHOLDER/data/logs/layer3_stdout.log</string>
+  <key>StandardErrorPath</key>
+  <string>PROJECT_ROOT_PLACEHOLDER/data/logs/layer3_stderr.log</string>
+
+  <!-- 掛掉自動重啟（間隔 10 秒）-->
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+
+  <!-- 登入後啟動 -->
+  <key>RunAtLoad</key>
+  <true/>
+</dict>
+</plist>

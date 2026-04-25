@@ -185,14 +185,18 @@ def _reset_daily_limits(conn_factory) -> None:
 
 
 def _run_finetune_check(conn_factory) -> None:
-    from layer_3_pipeline.runner import run_finetune_if_ready
+    """排程觸發：HTTP POST 至 Layer 3 host 服務，Layer 3 掛掉時 log 警告不拋異常"""
+    import httpx
+    from shiba_config import CONFIG
+    base = CONFIG.services.layer3_base_url
     for block in (1, 2):
-        conn = conn_factory()
         try:
-            result = run_finetune_if_ready(conn, adapter_block=block)
+            resp = httpx.post(f"{base}/trigger/{block}", timeout=600)
+            resp.raise_for_status()
+            result = resp.json()
             if result:
                 logger.info("fine-tune 排程完成 block%d：%s", block, result)
+        except httpx.ConnectError:
+            logger.warning("fine-tune 排程略過 block%d：Layer 3 服務未啟動", block)
         except Exception as e:
             logger.error("fine-tune 排程失敗 block%d：%s", block, e)
-        finally:
-            conn.close()
