@@ -1,6 +1,8 @@
 services:
   backend:
-    build: ./layer_2_chamber/backend
+    build:
+      context: .
+      dockerfile: layer_2_chamber/backend/Dockerfile
     expose:
       - "8000"
     working_dir: /app
