@@ -5,12 +5,14 @@
 ## 系統架構
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│  Layer 0  路由層        Gemma 分類 → local / Claude      │
-│  Layer 1  日常記憶層    Stop Hook → SQLite → FTS5 RAG    │
-│  Layer 2  精神時光屋    問題集 × Judge → 訓練資料集       │
-│  Layer 3  訓練管道      MLX LoRA → GGUF → Ollama         │
-└─────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│  前端儀表板   Vue 3 + Nginx        localhost:9590             │
+│               ↕ /api/* proxy                                  │
+│  Layer 0  路由層        Gemma 分類 → local / Claude           │
+│  Layer 1  日常記憶層    Stop Hook → SQLite → FTS5 RAG         │
+│  Layer 2  精神時光屋    問題集 × Judge → 訓練資料集（:8000）  │
+│  Layer 3  訓練管道      MLX LoRA → GGUF → Ollama（:8001）    │
+└──────────────────────────────────────────────────────────────┘
 ```
 
 ### Layer 0 — 路由層
@@ -93,33 +95,48 @@
 
 ## 快速啟動
 
+### 標準啟動（docker-compose，v1.0.0）
+
 ```bash
-# 環境變數（Ollama 優化）
+# 1. 環境變數（Ollama 優化，host 需要設定）
 export OLLAMA_FLASH_ATTENTION=1
 export OLLAMA_MAX_LOADED_MODELS=1
 export OLLAMA_KV_CACHE_TYPE=q8_0
 export OLLAMA_KEEP_ALIVE=10m
 
-# Layer 1 hooks 安裝
+# 2. Layer 1 hooks 安裝（Claude Code 在 host 執行，只需一次）
 cd layer_1_memory && bash setup.sh
 
-# Layer 2 設定 Teacher API Key（首次）
+# 3. Teacher API Key 設定（首次）
 python3 layer_2_chamber/scripts/setup_teachers.py --setup
 
-# Layer 2 常駐服務（LaunchD）
-bash layer_2_chamber/scripts/setup_launchd.sh
+# 4. 啟動前端 + 後端（docker-compose）
+docker compose up -d
 
-# 或手動啟動（開發用，自專案根執行）
+# 5. Layer 3 host 服務（MLX 需 MPS，不走 docker）
+bash setup_layer3_launchd.sh
+
+# 儀表板
+open http://localhost:9590
+```
+
+### 開發模式（不用 docker）
+
+```bash
+# 後端（自專案根執行）
 uvicorn layer_2_chamber.backend.main:app --reload --port 8000
+
+# 前端
+cd frontend-vue && npm run dev   # proxy → localhost:8000
+
+# 系統診斷
+python3 layer_2_chamber/scripts/brain_status.py
 
 # 手動批次評分 pending 樣本
 python3 layer_2_chamber/scripts/run_scorer.py
 
-# 系統狀態診斷
-python3 layer_2_chamber/scripts/brain_status.py
-
-# Teacher 連線測試（瀏覽器）
-open http://localhost:8000/teacher-test
+# SQLite 備份
+bash scripts/db_backup.sh
 ```
 
 ## 資料庫
@@ -142,14 +159,15 @@ open http://localhost:8000/teacher-test
 
 ## 版本歷程
 
-當前版本：**v0.9.0**（2026-04-24）
+當前版本：**v1.0.0**（2026-04-25）
 
 | 版本 | 日期 | 主要內容 |
 |------|------|---------|
-| v0.9.0 | 2026-04-24 | Phase 1 設定集中化（`config/shiba.yaml` + `shiba_config.py`）、DB 搬入 `./data/`、Layer 0 儀表板後端端點（router / memory / finetune trigger-status）|
-| v0.8.0 | 2026-04-21 | Teacher 擴充（6 個評分池）、Token 維度配額、LaunchD 常駐、冷啟動保護（few-shot / 動態 rank）、診斷 CLI |
-| v0.7.0 | 2026-04-21 | Teacher 配額監控（is_daily_limit_reached、每日重置排程）、routes_teachers API |
-| v0.6.0 | 2026-04-20 | 自我監督閉環：P0-1 Telemetry / P0-2 Shadow Gate / P1-1 動態觸發 / P1-2 多 Judge / P1-3 weight |
+| v1.0.0 | 2026-04-25 | Vue 3 + Vite 前端、docker-compose（nginx:9590 + FastAPI:8000）、Layer 3 launchd 獨立服務、端對端驗證全通過 |
+| v0.9.0 | 2026-04-24 | 設定集中化（`config/shiba.yaml`）、DB 搬入 `./data/`、後端 docker 化、儀表板 API 完整 |
+| v0.8.0 | 2026-04-21 | Teacher 擴充（6 個評分池）、Token 維度配額、LaunchD 常駐、冷啟動保護 |
+| v0.7.0 | 2026-04-21 | Teacher 配額監控（每日重置排程）|
+| v0.6.0 | 2026-04-20 | 自我監督閉環（P0-1 Telemetry / P0-2 Shadow Gate / P1-1 動態觸發 / P1-2 多 Judge / P1-3 weight）|
 | v0.5.0 | 2026-04-19 | Layer 0 路由層（Gemma 分類 + 壓縮）|
 | v0.4.0 | 2026-04-19 | Layer 3 Fine-tuning Pipeline（MLX LoRA → GGUF → Ollama）|
 | v0.1.0 | 2026-04-17 | Layer 1 記憶層 + Layer 2 精神時光屋 基礎架構 |
