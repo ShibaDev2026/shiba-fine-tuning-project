@@ -398,7 +398,7 @@ def _extract_valid_exchanges(
             if r["role"] == "user":
                 break
             if r["role"] == "assistant":
-                if r["has_tool_use"] and _has_error_tool(r, error_tool_ids):
+                if r["has_tool_use"] and _has_error_tool(conn, r["msg_id"], error_tool_ids):
                     has_error = True
                     break
                 asst_rows.append(r)
@@ -486,13 +486,15 @@ def _get_error_tool_ids(conn: sqlite3.Connection, session_id: int) -> set[str]:
     return {r["tool_use_id"] for r in rows}
 
 
-def _has_error_tool(msg: sqlite3.Row, error_ids: set[str]) -> bool:
-    """判斷此訊息是否使用了出錯的工具"""
+def _has_error_tool(conn: sqlite3.Connection, msg_id: int, error_ids: set[str]) -> bool:
+    """判斷此訊息的 tool_executions 是否有在 error_ids 內的失敗工具呼叫"""
     if not error_ids:
         return False
-    tool_names = _parse_json_list(msg["tool_names"])
-    # tool_names 是工具名，error_ids 是 tool_use_id；保守策略：有任何 error 就標記
-    return bool(error_ids)
+    rows = conn.execute(
+        "SELECT tool_use_id FROM tool_executions WHERE message_id = ?",
+        (msg_id,),
+    ).fetchall()
+    return any(r["tool_use_id"] in error_ids for r in rows)
 
 
 def _build_alpaca_sample(

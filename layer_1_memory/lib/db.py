@@ -203,6 +203,27 @@ def init_db() -> None:
                 conn.execute("ALTER TABLE exchange_embeddings ADD COLUMN source_instruction TEXT")
                 logger.info("Migration: exchange_embeddings 新增 source_instruction 欄位")
 
+        # Migration: router_decisions 表（Layer 0 Telemetry，無對應 schema.sql）
+        if not _table_exists(conn, "router_decisions"):
+            conn.execute("""
+                CREATE TABLE router_decisions (
+                    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id       TEXT,
+                    prompt_hash      TEXT NOT NULL,
+                    classification   TEXT NOT NULL,
+                    reason           TEXT,
+                    local_output     TEXT,
+                    user_accepted    INTEGER,
+                    user_rewrote     INTEGER DEFAULT 0,
+                    acceptance_source TEXT,
+                    latency_ms       INTEGER,
+                    tokens_prompt    INTEGER,
+                    tokens_response  INTEGER,
+                    created_at       TEXT NOT NULL DEFAULT (datetime('now'))
+                )
+            """)
+            logger.info("Migration: 建立 router_decisions 表")
+
         conn.commit()
         logger.info("DB 初始化完成：%s", get_db_path())
 

@@ -24,6 +24,33 @@ app = FastAPI(title="Shiba Layer 3 Pipeline", version="0.9.0")
 logger = logging.getLogger("layer3.server")
 
 
+@app.on_event("startup")
+def _startup():
+    """啟動時確保 finetune_runs 表存在（無 schema.sql，在此幂等建立）"""
+    conn = _conn_factory()
+    try:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS finetune_runs (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                adapter_block INTEGER NOT NULL,
+                status        TEXT NOT NULL DEFAULT 'pending',
+                dataset_path  TEXT,
+                adapter_path  TEXT,
+                gguf_path     TEXT,
+                ollama_model  TEXT,
+                sample_count  INTEGER,
+                error_msg     TEXT,
+                started_at    TEXT,
+                finished_at   TEXT,
+                created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
+        conn.commit()
+        logger.info("finetune_runs 表確認完成")
+    finally:
+        conn.close()
+
+
 @app.get("/health")
 def health():
     return {"status": "ok", "layer": 3}

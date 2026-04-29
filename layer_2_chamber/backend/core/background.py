@@ -149,6 +149,31 @@ def _run_extraction_job(conn_factory) -> None:
     conn = conn_factory()
     try:
         run_extraction_v2(conn)
+
+        # W4 監控：raw 樣本若逾 24h 未升 pending，表示 refiner 可能離線
+        stale = conn.execute(
+            "SELECT COUNT(*) FROM training_samples "
+            "WHERE status='raw' AND created_at < datetime('now', '-1 day')"
+        ).fetchone()[0]
+        if stale > 0:
+            logger.warning("有 %d 筆 raw 樣本逾 24h 未精煉，請確認 refiner job 或 Ollama 狀態", stale)
+
+        # W5 回饋補齊：extraction 完成後對新樣本補一次 weight 同步
+        # （stop_hook 執行時樣本尚未寫入，採納回饋在此時才能正確套用）
+        try:
+            from layer_0_router.telemetry import sync_sample_weights
+            new_sessions = [
+                r["session_id"] for r in conn.execute(
+                    "SELECT DISTINCT session_id FROM training_samples "
+                    "WHERE status='raw' AND weight=1.0 AND session_id IS NOT NULL"
+                ).fetchall()
+            ]
+            for sid in new_sessions:
+                sync_sample_weights(sid)
+            if new_sessions:
+                logger.info("extraction 後 weight 同步：%d sessions", len(new_sessions))
+        except Exception as e:
+            logger.debug("weight 同步略過（Layer 0 未啟動或無資料）：%s", e)
     finally:
         conn.close()
 
