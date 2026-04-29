@@ -145,10 +145,10 @@ def setup_scheduler(app, conn_factory):
 
 
 def _run_extraction_job(conn_factory) -> None:
-    from ..extraction.pipeline import run_extraction
+    from ..extraction.pipeline import run_extraction_v2
     conn = conn_factory()
     try:
-        run_extraction(conn)
+        run_extraction_v2(conn)
     finally:
         conn.close()
 

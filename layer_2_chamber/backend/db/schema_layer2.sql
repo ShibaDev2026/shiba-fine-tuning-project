@@ -38,7 +38,7 @@ CREATE TABLE IF NOT EXISTS questions (
 CREATE TABLE IF NOT EXISTS training_samples (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     -- 來源：路徑A = Layer1橋接；路徑B = error-repair 重生
-    source          TEXT NOT NULL CHECK(source IN ('layer1_bridge', 'error_repair')),
+    source          TEXT NOT NULL CHECK(source IN ('layer1_bridge', 'layer1_bridge_v2', 'error_repair')),
     session_id      TEXT,                         -- Layer 1 session_id（路徑A）
     question_id     INTEGER REFERENCES questions(id), -- 路徑B 題目
     teacher_id      INTEGER REFERENCES teachers(id),

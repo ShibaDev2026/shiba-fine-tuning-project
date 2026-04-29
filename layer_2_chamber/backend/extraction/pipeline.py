@@ -20,6 +20,9 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
+# 共用 Layer 1 的 raw_content 解壓函式（zlib），避免重複實作
+from layer_1_memory.lib.db import decompress_text
+
 logger = logging.getLogger(__name__)
 
 # ── adapter_block 分類規則（對應 CLAUDE.md 兩個 LoRA block）────────────
@@ -46,6 +49,39 @@ class ExtractedSample:
 
 
 # ── 公開入口 ─────────────────────────────────────────────────────────────
+
+def run_extraction_v2(conn: sqlite3.Connection) -> dict:
+    """
+    執行完整抽取流程（路徑 A v2 + 路徑 B），將新樣本寫入 training_samples。
+    路徑 A 使用 exchanges 語意層（layer1_bridge_v2），取代舊版 state machine。
+    回傳統計：{'path_a': int, 'path_b': int, 'skipped': int}
+    """
+    stats = {"path_a": 0, "path_b": 0, "skipped": 0}
+
+    path_a_samples = _extract_path_a_v2(conn)
+    path_b_samples = _extract_path_b(conn)
+
+    for sample in path_a_samples:
+        if _is_duplicate(conn, sample):
+            stats["skipped"] += 1
+            continue
+        _insert_sample(conn, sample)
+        stats["path_a"] += 1
+
+    for sample in path_b_samples:
+        if _is_duplicate(conn, sample):
+            stats["skipped"] += 1
+            continue
+        _insert_sample(conn, sample)
+        stats["path_b"] += 1
+
+    conn.commit()
+    logger.info(
+        "抽取完成（v2）path_a=%d path_b=%d skipped=%d",
+        stats["path_a"], stats["path_b"], stats["skipped"],
+    )
+    return stats
+
 
 def run_extraction(conn: sqlite3.Connection) -> dict:
     """
@@ -137,6 +173,175 @@ def _extract_path_a(conn: sqlite3.Connection) -> list[ExtractedSample]:
             samples.append(sample)
 
     return samples
+
+
+# ── 路徑 A v2：直接以 Layer 1 exchanges 語意層為單位 ───────────────────────
+#
+# 與 v1 對照：
+#   v1：從 branch_messages JOIN messages 重跑 state machine 切 exchange
+#       三個結構性問題（邊界判定脆弱、錯誤標記過粗、語意層重複實作）
+#   v2：直接讀 exchanges 表（Layer 1 已預先標記 has_error / has_final_text /
+#       status='completed'），不再自行切回合
+#
+# 樣本形狀維持 session→1 sample 不變，僅改抽法。
+
+# 主 SQL：一次撈所有候選 exchange，後續 group by session
+_PATH_A_V2_SQL = """
+    SELECT s.id AS session_id, s.uuid AS session_uuid, s.event_types,
+           e.id AS exchange_id, e.exchange_idx,
+           e.user_message_id, e.final_assistant_message_id,
+           e.has_tool_use, e.tool_names AS exchange_tool_names,
+           b.id AS branch_id, b.decay_score
+    FROM exchanges e
+    JOIN branches b ON b.id = e.branch_id AND b.is_active = 1
+    JOIN sessions s ON s.id = e.session_id
+    WHERE b.decay_score >= ?
+      AND e.status = 'completed'
+      AND e.has_error = 0
+      AND e.has_final_text = 1
+      AND s.uuid NOT IN (
+          SELECT session_id FROM training_samples
+          WHERE source = 'layer1_bridge_v2' AND session_id IS NOT NULL
+      )
+    ORDER BY s.id, b.decay_score DESC, e.exchange_idx
+"""
+
+
+def _extract_path_a_v2(conn: sqlite3.Connection) -> list[ExtractedSample]:
+    """
+    路徑 A v2：以 exchanges 表為基礎抽取 layer1_bridge_v2 樣本。
+
+    流程：
+    1. SQL 一次撈完所有乾淨 exchange（has_error=0 / has_final_text=1 / status=completed）
+    2. group by session_uuid，同 session 取最高 decay_score 的 branch
+    3. 套用 event_type 篩選（沿用 v1 的 _BRIDGE_EVENT_TYPES）
+    4. block1 取 tool_executions 指令、block2 取 final_assistant 文字
+    5. 合併為單筆 Alpaca 樣本，source='layer1_bridge_v2'
+    """
+    rows = conn.execute(_PATH_A_V2_SQL, (_MIN_DECAY_SCORE,)).fetchall()
+
+    # group by session_uuid，同一 session 只保留最高 decay_score 的 branch
+    # （SQL 已 ORDER BY decay_score DESC，第一個遇到的 branch_id 即為最佳）
+    by_session: dict[str, dict] = {}
+    for r in rows:
+        uuid = r["session_uuid"]
+        if uuid not in by_session:
+            by_session[uuid] = {"branch_id": r["branch_id"], "exchanges": []}
+        if r["branch_id"] == by_session[uuid]["branch_id"]:
+            by_session[uuid]["exchanges"].append(r)
+
+    samples: list[ExtractedSample] = []
+    for session_uuid, data in by_session.items():
+        # 跳過 exchange 數 < 2 的 session（保留 v1 的 exchange_count >= 2 等價條件）
+        if len(data["exchanges"]) < 2:
+            continue
+
+        # event_type 篩選（同 v1）：取第一個 exchange 的 session.event_types 即可
+        event_types = _parse_json_list(data["exchanges"][0]["event_types"])
+        matched = _BRIDGE_EVENT_TYPES & set(event_types)
+        if not matched:
+            continue
+
+        primary_event = _pick_primary_event(event_types, matched)
+        adapter_block = _get_adapter_block(primary_event)
+        use_tool_output = (adapter_block == 1)
+
+        # 將每個 exchange 物質化為 dict（含 user / assistant 文字）
+        exchange_dicts: list[dict] = []
+        for ex_row in data["exchanges"]:
+            ex_dict = _materialize_exchange_v2(conn, ex_row, use_tool_output)
+            if ex_dict:
+                exchange_dicts.append(ex_dict)
+
+        if not exchange_dicts:
+            continue
+
+        sample = _build_alpaca_sample(
+            source="layer1_bridge_v2",
+            session_uuid=session_uuid,
+            event_type=primary_event,
+            exchanges=exchange_dicts,
+            adapter_block=adapter_block,
+        )
+        if sample:
+            samples.append(sample)
+
+    return samples
+
+
+def _materialize_exchange_v2(
+    conn: sqlite3.Connection,
+    ex_row: sqlite3.Row,
+    use_tool_output: bool,
+) -> dict | None:
+    """
+    從一個 exchange row 取出 user content 與 output。
+    block1（use_tool_output=True）：output 為 exchange 內 assistant_tool 訊息的指令序列
+    block2（use_tool_output=False）：output 為 final_assistant_message_id 的純文字
+    """
+    # user content：由 messages 表讀（exchanges.user_text_preview 會截斷，不可用於訓練）
+    user_msg = conn.execute(
+        "SELECT content, raw_content, is_compressed FROM messages WHERE id = ?",
+        (ex_row["user_message_id"],),
+    ).fetchone()
+    user_content = _resolve_user_text(user_msg)
+    if not user_content:
+        return None
+
+    if use_tool_output:
+        # block1：取此 exchange 內所有 assistant_tool 訊息 ID，餵 _collect_tool_commands
+        msg_ids = [
+            r["message_id"]
+            for r in conn.execute(
+                "SELECT message_id FROM exchange_messages "
+                "WHERE exchange_id = ? AND role_in_exchange = 'assistant_tool' "
+                "ORDER BY seq",
+                (ex_row["exchange_id"],),
+            ).fetchall()
+        ]
+        cmds = _collect_tool_commands(conn, msg_ids)
+        if not cmds:
+            return None
+        return {
+            "user": user_content,
+            "assistant": cmds,
+            "has_tool_use": True,
+            "tool_names": _parse_json_list(ex_row["exchange_tool_names"]),
+        }
+
+    # block2：直接取 final_assistant_message_id 的 content
+    if ex_row["final_assistant_message_id"] is None:
+        return None
+    final_msg = conn.execute(
+        "SELECT content, has_tool_use, tool_names FROM messages WHERE id = ?",
+        (ex_row["final_assistant_message_id"],),
+    ).fetchone()
+    if not final_msg or not (final_msg["content"] or "").strip():
+        return None
+    return {
+        "user": user_content,
+        "assistant": final_msg["content"].strip(),
+        "has_tool_use": bool(final_msg["has_tool_use"]),
+        "tool_names": _parse_json_list(final_msg["tool_names"]),
+    }
+
+
+def _resolve_user_text(user_msg: sqlite3.Row | None) -> str | None:
+    """
+    取 user 訊息的純文字。content 為空時 fallback 解 raw_content（zlib）。
+    回傳 trimmed 字串；無內容時回 None。
+    """
+    if user_msg is None:
+        return None
+    content = (user_msg["content"] or "").strip()
+    if content:
+        return content
+    # content 空 → 嘗試 raw_content 解壓
+    text = decompress_text(user_msg["raw_content"], user_msg["is_compressed"])
+    if not text:
+        return None
+    text = text.strip()
+    return text or None
 
 
 def _get_best_branch(conn: sqlite3.Connection, session_id: int) -> sqlite3.Row | None:

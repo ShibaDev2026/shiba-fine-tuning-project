@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse
 import sqlite3
 
 from ..core.config import get_db, init_layer2_db
-from ..extraction.pipeline import run_extraction
+from ..extraction.pipeline import run_extraction_v2
 from ..extraction.dataset_formatter import export_dataset
 from ..services.refiner_service import refine_pending_raw_samples
 
@@ -31,7 +31,7 @@ def trigger_extraction(conn: sqlite3.Connection = Depends(get_db)):
     執行 pipeline 抽取（路徑 A + B）。
     回傳本次新增的樣本統計。
     """
-    stats = run_extraction(conn)
+    stats = run_extraction_v2(conn)
     return {"extracted_at": datetime.now(timezone.utc).isoformat(), **stats}
 
 
