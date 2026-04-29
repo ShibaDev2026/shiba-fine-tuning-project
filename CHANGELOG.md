@@ -3,6 +3,25 @@
 所有版本變更依照 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/) 格式記錄。
 版本號遵循 [Semantic Versioning](https://semver.org/lang/zh-TW/)。
 
+## [1.1.0] - 2026-04-29
+
+### Added
+
+- **Layer 1 — exchanges 語意層（commit 7091d4e）**
+  - 新增 `exchanges` + `exchange_messages` 兩張語意表，記錄每個四步循環（user → tool → tool_result → final_assistant）的完整邊界與預計算欄位（`has_error` / `has_final_text` / `status`）
+  - `lib/exchanges.py`：`ExchangeBuilder` state machine，`backfill_exchanges()` 批次補填
+  - `hooks/stop_hook.py` 整合：每次 session 結束自動寫入 exchanges
+  - backfill 驗證：17,790 筆 exchange，`status='completed'` 率 > 95%
+
+- **Layer 2 — Path A v2（exchanges 語意層，commit ba0ec43）**
+  - `extraction/pipeline.py`：新增 `run_extraction_v2` / `_extract_path_a_v2` / `_materialize_exchange_v2` / `_resolve_user_text`（raw_content zlib fallback）
+  - 直接讀 `exchanges` 表取代舊版 state machine，解決三個結構性問題：邊界判定脆弱、錯誤標記過粗、語意層重複實作
+  - `background.py` + `routes_dataset.py`：caller 切換至 `run_extraction_v2`（source=`layer1_bridge_v2`）
+  - `schema_layer2.sql`：`training_samples.source` CHECK 加入 `layer1_bridge_v2`
+  - `tools/compare_extraction.py`：A/B 對比腳本（純讀）
+  - `tests/layer2/test_pipeline_v2.py`：9 tests（block1/2、has_error、decay_score、去重、resolve_user_text）
+  - 舊版 `run_extraction` / `_extract_path_a` 保留不動，Path B 不受影響
+
 ## [1.0.0] - 2026-04-25
 
 ### Added

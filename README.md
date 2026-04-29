@@ -36,7 +36,7 @@
 
 將對話自動轉化為高品質訓練樣本：
 
-- `extraction/pipeline.py`：Layer 1 橋接（自動抽取）+ error-repair 路徑
+- `extraction/pipeline.py`：Layer 1 橋接 v2（`exchanges` 語意層直接抽取）+ error-repair 路徑
 - `services/multi_judge.py`：**P1-2** 三方 Judge 投票（SEAL ReSTEM^EM）
 - `extraction/dataset_formatter.py`：Alpaca JSONL 輸出，Ebbinghaus 分桶 replay
 - `api/`：FastAPI 監控儀表板 + MCP server
@@ -151,18 +151,22 @@ bash scripts/db_backup.sh
 |----|------|
 | `sessions` | 對話 session 統計 |
 | `messages` | 所有訊息 |
+| `branches` | 對話分支（含 decay_score） |
+| `exchanges` | 四步循環語意單元（v1.1.0，has_error / has_final_text） |
+| `exchange_messages` | exchange ↔ message 橋接（role_in_exchange） |
 | `sessions_fts` | FTS5 全文索引 |
 | `exchange_embeddings` | 因果對向量（BGE-M3） |
-| `training_samples` | 訓練樣本（含 weight） |
+| `training_samples` | 訓練樣本（含 weight，source=layer1_bridge_v2） |
 | `router_decisions` | 路由決策與採納率 |
 | `finetune_runs` | 訓練執行記錄 |
 
 ## 版本歷程
 
-當前版本：**v1.0.0**（2026-04-25）
+當前版本：**v1.1.0**（2026-04-29）
 
 | 版本 | 日期 | 主要內容 |
 |------|------|---------|
+| v1.1.0 | 2026-04-29 | Layer 1 exchanges 語意層（17,790 筆）、Layer 2 Path A v2（直接讀 exchanges 取代 state machine）、A/B 對比腳本 |
 | v1.0.0 | 2026-04-25 | Vue 3 + Vite 前端、docker-compose（nginx:9590 + FastAPI:8000）、Layer 3 launchd 獨立服務、端對端驗證全通過 |
 | v0.9.0 | 2026-04-24 | 設定集中化（`config/shiba.yaml`）、DB 搬入 `./data/`、後端 docker 化、儀表板 API 完整 |
 | v0.8.0 | 2026-04-21 | Teacher 擴充（6 個評分池）、Token 維度配額、LaunchD 常駐、冷啟動保護 |
