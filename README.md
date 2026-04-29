@@ -162,10 +162,11 @@ bash scripts/db_backup.sh
 
 ## 版本歷程
 
-當前版本：**v1.1.0**（2026-04-29）
+當前版本：**v1.1.1**（2026-04-29）
 
 | 版本 | 日期 | 主要內容 |
 |------|------|---------|
+| v1.1.1 | 2026-04-29 | 架構 review 修正：migration CHECK bug、Ebbinghaus 時間戳、_has_error_tool 精確比對、router_decisions/finetune_runs init、raw 逾時監控、weight 回饋補齊 |
 | v1.1.0 | 2026-04-29 | Layer 1 exchanges 語意層（17,790 筆）、Layer 2 Path A v2（直接讀 exchanges 取代 state machine）、A/B 對比腳本 |
 | v1.0.0 | 2026-04-25 | Vue 3 + Vite 前端、docker-compose（nginx:9590 + FastAPI:8000）、Layer 3 launchd 獨立服務、端對端驗證全通過 |
 | v0.9.0 | 2026-04-24 | 設定集中化（`config/shiba.yaml`）、DB 搬入 `./data/`、後端 docker 化、儀表板 API 完整 |

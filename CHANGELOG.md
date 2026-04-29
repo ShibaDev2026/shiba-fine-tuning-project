@@ -3,6 +3,17 @@
 所有版本變更依照 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/) 格式記錄。
 版本號遵循 [Semantic Versioning](https://semver.org/lang/zh-TW/)。
 
+## [1.1.1] - 2026-04-29
+
+### Fixed
+
+- **C1 `config.py` migration**：`_run_refiner_migration` 重建的 `training_samples_new` 補入 `layer1_bridge_v2` 與 `weight` 欄位，避免 migration 重跑時蓋掉正確 CHECK 導致 v2 樣本永遠無法入庫
+- **W1 `runner.py`**：`finished_at="datetime('now')"` 字串字面量改為 Python 端 `datetime.now(timezone.utc).isoformat()`，修正 Ebbinghaus 間隔訓練因 `fromisoformat` 解析失敗而靜默失效
+- **W2 `pipeline.py _has_error_tool`**：改傳 `conn + msg_id`，查 `tool_executions` 精確比對 `tool_use_id`，避免 session 有任何工具錯誤就污染全部 exchange
+- **W3 `init_db()` + `server.py`**：`init_db()` 補建 `router_decisions` 表；Layer 3 server startup 補建 `finetune_runs` 表，確保新環境初始化不因表不存在崩潰
+- **W4 `background.py`**：extraction job 結束後查逾 24h raw 樣本，非零時 `logger.warning`，方便及早發現 refiner/Ollama 離線造成的鏈路斷裂
+- **W5 `background.py`**：extraction 完成後對新 raw 樣本補一次 `sync_sample_weights`，修正 stop_hook 執行時樣本尚未存在導致採納 weight 回饋白白浪費
+
 ## [1.1.0] - 2026-04-29
 
 ### Added
