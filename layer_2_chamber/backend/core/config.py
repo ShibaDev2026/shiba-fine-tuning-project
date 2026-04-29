@@ -66,7 +66,7 @@ def _run_refiner_migration(conn: sqlite3.Connection) -> None:
     conn.executescript("""
         CREATE TABLE IF NOT EXISTS training_samples_new (
             id              INTEGER PRIMARY KEY AUTOINCREMENT,
-            source          TEXT NOT NULL CHECK(source IN ('layer1_bridge', 'error_repair')),
+            source          TEXT NOT NULL CHECK(source IN ('layer1_bridge', 'layer1_bridge_v2', 'error_repair')),
             session_id      TEXT,
             question_id     INTEGER REFERENCES questions(id),
             teacher_id      INTEGER REFERENCES teachers(id),
@@ -83,20 +83,22 @@ def _run_refiner_migration(conn: sqlite3.Connection) -> None:
                                 CHECK(status IN ('raw','pending','approved','rejected','needs_review')),
             adapter_block   INTEGER,
             created_at      TEXT NOT NULL DEFAULT (datetime('now')),
-            reviewed_at     TEXT
+            reviewed_at     TEXT,
+            weight          REAL NOT NULL DEFAULT 1.0
         );
 
         INSERT INTO training_samples_new
             (id, source, session_id, question_id, teacher_id, event_type,
              instruction, input, output,
              refined_instruction, expected_answer, pii_scrubbed,
-             score, score_reason, status, adapter_block, created_at, reviewed_at)
+             score, score_reason, status, adapter_block, created_at, reviewed_at, weight)
         SELECT id, source, session_id, question_id, teacher_id, event_type,
                instruction, input, output,
                refined_instruction, expected_answer, pii_scrubbed,
                score, score_reason,
                CASE WHEN status = 'pending' THEN 'pending' ELSE status END,
-               adapter_block, created_at, reviewed_at
+               adapter_block, created_at, reviewed_at,
+               COALESCE(weight, 1.0)
         FROM training_samples;
 
         DROP TABLE training_samples;

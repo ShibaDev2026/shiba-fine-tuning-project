@@ -2,6 +2,7 @@
 """Layer 3 Pipeline 主協調器"""
 
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
 
 import sqlite3
@@ -81,7 +82,7 @@ def run_finetune_if_ready(
         if not gate.passed:
             update_run(conn, run_id,
                        status="gate_rejected",
-                       finished_at="datetime('now')")
+                       finished_at=datetime.now(timezone.utc).isoformat())
             logger.warning(
                 "Shadow gate 拒絕 block%d：%s",
                 adapter_block, gate.reason,
@@ -93,13 +94,13 @@ def run_finetune_if_ready(
         update_run(conn, run_id,
                    ollama_model=model_tag,
                    status="done",
-                   finished_at="datetime('now')")
+                   finished_at=datetime.now(timezone.utc).isoformat())
 
         logger.info("Layer 3 pipeline 完成：%s", model_tag)
         return {"status": "done", "ollama_model": model_tag, "run_id": run_id}
 
     except Exception as e:
         update_run(conn, run_id, status="failed", error_msg=str(e)[:500],
-                   finished_at="datetime('now')")
+                   finished_at=datetime.now(timezone.utc).isoformat())
         logger.error("Layer 3 pipeline 失敗：%s", e)
         raise
