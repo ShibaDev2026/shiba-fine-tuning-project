@@ -268,6 +268,13 @@ def sync_session(payload: dict, config: dict) -> None:
         # 全部寫入無誤後才 commit（與 get_connection rollback 形成完整事務）
         conn.commit()
 
+    # 6.5 重建 exchanges 語意層（事務外，自開連線，失敗不影響主流程）
+    try:
+        from layer_1_memory.lib.exchanges import rebuild_exchanges_for_session_standalone
+        rebuild_exchanges_for_session_standalone(session_uuid)
+    except Exception as e:
+        logger.warning("exchanges 重建失敗（不影響主流程）：%s", e)
+
     # 8. 生成因果對 embedding（事務外執行，Ollama 離線不影響主流程）
     _write_exchange_embeddings(session_uuid, parsed, active_branch)
 

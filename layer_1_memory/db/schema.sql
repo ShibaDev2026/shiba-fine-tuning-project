@@ -110,6 +110,67 @@ CREATE TABLE IF NOT EXISTS branch_messages (
 );
 
 -- ============================================================
+-- Exchanges 表：四步循環語意層（衍生自 messages + tool_executions）
+-- 邊界：從一個真正的 user 訊息開始，到下一個真正的 user 訊息之前
+-- 純衍生資料，可從 messages + tool_executions 完整重建
+-- ============================================================
+CREATE TABLE IF NOT EXISTS exchanges (
+    id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id                  INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    branch_id                   INTEGER NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
+    exchange_idx                INTEGER NOT NULL,             -- 該 branch 內第 N 個 exchange（0-based）
+
+    user_message_id             INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    final_assistant_message_id  INTEGER REFERENCES messages(id) ON DELETE SET NULL,
+
+    message_count               INTEGER NOT NULL DEFAULT 0,   -- 包含的 messages 總數
+    assistant_message_count     INTEGER NOT NULL DEFAULT 0,
+    tool_round_count            INTEGER NOT NULL DEFAULT 0,   -- 含 tool_use 的 assistant 訊息數
+    tool_use_count              INTEGER NOT NULL DEFAULT 0,   -- tool_executions 配對總數
+
+    has_tool_use                INTEGER NOT NULL DEFAULT 0,
+    has_error                   INTEGER NOT NULL DEFAULT 0,   -- 任一 tool_executions.is_error=1 即為 1
+    has_final_text              INTEGER NOT NULL DEFAULT 0,
+    tool_names                  TEXT NOT NULL DEFAULT '[]',   -- JSON array：本 exchange 用到的所有工具
+
+    user_text_preview           TEXT,                          -- user content 截 300 字
+    final_text_preview          TEXT,                          -- final assistant content 截 500 字
+
+    status                      TEXT NOT NULL DEFAULT 'completed'
+        CHECK(status IN ('in_progress', 'completed', 'abandoned')),
+    started_at                  TEXT NOT NULL,                 -- = user_message.message_time
+    ended_at                    TEXT,                          -- = final_assistant.message_time
+    created_at                  TEXT NOT NULL DEFAULT (datetime('now')),
+
+    UNIQUE(branch_id, exchange_idx)
+);
+
+CREATE INDEX IF NOT EXISTS idx_exchanges_session       ON exchanges(session_id);
+CREATE INDEX IF NOT EXISTS idx_exchanges_branch        ON exchanges(branch_id, exchange_idx);
+CREATE INDEX IF NOT EXISTS idx_exchanges_user_msg      ON exchanges(user_message_id);
+CREATE INDEX IF NOT EXISTS idx_exchanges_final_msg     ON exchanges(final_assistant_message_id);
+CREATE INDEX IF NOT EXISTS idx_exchanges_status        ON exchanges(status);
+CREATE INDEX IF NOT EXISTS idx_exchanges_filter        ON exchanges(session_id, status, has_tool_use, has_error);
+
+-- Exchange-Messages 橋接表：記錄每個 exchange 包含哪些 messages（含順序與語意角色）
+-- 同 branch_messages 風格；同一 message 在多分支可屬於不同 exchange
+CREATE TABLE IF NOT EXISTS exchange_messages (
+    exchange_id      INTEGER NOT NULL REFERENCES exchanges(id) ON DELETE CASCADE,
+    message_id       INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    seq              INTEGER NOT NULL,
+    role_in_exchange TEXT NOT NULL,
+        -- 'user_open'        : 開啟 exchange 的真正 user 訊息
+        -- 'assistant_tool'   : 含 tool_use 的 assistant（中間步驟）
+        -- 'tool_result_user' : 包裝 tool_result 的 user 訊息
+        -- 'assistant_final'  : 最終文字回應的 assistant
+        -- 'assistant_text'   : 有文字但非最終的 assistant（罕見）
+    PRIMARY KEY (exchange_id, message_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_exchange_messages_msg ON exchange_messages(message_id);
+CREATE INDEX IF NOT EXISTS idx_exchange_messages_seq ON exchange_messages(exchange_id, seq);
+
+-- ============================================================
 -- FTS5 全文索引：加速 RAG 語義檢索
 -- ============================================================
 
