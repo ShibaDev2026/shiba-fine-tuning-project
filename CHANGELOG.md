@@ -3,6 +3,15 @@
 所有版本變更依照 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/) 格式記錄。
 版本號遵循 [Semantic Versioning](https://semver.org/lang/zh-TW/)。
 
+## [1.1.2] - 2026-04-30
+
+### Fixed
+
+- **A1 `schema.sql`**：`router_decisions` + `finetune_runs` 兩張跨層共享表的 DDL 集中至 `layer_1_memory/db/schema.sql`，確保全新部署時 `init_db()` 一次建齊，不再依賴 Layer 3 server 啟動或外部手動 migration
+  - `router_decisions` 新增 3 個查詢索引（session_id / classification+user_accepted / created_at）
+  - `finetune_runs` 補上 `status CHECK('pending','running','done','failed')` 契約約束
+- **A1 `db.py init_db()`**：移除重複的 `router_decisions` inline migration（已由 schema.sql 統一管理）
+
 ## [1.1.1] - 2026-04-29
 
 ### Fixed

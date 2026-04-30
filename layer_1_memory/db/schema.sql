@@ -218,3 +218,49 @@ CREATE TABLE IF NOT EXISTS exchange_embeddings (
 );
 
 CREATE INDEX IF NOT EXISTS idx_exchange_embeddings_session ON exchange_embeddings(session_uuid);
+
+-- ============================================================
+-- 跨層共享表：router_decisions / finetune_runs
+-- 雖屬 Layer 0 / Layer 3 邏輯職責，但所有 layer 共用 ~/.local-brain/shiba-brain.db，
+-- 為確保全新部署時不依賴外部 migration，DDL 集中於此（A1 修正）
+-- ============================================================
+
+-- Layer 0 路由決策遙測（telemetry.py 寫入；Layer 2 multi_judge / Layer 3 trigger_policy 讀）
+CREATE TABLE IF NOT EXISTS router_decisions (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id        TEXT,                         -- 對應 sessions.uuid，可為 NULL
+    prompt_hash       TEXT NOT NULL,                -- SHA256 前 12 碼，不存明文
+    classification    TEXT NOT NULL,                -- 'local' | 'claude' | 'gemma' | ...
+    reason            TEXT,                         -- 路由理由
+    local_output      TEXT,                         -- 本地模型輸出預覽（截 500 字）
+    user_accepted     INTEGER,                      -- NULL=未判定 / 0=拒絕 / 1=採納
+    user_rewrote      INTEGER DEFAULT 0,            -- 1=Shiba 改寫後使用
+    acceptance_source TEXT,                         -- 'manual' | 'auto'
+    latency_ms        INTEGER,
+    tokens_prompt     INTEGER,
+    tokens_response   INTEGER,
+    created_at        TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_router_decisions_session     ON router_decisions(session_id);
+CREATE INDEX IF NOT EXISTS idx_router_decisions_class_acc   ON router_decisions(classification, user_accepted);
+CREATE INDEX IF NOT EXISTS idx_router_decisions_created     ON router_decisions(created_at);
+
+-- Layer 3 訓練 run 紀錄（runner.py 寫入；Layer 2 routes_finetune / trigger_policy 讀）
+CREATE TABLE IF NOT EXISTS finetune_runs (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    adapter_block INTEGER NOT NULL,                 -- 1 | 2
+    status        TEXT NOT NULL DEFAULT 'pending'
+                    CHECK(status IN ('pending', 'running', 'done', 'failed')),
+    dataset_path  TEXT,                             -- export 出的 train.jsonl 路徑
+    adapter_path  TEXT,                             -- LoRA adapter 輸出目錄
+    gguf_path     TEXT,                             -- 轉檔後 GGUF 路徑
+    ollama_model  TEXT,                             -- 推送到 Ollama 的模型 tag
+    sample_count  INTEGER,                          -- 本 run 涵蓋樣本數
+    error_msg     TEXT,                             -- failed 時的錯誤摘要
+    started_at    TEXT,                             -- ISO timestamp（runner 寫入）
+    finished_at   TEXT,                             -- ISO timestamp（done/failed 時寫入）
+    created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_finetune_runs_block_status ON finetune_runs(adapter_block, status, id);
