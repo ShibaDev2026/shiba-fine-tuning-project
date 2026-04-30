@@ -8,6 +8,7 @@ P1-1 動態訓練觸發策略（取代固定 approved≥30 門檻）。
   C. 分布偏移：近 7 天 prompt embedding centroid 與上次訓練集 cosine > 0.35
 """
 
+import json
 import logging
 import math
 import sqlite3
@@ -185,10 +186,10 @@ def _signal_distribution_drift(conn: sqlite3.Connection, adapter_block: int) -> 
         return False, f"signal_c: 歷史 embedding 不足（{len(old_rows)}）"
 
     def to_matrix(rows):
+        # embedding 以 json.dumps(list[float]) 儲存，對齊 db.py upsert_exchange_embedding 的寫法
         vecs = []
         for r in rows:
-            blob = r[0]
-            v = np.frombuffer(blob, dtype=np.float32)
+            v = np.array(json.loads(r[0]), dtype=np.float32)
             if v.size > 0:
                 vecs.append(v)
         return np.stack(vecs) if vecs else None

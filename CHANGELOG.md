@@ -7,6 +7,7 @@
 
 ### Fixed
 
+- **A2 `trigger_policy.py`**：signal C 分布偏移檢測的 `to_matrix` 函式改用 `json.loads` 讀取 embedding，對齊 `db.py upsert_exchange_embedding` 的 JSON text 寫入格式；原 `np.frombuffer(blob, float32)` 把 JSON bytes 當作 raw float32 解讀，輸出為亂數，signal C 永遠失效
 - **A1 `schema.sql`**：`router_decisions` + `finetune_runs` 兩張跨層共享表的 DDL 集中至 `layer_1_memory/db/schema.sql`，確保全新部署時 `init_db()` 一次建齊，不再依賴 Layer 3 server 啟動或外部手動 migration
   - `router_decisions` 新增 3 個查詢索引（session_id / classification+user_accepted / created_at）
   - `finetune_runs` 補上 `status CHECK('pending','running','done','failed')` 契約約束
