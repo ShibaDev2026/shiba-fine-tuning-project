@@ -30,7 +30,7 @@ data/queue/
 backups/*.db
 
 # IDE 與 Claude Code 本地設定
-.idea/.name
+.idea/
 .claude/
 
 # Docker .env（含 Teacher API key，絕對不進版控）
