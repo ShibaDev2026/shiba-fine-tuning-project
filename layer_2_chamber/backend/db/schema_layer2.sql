@@ -7,7 +7,7 @@ CREATE TABLE IF NOT EXISTS teachers (
     name          TEXT NOT NULL UNIQUE,           -- 顯示名稱，e.g. "Gemini 2.5 Flash"
     model_id      TEXT NOT NULL,                  -- API model string
     api_base      TEXT NOT NULL,                  -- OpenAI-compatible endpoint
-    keychain_ref  TEXT NOT NULL,                  -- macOS Keychain item name（不存 key 本身）
+    keychain_ref  TEXT,                            -- macOS Keychain item name；NULL = 本地模型（不需 API key）
     priority      INTEGER NOT NULL DEFAULT 0,     -- 數字越小越優先
     daily_limit   INTEGER NOT NULL DEFAULT 250,   -- 每日請求上限
     is_active     INTEGER NOT NULL DEFAULT 1,     -- 0=停用
@@ -51,6 +51,7 @@ CREATE TABLE IF NOT EXISTS training_samples (
     refined_instruction TEXT,                        -- Qwen 改寫後的自包含版本
     expected_answer TEXT,                            -- Qwen 草擬的預期答案（供 Teacher 參考）
     pii_scrubbed    INTEGER NOT NULL DEFAULT 0,      -- 1=已過 PII scrub
+    source_exchange_ids TEXT,                        -- C3：JSON list of exchanges.id，exchange-level dedup
     status          TEXT NOT NULL DEFAULT 'raw'
                         CHECK(status IN ('raw','pending','approved','rejected','needs_review')),
     adapter_block   INTEGER,                      -- 1 或 2，對應 LoRA block

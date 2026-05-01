@@ -226,28 +226,50 @@ class TestExtractPathAV2:
         samples = _extract_path_a_v2(conn)
         assert samples == []
 
-    def test_not_in_deduplication(self, tmp_path):
-        """session 已有 layer1_bridge_v2 記錄時，SQL NOT IN 過濾，不重複抽取"""
+    def test_exchange_level_dedup_skips_covered_and_keeps_new(self, tmp_path):
+        """C3：source_exchange_ids 涵蓋的 exchange 跳過；同 session 新乾淨 exchange 仍能產出新樣本"""
         conn = _make_db(tmp_path)
-        sid, bid = _seed_session(conn, "s-dup", ["git_ops"])
+        sid, bid = _seed_session(conn, "s-c3", ["debugging"])
 
+        # 第一批：2 個 exchange（已被前一輪樣本涵蓋）
+        eids = []
         for i in range(2):
-            um = _seed_msg(conn, sid, "user", f"請求 {i}")
-            fm = _seed_msg(conn, sid, "assistant", f"回覆 {i}")
+            um = _seed_msg(conn, sid, "user", f"舊問題 {i}")
+            fm = _seed_msg(conn, sid, "assistant", f"舊答 {i}")
+            eid = _seed_exchange(conn, sid, bid, um, fm, has_final_text=1, idx=i)
+            _seed_ex_msg(conn, eid, um, 0, "user_open")
+            _seed_ex_msg(conn, eid, fm, 1, "assistant_final")
+            eids.append(eid)
+
+        # 模擬上一輪：v2 樣本已涵蓋 eids[0]、eids[1]
+        conn.execute(
+            "INSERT INTO training_samples "
+            "(source, session_id, event_type, instruction, input, output, adapter_block, status, "
+            " created_at, source_exchange_ids) "
+            "VALUES ('layer1_bridge_v2', 's-c3', 'debugging', 'x', '', 'y', 2, 'raw', "
+            " '2026-01-01T00:00:00', ?)",
+            (json.dumps(eids),),
+        )
+        conn.commit()
+
+        # 此時 extraction 應該被全部排除（無未涵蓋 exchange）
+        assert _extract_path_a_v2(conn) == []
+
+        # 第二批：新增 2 個乾淨 exchange（模擬 session 後續對話）
+        for i in range(2, 4):
+            um = _seed_msg(conn, sid, "user", f"新問題 {i}")
+            fm = _seed_msg(conn, sid, "assistant", f"新答 {i}")
             eid = _seed_exchange(conn, sid, bid, um, fm, has_final_text=1, idx=i)
             _seed_ex_msg(conn, eid, um, 0, "user_open")
             _seed_ex_msg(conn, eid, fm, 1, "assistant_final")
 
-        # 先植入一筆 v2 記錄（模擬已抽過）
-        conn.execute(
-            "INSERT INTO training_samples "
-            "(source, session_id, event_type, instruction, input, output, adapter_block, status, created_at) "
-            "VALUES ('layer1_bridge_v2', 's-dup', 'git_ops', 'x', '', 'y', 1, 'raw', '2026-01-01T00:00:00')"
-        )
-        conn.commit()
-
-        samples = _extract_path_a_v2(conn)
-        assert samples == []
+        # C3 期望：新 exchange 觸發新樣本（保 SEAL 哲學：session 可持續產出）
+        new_samples = _extract_path_a_v2(conn)
+        assert len(new_samples) == 1
+        assert new_samples[0].session_id == "s-c3"
+        assert new_samples[0].exchange_ids is not None
+        assert set(new_samples[0].exchange_ids).isdisjoint(eids), \
+            "新樣本不該涵蓋已被舊樣本佔用的 exchange_id"
 
 
 class TestResolveUserText:

@@ -26,13 +26,14 @@ _DEFAULT_WORK_DIR = Path.home() / ".local-brain" / "finetune"
 def run_finetune_if_ready(
     conn: sqlite3.Connection,
     adapter_block: int,
-    threshold: int = 30,
     work_dir: Path = _DEFAULT_WORK_DIR,
 ) -> dict | None:
     """
     P1-1 動態觸發：三信號（Ebbinghaus / 採納退化 / 分布偏移）任一觸發
     且 approved ≥ MIN_SAMPLES 才執行完整 fine-tune pipeline。
     回傳 {'status': 'done', 'ollama_model': '...'} 或 None（未觸發）。
+
+    觸發門檻由 trigger_policy.should_trigger 內部決定，不再由外部 threshold 注入。
     """
     decision = should_trigger(conn, adapter_block)
     if not decision.should_train:

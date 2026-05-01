@@ -61,28 +61,33 @@ def _run_all(dry_run: bool) -> None:
         pending_commit = 0
 
         for session_id, uuid in sessions:
+            # B6：每個 session 包在 SAVEPOINT 內，失敗只回滾該 session，
+            # 不波及同批內前面已成功的 sessions（避免 rollback 抹掉好資料）。
+            if not dry_run:
+                conn.execute("SAVEPOINT bf_session")
             try:
                 if dry_run:
                     stats = _dry_run_session(conn, session_id)
                 else:
                     stats = rebuild_exchanges_for_session(conn, session_id)
-                    pending_commit += 1
 
                 total["sessions"] += 1
                 total["branches"] += stats["branches"]
                 total["exchanges"] += stats["exchanges"]
                 total["members"] += stats["members"]
 
-                # 批次 commit
-                if not dry_run and pending_commit >= BATCH_SIZE:
-                    conn.commit()
-                    pending_commit = 0
+                if not dry_run:
+                    conn.execute("RELEASE SAVEPOINT bf_session")
+                    pending_commit += 1
+                    if pending_commit >= BATCH_SIZE:
+                        conn.commit()
+                        pending_commit = 0
 
             except Exception as exc:
                 logger.error("session %s 失敗：%s", uuid, exc)
                 if not dry_run:
-                    conn.rollback()
-                    pending_commit = 0
+                    conn.execute("ROLLBACK TO SAVEPOINT bf_session")
+                    conn.execute("RELEASE SAVEPOINT bf_session")
                 errors += 1
 
         if not dry_run and pending_commit > 0:

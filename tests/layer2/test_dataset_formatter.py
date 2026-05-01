@@ -11,7 +11,6 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from layer_2_chamber.backend.extraction.dataset_formatter import (
-    _calc_stable_target,
     export_dataset,
     get_export_stats,
 )
@@ -106,30 +105,40 @@ class TestExportDataset:
         stats = export_dataset(conn, out, since_id=new_id)
 
         assert stats["new"] == 1
-        # stable_target = round(1 * 20/70) = 0（太少）
-        assert stats["stable"] == 0
+        # replay_target = round(1 * 2/7) = 0（太少）
+        assert stats["replay"] == 0
 
     def test_stable_sample_score_threshold(self, tmp_path):
         conn = _make_db(tmp_path)
-        old_date = (datetime.now(timezone.utc) - timedelta(days=40)).isoformat()
-        # 低分老樣本：不進穩定集
+        # Ebbinghaus 桶 7±1 天：刻意挑桶內日期
+        old_date = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+        # 低分老樣本：不進 replay 集
         _insert_sample(conn, instruction="low", score=8.0, created_at=old_date)
-        # 高分老樣本：進穩定集
-        old_id = _insert_sample(conn, instruction="high", score=9.0, created_at=old_date)
-        # 新樣本（70 份基底）：需要足夠多才讓 stable_target >= 1
+        # 高分老樣本：進 replay 集
+        _insert_sample(conn, instruction="high", score=9.0, created_at=old_date)
+        # 新樣本（基底）：拉高 replay_target 至 ≥1
         new_ids = [_insert_sample(conn, instruction=f"new{i}") for i in range(7)]
-        since_id = new_ids[0]  # 7 新樣本 → stable_target = round(7*20/70) = 2
+        since_id = new_ids[0]  # 7 新樣本 → replay_target = round(7*2/7) = 2
 
         out = tmp_path / "dataset.jsonl"
         stats = export_dataset(conn, out, since_id=since_id)
-        # 高分老樣本進穩定集，低分不進
-        assert stats["stable"] == 1
+        # 高分老樣本進 replay 集，低分不進
+        assert stats["replay"] == 1
 
     def test_output_file_created(self, tmp_path):
         conn = _make_db(tmp_path)
+        _insert_sample(conn, instruction="ensure-non-empty")
         out = tmp_path / "sub" / "dataset.jsonl"
         export_dataset(conn, out)
         assert out.exists()
+
+    def test_empty_samples_raises(self, tmp_path):
+        """B2：無 approved 樣本時 raise ValueError，避免下游拿到空檔。"""
+        conn = _make_db(tmp_path)
+        out = tmp_path / "dataset.jsonl"
+        with pytest.raises(ValueError, match="no samples"):
+            export_dataset(conn, out)
+        assert not out.exists()
 
     def test_ensure_no_ascii_escape(self, tmp_path):
         """中文內容應直接輸出，不 escape 為 \\uXXXX"""
@@ -166,14 +175,4 @@ class TestGetExportStats:
         assert stats["by_block"][2] == 1
 
 
-class TestCalcStableTarget:
-    def test_zero_new_returns_zero(self):
-        assert _calc_stable_target(0) == 0
-
-    def test_ratio_70_20(self):
-        # 70 新樣本 → 20 穩定樣本
-        assert _calc_stable_target(70) == 20
-
-    def test_small_count_rounds(self):
-        # 7 新 → round(7 * 20/70) = round(2.0) = 2
-        assert _calc_stable_target(7) == 2
+# B2：_calc_stable_target 已移除（死碼，export_dataset 實際只用 _calc_replay_target）。

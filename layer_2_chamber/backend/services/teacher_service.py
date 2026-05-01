@@ -4,12 +4,12 @@ teacher_service.py — Teacher CRUD 與評分呼叫
 職責：
 1. Teacher CRUD（新增/查詢/切換啟用）
 2. 從 macOS Keychain 取得 API Key（不存 key 本身）
-3. 透過 OpenAI-compatible client 呼叫 Teacher 評分
+3. 透過 OpenAI-compatible client 呼叫 Teacher 評分（單次）
 4. 記錄 teacher_usage_logs（配額追蹤）
 
-評分流程（SEAL + CLAUDE.md）：
-  Gemini 2.5 Flash 初裁 → ≥8 auto approved，6-7 送第二裁判，<6 rejected
-  兩裁判差距 > 2 標記 needs_review
+評分聚合策略由 services/multi_judge.py 主導（A4 後）：
+  三方投票（≥8 算一票 approved）→ 3/3 approved weight=1.0；2/3 soft label weight=0.5；
+  ≤1/3 rejected。Shiba 採納（router_decisions.user_accepted=1）→ 強制 approved（high_value）
 """
 
 import json
@@ -22,11 +22,6 @@ from typing import Any
 import sqlite3
 
 logger = logging.getLogger(__name__)
-
-# ── 評分門檻（對應 CLAUDE.md Layer 2 評分流程）────────────────────────
-_SCORE_AUTO_APPROVE = 8.0
-_SCORE_AUTO_REJECT = 6.0
-_SCORE_DISAGREEMENT_THRESHOLD = 2.0
 
 # 評分 prompt 模板（含 few-shot 校準範例，F1）
 _SCORE_PROMPT = """你是一個訓練資料品質評審。請評估以下訓練樣本的品質。
@@ -218,119 +213,6 @@ def get_api_key(keychain_ref: str) -> str | None:
 
 # ── 評分呼叫 ─────────────────────────────────────────────────────────────
 
-def score_sample(
-    conn: sqlite3.Connection,
-    sample_id: int,
-    instruction: str,
-    input_text: str,
-    output: str,
-) -> dict:
-    """
-    用可用的 Teacher 評分單筆樣本。
-    實作 CLAUDE.md 評分流程：
-      ≥8 → approved；6-7 → needs_review；<6 → rejected
-      若有第二裁判且差距 > 2 → needs_review
-
-    回傳 {'score': float, 'status': str, 'reason': str, 'teacher_id': int}
-    """
-    teachers = get_active_teachers(conn)
-    if not teachers:
-        return {"score": None, "status": "pending", "reason": "無可用 Teacher", "teacher_id": None}
-
-    # 初裁（_call_teacher 內部已處理 log_usage 與 requests_today 更新）
-    first_teacher = _pick_available_teacher(conn, teachers)
-    if not first_teacher:
-        return {"score": None, "status": "pending", "reason": "所有 Teacher 配額已滿", "teacher_id": None}
-
-    first_result = _call_teacher(first_teacher, instruction, input_text, output, conn, sample_id)
-    if first_result is None:
-        return {"score": None, "status": "pending", "reason": "Teacher API 呼叫失敗", "teacher_id": first_teacher["id"]}
-
-    first_score = first_result["score"]
-
-    # 快速路徑：自動 approved 或 rejected
-    if first_score >= _SCORE_AUTO_APPROVE:
-        _update_sample_score(conn, sample_id, first_score, first_result["reason"], "approved")
-        return {"score": first_score, "status": "approved", "reason": first_result["reason"], "teacher_id": first_teacher["id"]}
-
-    if first_score < _SCORE_AUTO_REJECT:
-        _update_sample_score(conn, sample_id, first_score, first_result["reason"], "rejected")
-        return {"score": first_score, "status": "rejected", "reason": first_result["reason"], "teacher_id": first_teacher["id"]}
-
-    # 6-7 分：送第二裁判
-    second_teacher = _pick_available_teacher(conn, teachers, exclude_id=first_teacher["id"])
-    if not second_teacher:
-        _update_sample_score(conn, sample_id, first_score, first_result["reason"], "needs_review")
-        return {"score": first_score, "status": "needs_review", "reason": "需人工複審（無第二裁判）", "teacher_id": first_teacher["id"]}
-
-    second_result = _call_teacher(second_teacher, instruction, input_text, output, conn, sample_id)
-    if second_result is None:
-        _update_sample_score(conn, sample_id, first_score, first_result["reason"], "needs_review")
-        return {"score": first_score, "status": "needs_review", "reason": "第二裁判呼叫失敗", "teacher_id": first_teacher["id"]}
-
-    second_score = second_result["score"]
-
-    # 差距 > 2 → needs_review
-    if abs(first_score - second_score) > _SCORE_DISAGREEMENT_THRESHOLD:
-        avg = (first_score + second_score) / 2
-        reason = f"兩裁判分歧（{first_score} vs {second_score}）"
-        _update_sample_score(conn, sample_id, avg, reason, "needs_review")
-        return {"score": avg, "status": "needs_review", "reason": reason, "teacher_id": first_teacher["id"]}
-
-    # 取平均，重新判定
-    avg = (first_score + second_score) / 2
-    status = "approved" if avg >= _SCORE_AUTO_APPROVE else "needs_review"
-    _update_sample_score(conn, sample_id, avg, second_result["reason"], status)
-    return {"score": avg, "status": status, "reason": second_result["reason"], "teacher_id": first_teacher["id"]}
-
-
-def _pick_available_teacher(
-    conn: sqlite3.Connection,
-    teachers: list[sqlite3.Row],
-    exclude_id: int | None = None,
-) -> sqlite3.Row | None:
-    """
-    選出第一個有配額的 Teacher（priority 順序）。
-    三重排除條件（C1）：
-    1. is_daily_limit_reached = 1（舊旗標，向後相容）
-    2. requests_today >= daily_request_limit（新：請求數維度）
-    3. input+output tokens >= daily_token_limit（新：token 維度）
-    """
-    for t in teachers:
-        if exclude_id and t["id"] == exclude_id:
-            continue
-        if t["is_daily_limit_reached"]:
-            continue
-
-        # 新：請求數配額
-        req_limit = _col(t, "daily_request_limit")
-        if req_limit is not None and (_col(t, "requests_today") or 0) >= req_limit:
-            _mark_daily_limit_reached(conn, t["id"])
-            _mark_quota_exhausted(conn, t["id"], "requests")
-            continue
-
-        # 新：token 配額
-        token_limit = _col(t, "daily_token_limit")
-        if token_limit is not None:
-            tokens = (_col(t, "input_tokens_today") or 0) + (_col(t, "output_tokens_today") or 0)
-            if tokens >= token_limit:
-                _mark_daily_limit_reached(conn, t["id"])
-                _mark_quota_exhausted(conn, t["id"], "tokens")
-                continue
-
-        if is_quota_available(conn, t):
-            return t
-    return None
-
-
-def _col(row: sqlite3.Row, name: str):
-    """安全讀取 Row 欄位（migration 前欄位可能不存在）"""
-    try:
-        return row[name]
-    except IndexError:
-        return None
-
-
 def _call_teacher(
     teacher: sqlite3.Row,
     instruction: str,
@@ -353,43 +235,42 @@ def _call_teacher(
     else:
         api_key = "none"  # 本地 Ollama 不需要真實 key
 
-    try:
-        prompt = _SCORE_PROMPT.format(
-            instruction=instruction[:500],
-            input=input_text[:200],
-            output=output[:500],
+    prompt = _SCORE_PROMPT.format(
+        instruction=instruction[:500],
+        input=input_text[:200],
+        output=output[:500],
+    )
+    if "generativelanguage.googleapis.com" in teacher["api_base"]:
+        raw, input_t, output_t, status = _call_gemini_rest(api_key, teacher["model_id"], prompt)
+    else:
+        raw, input_t, output_t, status = _call_openai_compat(
+            api_key, teacher["api_base"], teacher["model_id"], prompt
         )
-        if "generativelanguage.googleapis.com" in teacher["api_base"]:
-            raw, input_t, output_t, status = _call_gemini_rest(api_key, teacher["model_id"], prompt)
-        else:
-            raw, input_t, output_t, status = _call_openai_compat(
-                api_key, teacher["api_base"], teacher["model_id"], prompt
-            )
 
-        if status == "quota_exceeded":
-            _log_usage(conn, teacher["id"], sample_id, 0, 0, "quota_exceeded")
-            _mark_daily_limit_reached(conn, teacher["id"])
-            _mark_quota_exhausted(conn, teacher["id"], "requests")
-            return None
+    if status == "quota_exceeded":
+        _log_usage(conn, teacher["id"], sample_id, 0, 0, "quota_exceeded")
+        _mark_daily_limit_reached(conn, teacher["id"])
+        _mark_quota_exhausted(conn, teacher["id"], "requests")
+        return None
 
-        if raw is None:
-            _log_usage(conn, teacher["id"], sample_id, 0, 0, "error")
-            return None
+    if raw is None:
+        _log_usage(conn, teacher["id"], sample_id, 0, 0, "error")
+        return None
 
+    try:
         data = json.loads(_strip_markdown(raw))
         score = float(data["score"])
         reason = str(data.get("reason", ""))
-
-        # C2：記錄 log + 更新 teachers 今日計數
-        _log_usage(conn, teacher["id"], sample_id, input_t, output_t, "success")
-        _record_teacher_usage(conn, teacher["id"], input_t, output_t)
-
-        return {"score": max(0.0, min(10.0, score)), "reason": reason}
-
-    except Exception as e:
-        logger.error("Teacher %s 評分失敗：%s", teacher["name"], e)
+    except (json.JSONDecodeError, ValueError, KeyError) as e:
+        logger.error("Teacher %s 回應解析失敗（raw=%s…）：%s", teacher["name"], raw[:100], e)
         _log_usage(conn, teacher["id"], sample_id, 0, 0, "error")
         return None
+
+    # C2：記錄 log + 更新 teachers 今日計數
+    _log_usage(conn, teacher["id"], sample_id, input_t, output_t, "success")
+    _record_teacher_usage(conn, teacher["id"], input_t, output_t)
+
+    return {"score": max(0.0, min(10.0, score)), "reason": reason}
 
 
 def _call_gemini_rest(

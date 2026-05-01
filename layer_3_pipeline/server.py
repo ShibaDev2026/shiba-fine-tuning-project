@@ -26,14 +26,16 @@ logger = logging.getLogger("layer3.server")
 
 @app.on_event("startup")
 def _startup():
-    """啟動時確保 finetune_runs 表存在（無 schema.sql，在此幂等建立）"""
+    """啟動時兜底建立 finetune_runs（DDL 主源在 layer_1_memory/db/schema.sql；
+    此處作為舊 DB 升級時的幂等防呆，定義須與 schema.sql 完全對齊）"""
     conn = _conn_factory()
     try:
         conn.execute("""
             CREATE TABLE IF NOT EXISTS finetune_runs (
                 id            INTEGER PRIMARY KEY AUTOINCREMENT,
                 adapter_block INTEGER NOT NULL,
-                status        TEXT NOT NULL DEFAULT 'pending',
+                status        TEXT NOT NULL DEFAULT 'pending'
+                                CHECK(status IN ('pending', 'running', 'done', 'failed')),
                 dataset_path  TEXT,
                 adapter_path  TEXT,
                 gguf_path     TEXT,
@@ -45,6 +47,10 @@ def _startup():
                 created_at    TEXT NOT NULL DEFAULT (datetime('now'))
             )
         """)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_finetune_runs_block_status "
+            "ON finetune_runs(adapter_block, status, id)"
+        )
         conn.commit()
         logger.info("finetune_runs 表確認完成")
     finally:
@@ -58,13 +64,13 @@ def health():
 
 @app.post("/trigger/{adapter_block}")
 def trigger(adapter_block: int):
-    """Layer 2 透過 HTTP 觸發指定 block fine-tune（threshold=0）"""
+    """Layer 2 透過 HTTP 觸發指定 block fine-tune；門檻由 trigger_policy 決定。"""
     if adapter_block not in (1, 2):
         raise HTTPException(status_code=400, detail="adapter_block must be 1 or 2")
     conn = _conn_factory()
     try:
-        result = run_finetune_if_ready(conn, adapter_block=adapter_block, threshold=0)
-        return result or {"status": "skipped", "reason": "no approved samples"}
+        result = run_finetune_if_ready(conn, adapter_block=adapter_block)
+        return result or {"status": "skipped", "reason": "trigger policy 未觸發"}
     except Exception as e:
         logger.error("trigger block%d 失敗：%s", adapter_block, e)
         raise HTTPException(status_code=500, detail=str(e))

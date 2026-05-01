@@ -162,10 +162,12 @@ bash scripts/db_backup.sh
 
 ## 版本歷程
 
-當前版本：**v1.1.1**（2026-04-29）
+當前版本：**v1.2.0**（2026-05-01）
 
 | 版本 | 日期 | 主要內容 |
 |------|------|---------|
+| v1.2.0 | 2026-05-01 | A/B/C 三級架構檢視一輪：A3-A5 spec/code 對齊、B1-B7 靜默失效修補（finished_at ISO、threshold 拆耦、try-except 收緊、cold-compress 條件、SAVEPOINT、集中 alert）、C1-C6 效能與正確性（multi_judge early exit、Ebbinghaus 視窗、exchange-level dedup、多維採納啟發式、排程併發保護、keychain_ref nullable）|
+| v1.1.2 | 2026-04-30 | A1：router_decisions/finetune_runs DDL 集中至 schema.sql；A2：signal C 分布偏移 embedding 讀取改 json.loads |
 | v1.1.1 | 2026-04-29 | 架構 review 修正：migration CHECK bug、Ebbinghaus 時間戳、_has_error_tool 精確比對、router_decisions/finetune_runs init、raw 逾時監控、weight 回饋補齊 |
 | v1.1.0 | 2026-04-29 | Layer 1 exchanges 語意層（17,790 筆）、Layer 2 Path A v2（直接讀 exchanges 取代 state machine）、A/B 對比腳本 |
 | v1.0.0 | 2026-04-25 | Vue 3 + Vite 前端、docker-compose（nginx:9590 + FastAPI:8000）、Layer 3 launchd 獨立服務、端對端驗證全通過 |

@@ -67,6 +67,15 @@ def export_dataset(
     external_samples = _load_external_dataset(new_count)
 
     all_samples = expanded_new + replay_samples + external_samples
+
+    # B2：拒絕產出空 dataset（避免下游 MLX trainer 拿到空檔靜默失效）
+    if not all_samples:
+        raise ValueError(
+            f"export_dataset：no samples for adapter_block={adapter_block}, "
+            f"since_id={since_id}（new={new_count}, replay={len(replay_samples)}, "
+            f"external={len(external_samples)}）"
+        )
+
     random.shuffle(all_samples)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -202,16 +211,6 @@ def _expand_by_weight(samples: list[sqlite3.Row]) -> list[sqlite3.Row]:
 def _calc_replay_target(new_count: int) -> int:
     """目標 replay 數 = new 樣本的 2/7（維持 70/20 比例）。最少 0。"""
     return max(0, round(new_count * 2 / 7))
-
-
-def _calc_stable_target(new_count: int) -> int:
-    """
-    依 70/20/10 比例計算穩定樣本目標數量。
-    new_count 視為 70 份，推算 20 份對應數量。
-    """
-    if new_count == 0:
-        return 0
-    return round(new_count * 20 / 70)
 
 
 def _load_external_dataset(new_count: int) -> list[dict]:

@@ -2,17 +2,48 @@
 background.py — APScheduler 背景排程
 
 排程任務：
-1. 每小時：run_extraction（路徑 A + B 抽取新樣本）
+1. 每小時：run_extraction_v2（路徑 A v2 + B 抽取新樣本）
 2. 每 6 小時：自動評分 pending 樣本（批次送 Teacher）
 3. 每日凌晨 2 點：冷資料壓縮（超過 90 天未存取的 branch 標記 decay_score=0）
 """
 
+import json
 import logging
+import os
 from datetime import datetime, timedelta, timezone
 
 import sqlite3
 
 logger = logging.getLogger(__name__)
+
+
+def _send_alert(alert_type: str, message: str, context: dict | None = None) -> None:
+    """
+    B7 集中式 alert 出口。
+    - 無論是否有 webhook，都以 CRITICAL 等級寫入 log（方便 grep / CloudWatch）。
+    - 若環境變數 SHIBA_ALERT_WEBHOOK 已設，POST JSON 至該 URL；失敗不拋異常。
+    """
+    payload = {
+        "alert_type": alert_type,
+        "message": message,
+        "context": context or {},
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+    logger.critical("[SHIBA-ALERT] type=%s msg=%s ctx=%s", alert_type, message, json.dumps(context or {}))
+
+    webhook_url = os.environ.get("SHIBA_ALERT_WEBHOOK", "").strip()
+    if not webhook_url:
+        return
+
+    try:
+        import urllib.request
+        body = json.dumps(payload).encode()
+        req = urllib.request.Request(webhook_url, data=body,
+                                     headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=5):
+            pass
+    except Exception as e:
+        logger.warning("Alert webhook 傳送失敗 url=%s：%s", webhook_url, e)
 
 
 def score_pending_samples(conn_factory) -> dict:
@@ -54,7 +85,10 @@ def compress_cold_data(conn_factory) -> dict:
     """
     冷資料壓縮：超過 90 天未存取（last_accessed 為 NULL 或過期）的 branch
     decay_score 設為 0，不再被 RAG 優先抽取。
-    保護條件：未被 Layer 2 完成評分的 session 不壓縮（確保仍可被 pipeline 抽取）。
+
+    B5 保護條件（更新）：
+    若 session 內有 pending/raw 樣本且 created_at 在 30 天內（仍在等待評分）→ 跳過壓縮。
+    超過 30 天的 pending/raw 視為評分永久失敗，允許壓縮（避免大量卡死樣本永遠佔用空間）。
     """
     cutoff = (datetime.now(timezone.utc) - timedelta(days=90)).isoformat()
     conn = conn_factory()
@@ -66,8 +100,12 @@ def compress_cold_data(conn_factory) -> dict:
                  AND (last_accessed IS NULL OR last_accessed < ?)
                  AND session_id IN (
                      SELECT s.id FROM sessions s
-                     JOIN training_samples ts ON ts.session_id = s.uuid
-                     WHERE ts.status IN ('approved', 'rejected', 'needs_review')
+                     WHERE NOT EXISTS (
+                         SELECT 1 FROM training_samples ts
+                         WHERE ts.session_id = s.uuid
+                           AND ts.status IN ('pending', 'raw')
+                           AND ts.created_at > datetime('now', '-30 days')
+                     )
                  )""",
             (cutoff,),
         )
@@ -92,53 +130,64 @@ def setup_scheduler(app, conn_factory):
 
     scheduler = AsyncIOScheduler()
 
+    # C5：所有排程的併發保護預設值
+    #   max_instances=1：禁止同 id 排程重疊執行（避免 refiner/scoring 跨 tick 相撞）
+    #   coalesce=True   ：多次錯過時只補跑最新一次（避免 backlog 雪崩）
+    #   misfire_grace_time=300：超過 5 分鐘視為過期，跳過不補
+    _common = {
+        "max_instances": 1,
+        "coalesce": True,
+        "misfire_grace_time": 300,
+        "replace_existing": True,
+    }
+
     # 每 15 分鐘抽取新樣本
     scheduler.add_job(
         lambda: _run_extraction_job(conn_factory),
         trigger="interval", minutes=15,
-        id="extraction", replace_existing=True,
+        id="extraction", **_common,
     )
 
     # 每 10 分鐘批次精煉 raw 樣本
     scheduler.add_job(
         lambda: _run_refiner_job(conn_factory),
         trigger="interval", minutes=10,
-        id="refiner", replace_existing=True,
+        id="refiner", **_common,
     )
 
     # 每小時批次評分
     scheduler.add_job(
         lambda: score_pending_samples(conn_factory),
         trigger="interval", hours=1,
-        id="scoring", replace_existing=True,
+        id="scoring", **_common,
     )
 
     # 每 15 分鐘補充 exchange_embeddings 同義說法變體
     scheduler.add_job(
         lambda: _run_paraphrase_job(conn_factory),
         trigger="interval", minutes=15,
-        id="paraphrase", replace_existing=True,
+        id="paraphrase", **_common,
     )
 
     # 每日凌晨 2 點冷資料壓縮
     scheduler.add_job(
         lambda: compress_cold_data(conn_factory),
         trigger="cron", hour=2, minute=0,
-        id="cold_compress", replace_existing=True,
+        id="cold_compress", **_common,
     )
 
     # 每 6 小時檢查是否達 fine-tune 門檻
     scheduler.add_job(
         lambda: _run_finetune_check(conn_factory),
         trigger="interval", hours=6,
-        id="finetune_check", replace_existing=True,
+        id="finetune_check", **_common,
     )
 
     # 每日 UTC 00:05 重置 teacher 每日額度旗標
     scheduler.add_job(
         lambda: _reset_daily_limits(conn_factory),
         trigger="cron", hour=0, minute=5,
-        id="daily_limit_reset", replace_existing=True,
+        id="daily_limit_reset", **_common,
     )
 
     return scheduler
@@ -156,7 +205,11 @@ def _run_extraction_job(conn_factory) -> None:
             "WHERE status='raw' AND created_at < datetime('now', '-1 day')"
         ).fetchone()[0]
         if stale > 0:
-            logger.warning("有 %d 筆 raw 樣本逾 24h 未精煉，請確認 refiner job 或 Ollama 狀態", stale)
+            _send_alert(
+                "refiner_stale",
+                f"有 {stale} 筆 raw 樣本逾 24h 未精煉，請確認 refiner job 或 Ollama 狀態",
+                {"stale_count": stale},
+            )
 
         # W5 回饋補齊：extraction 完成後對新樣本補一次 weight 同步
         # （stop_hook 執行時樣本尚未寫入，採納回饋在此時才能正確套用）
@@ -172,8 +225,10 @@ def _run_extraction_job(conn_factory) -> None:
                 sync_sample_weights(sid)
             if new_sessions:
                 logger.info("extraction 後 weight 同步：%d sessions", len(new_sessions))
+        except ImportError:
+            logger.debug("weight 同步略過：Layer 0 未安裝")
         except Exception as e:
-            logger.debug("weight 同步略過（Layer 0 未啟動或無資料）：%s", e)
+            _send_alert("weight_sync_failed", f"W5 weight 同步失敗：{e}", {"error": str(e)})
     finally:
         conn.close()
 

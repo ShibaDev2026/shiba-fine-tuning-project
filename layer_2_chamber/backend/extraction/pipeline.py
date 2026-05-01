@@ -1,10 +1,10 @@
 """
 pipeline.py — Layer 2 訓練樣本抽取管線
 
-路徑 A（layer1_bridge）：
-  Layer 1 高品質 session → exchange 級篩選 → training_samples
-  條件：event_type ∈ {git_ops, terminal_ops, code_gen}
-        + has_tool_use=true + exchange_count >= 2
+路徑 A v2（layer1_bridge_v2）：
+  Layer 1 exchanges 語意層 → 直接讀 has_error=0 / has_final_text=1 / status='completed'
+  條件：event_type ∈ block1 ∪ block2（共 7 種；block2 不開橋會永遠湊不到 30 樣本）
+        + branches.decay_score >= 0.3 + 同 session 合格 exchange >= 2
 
 路徑 B（error_repair）：
   tool_executions.is_error=1 → 找後續修復回合 → training_samples
@@ -39,13 +39,14 @@ _MIN_DECAY_SCORE = 0.3
 @dataclass
 class ExtractedSample:
     """單筆待寫入 training_samples 的資料"""
-    source: str          # 'layer1_bridge' | 'error_repair'
-    session_id: str      # Layer 1 session uuid
+    source: str                    # 'layer1_bridge_v2' | 'error_repair'
+    session_id: str                # Layer 1 session uuid
     event_type: str
     instruction: str
     input: str
     output: str
-    adapter_block: int   # 1 或 2
+    adapter_block: int             # 1 或 2
+    exchange_ids: list[int] | None = None  # C3：v2 路徑記錄涵蓋的 exchange.id
 
 
 # ── 公開入口 ─────────────────────────────────────────────────────────────
@@ -83,98 +84,6 @@ def run_extraction_v2(conn: sqlite3.Connection) -> dict:
     return stats
 
 
-def run_extraction(conn: sqlite3.Connection) -> dict:
-    """
-    執行完整抽取流程（路徑 A + B），將新樣本寫入 training_samples。
-    回傳統計：{'path_a': int, 'path_b': int, 'skipped': int}
-    """
-    stats = {"path_a": 0, "path_b": 0, "skipped": 0}
-
-    path_a_samples = _extract_path_a(conn)
-    path_b_samples = _extract_path_b(conn)
-
-    for sample in path_a_samples:
-        if _is_duplicate(conn, sample):
-            stats["skipped"] += 1
-            continue
-        _insert_sample(conn, sample)
-        stats["path_a"] += 1
-
-    for sample in path_b_samples:
-        if _is_duplicate(conn, sample):
-            stats["skipped"] += 1
-            continue
-        _insert_sample(conn, sample)
-        stats["path_b"] += 1
-
-    conn.commit()
-    logger.info(
-        "抽取完成 path_a=%d path_b=%d skipped=%d",
-        stats["path_a"], stats["path_b"], stats["skipped"],
-    )
-    return stats
-
-
-# ── 路徑 A：Layer 1 橋接 ─────────────────────────────────────────────────
-
-def _extract_path_a(conn: sqlite3.Connection) -> list[ExtractedSample]:
-    """
-    從 Layer 1 抽取高品質 session。
-    - 已抽過的 session（training_samples 已有記錄）跳過
-    - decay_score < _MIN_DECAY_SCORE 的 branch 跳過（FOREVER 加權）
-    - 以 exchange 為單位：只取 assistant 有工具呼叫且後續無 is_error 的回合（SEAL 篩選）
-    """
-    # 找符合橋接條件的 session，尚未被抽取過
-    sql = """
-        SELECT s.id, s.uuid, s.exchange_count, s.event_types, s.tool_counts
-        FROM sessions s
-        WHERE s.exchange_count >= 2
-          AND s.uuid NOT IN (
-              SELECT session_id FROM training_samples
-              WHERE source = 'layer1_bridge' AND session_id IS NOT NULL
-          )
-    """
-    sessions = conn.execute(sql).fetchall()
-
-    samples: list[ExtractedSample] = []
-    for sess in sessions:
-        event_types = _parse_json_list(sess["event_types"])
-
-        # 只處理橋接目標 event_type
-        matched = _BRIDGE_EVENT_TYPES & set(event_types)
-        if not matched:
-            continue
-
-        # 確認最高品質 branch 的 decay_score（FOREVER）
-        branch = _get_best_branch(conn, sess["id"])
-        if branch is None or branch["decay_score"] < _MIN_DECAY_SCORE:
-            continue
-
-        primary_event = _pick_primary_event(event_types, matched)
-        adapter_block = _get_adapter_block(primary_event)
-
-        # block1（git/bash）：output 用實際執行指令；block2：用文字回覆
-        use_tool_output = adapter_block == 1
-        exchanges = _extract_valid_exchanges(
-            conn, sess["id"], branch["id"], use_tool_output=use_tool_output
-        )
-        if not exchanges:
-            continue
-
-        # 整合成單筆 Alpaca 樣本
-        sample = _build_alpaca_sample(
-            source="layer1_bridge",
-            session_uuid=sess["uuid"],
-            event_type=primary_event,
-            exchanges=exchanges,
-            adapter_block=adapter_block,
-        )
-        if sample:
-            samples.append(sample)
-
-    return samples
-
-
 # ── 路徑 A v2：直接以 Layer 1 exchanges 語意層為單位 ───────────────────────
 #
 # 與 v1 對照：
@@ -186,6 +95,8 @@ def _extract_path_a(conn: sqlite3.Connection) -> list[ExtractedSample]:
 # 樣本形狀維持 session→1 sample 不變，僅改抽法。
 
 # 主 SQL：一次撈所有候選 exchange，後續 group by session
+# C3：dedup 改為 exchange-level — 已被任一 v2 樣本涵蓋的 exchange.id 排除，
+# 同 session 若有新乾淨 exchange 加入仍能再產出新樣本（保 SEAL 哲學）。
 _PATH_A_V2_SQL = """
     SELECT s.id AS session_id, s.uuid AS session_uuid, s.event_types,
            e.id AS exchange_id, e.exchange_idx,
@@ -199,9 +110,11 @@ _PATH_A_V2_SQL = """
       AND e.status = 'completed'
       AND e.has_error = 0
       AND e.has_final_text = 1
-      AND s.uuid NOT IN (
-          SELECT session_id FROM training_samples
-          WHERE source = 'layer1_bridge_v2' AND session_id IS NOT NULL
+      AND e.id NOT IN (
+          SELECT CAST(je.value AS INTEGER)
+          FROM training_samples ts, json_each(ts.source_exchange_ids) je
+          WHERE ts.source = 'layer1_bridge_v2'
+            AND ts.source_exchange_ids IS NOT NULL
       )
     ORDER BY s.id, b.decay_score DESC, e.exchange_idx
 """
@@ -303,6 +216,7 @@ def _materialize_exchange_v2(
         if not cmds:
             return None
         return {
+            "exchange_id": ex_row["exchange_id"],
             "user": user_content,
             "assistant": cmds,
             "has_tool_use": True,
@@ -319,6 +233,7 @@ def _materialize_exchange_v2(
     if not final_msg or not (final_msg["content"] or "").strip():
         return None
     return {
+        "exchange_id": ex_row["exchange_id"],
         "user": user_content,
         "assistant": final_msg["content"].strip(),
         "has_tool_use": bool(final_msg["has_tool_use"]),
@@ -344,98 +259,6 @@ def _resolve_user_text(user_msg: sqlite3.Row | None) -> str | None:
     return text or None
 
 
-def _get_best_branch(conn: sqlite3.Connection, session_id: int) -> sqlite3.Row | None:
-    """取 session 的最高 decay_score 且 is_active=1 的 branch"""
-    return conn.execute(
-        """SELECT id, decay_score FROM branches
-           WHERE session_id = ? AND is_active = 1
-           ORDER BY decay_score DESC LIMIT 1""",
-        (session_id,),
-    ).fetchone()
-
-
-def _extract_valid_exchanges(
-    conn: sqlite3.Connection, session_id: int, branch_id: int,
-    use_tool_output: bool = False,
-) -> list[dict]:
-    """
-    從 branch_messages 取出此 branch 的訊息序列，篩選有效的 user → assistant 配對。
-
-    use_tool_output=True（block1 event type）：
-      output 改為 user 訊息之後 Claude 實際執行的 Bash/Edit/Write 指令序列，
-      而非 assistant 的文字回覆。這樣訓練對的「因果」更直接：
-      因 = 使用者意圖，果 = 實際操作指令。
-    """
-    rows = conn.execute(
-        """SELECT m.id AS msg_id, m.role, m.content, m.has_tool_use, m.tool_names, bm.seq
-           FROM branch_messages bm
-           JOIN messages m ON m.id = bm.message_id
-           WHERE bm.branch_id = ?
-           ORDER BY bm.seq""",
-        (branch_id,),
-    ).fetchall()
-
-    error_tool_ids = _get_error_tool_ids(conn, session_id)
-
-    exchanges = []
-    i = 0
-    while i < len(rows):
-        row = rows[i]
-
-        # 找有內容的 user 訊息
-        if row["role"] != "user" or not (row["content"] or "").strip():
-            i += 1
-            continue
-
-        user_content = row["content"].strip()
-
-        # 收集此 user 之後、下一個 user 之前的所有 assistant 訊息
-        j = i + 1
-        asst_rows = []
-        has_error = False
-        while j < len(rows):
-            r = rows[j]
-            if r["role"] == "user":
-                break
-            if r["role"] == "assistant":
-                if r["has_tool_use"] and _has_error_tool(conn, r["msg_id"], error_tool_ids):
-                    has_error = True
-                    break
-                asst_rows.append(r)
-            j += 1
-
-        if has_error or not asst_rows:
-            i = j + 1 if asst_rows else i + 1
-            continue
-
-        if use_tool_output:
-            # block1：output = 實際執行的 Bash/Edit/Write 指令序列
-            cmds = _collect_tool_commands(conn, [r["msg_id"] for r in asst_rows])
-            if cmds:
-                exchanges.append({
-                    "user": user_content,
-                    "assistant": cmds,
-                    "has_tool_use": True,
-                    "tool_names": [],
-                })
-        else:
-            # block2：output = 最後一個有文字內容的 assistant 回覆
-            final = next(
-                (r for r in reversed(asst_rows) if (r["content"] or "").strip()), None
-            )
-            if final:
-                exchanges.append({
-                    "user": user_content,
-                    "assistant": final["content"].strip(),
-                    "has_tool_use": bool(final["has_tool_use"]),
-                    "tool_names": _parse_json_list(final["tool_names"]),
-                })
-
-        i = j
-
-    return exchanges
-
-
 def _collect_tool_commands(conn: sqlite3.Connection, message_ids: list[int]) -> str:
     """
     從指定 message_ids 的 tool_executions 收集成功執行的指令，
@@ -459,7 +282,7 @@ def _collect_tool_commands(conn: sqlite3.Connection, message_ids: list[int]) -> 
         try:
             import json as _json
             cmd_data = _json.loads(r["input_cmd"] or "{}")
-        except Exception:
+        except (json.JSONDecodeError, TypeError):
             cmd_data = {}
 
         if r["tool_name"] == "Bash":
@@ -472,29 +295,6 @@ def _collect_tool_commands(conn: sqlite3.Connection, message_ids: list[int]) -> 
                 lines.append(f"# {r['tool_name']}: {path}")
 
     return "\n".join(lines)
-
-
-def _get_error_tool_ids(conn: sqlite3.Connection, session_id: int) -> set[str]:
-    """取出此 session 所有失敗 tool_use_id（後續無修復者）"""
-    rows = conn.execute(
-        """SELECT te.tool_use_id
-           FROM tool_executions te
-           JOIN messages m ON m.id = te.message_id
-           WHERE m.session_id = ? AND te.is_error = 1""",
-        (session_id,),
-    ).fetchall()
-    return {r["tool_use_id"] for r in rows}
-
-
-def _has_error_tool(conn: sqlite3.Connection, msg_id: int, error_ids: set[str]) -> bool:
-    """判斷此訊息的 tool_executions 是否有在 error_ids 內的失敗工具呼叫"""
-    if not error_ids:
-        return False
-    rows = conn.execute(
-        "SELECT tool_use_id FROM tool_executions WHERE message_id = ?",
-        (msg_id,),
-    ).fetchall()
-    return any(r["tool_use_id"] in error_ids for r in rows)
 
 
 def _build_alpaca_sample(
@@ -523,6 +323,9 @@ def _build_alpaca_sample(
     if not instruction or not output:
         return None
 
+    # C3：記錄涵蓋的 exchange.id 清單，供 exchange-level dedup 使用
+    exchange_ids = [ex["exchange_id"] for ex in exchanges if "exchange_id" in ex]
+
     return ExtractedSample(
         source=source,
         session_id=session_uuid,
@@ -531,6 +334,7 @@ def _build_alpaca_sample(
         input=input_text,
         output=output,
         adapter_block=adapter_block,
+        exchange_ids=exchange_ids or None,
     )
 
 
@@ -633,11 +437,14 @@ def _find_repair_exchange(
 
 def _insert_sample(conn: sqlite3.Connection, sample: ExtractedSample) -> None:
     """寫入 training_samples（status='raw'，等 refiner 處理後升 pending）"""
+    exchange_ids_json = (
+        json.dumps(sample.exchange_ids) if sample.exchange_ids else None
+    )
     conn.execute(
         """INSERT INTO training_samples
            (source, session_id, event_type, instruction, input, output,
-            adapter_block, status, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, 'raw', ?)""",
+            adapter_block, status, created_at, source_exchange_ids)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 'raw', ?, ?)""",
         (
             sample.source,
             sample.session_id,
@@ -647,12 +454,28 @@ def _insert_sample(conn: sqlite3.Connection, sample: ExtractedSample) -> None:
             sample.output,
             sample.adapter_block,
             datetime.now(timezone.utc).isoformat(),
+            exchange_ids_json,
         ),
     )
 
 
 def _is_duplicate(conn: sqlite3.Connection, sample: ExtractedSample) -> bool:
-    """同一 session_id + source 已存在則跳過"""
+    """
+    重複偵測：
+    - v2 路徑（exchange_ids 不為空）：任一 exchange_id 已被涵蓋即重複
+    - 其他路徑（error_repair / 早期樣本）：沿用 session+source 等價判定
+    """
+    if sample.exchange_ids:
+        placeholders = ",".join("?" * len(sample.exchange_ids))
+        sql = (
+            f"SELECT 1 FROM training_samples ts, json_each(ts.source_exchange_ids) je "
+            f"WHERE ts.source = ? AND ts.source_exchange_ids IS NOT NULL "
+            f"  AND CAST(je.value AS INTEGER) IN ({placeholders}) "
+            f"LIMIT 1"
+        )
+        row = conn.execute(sql, (sample.source, *sample.exchange_ids)).fetchone()
+        return row is not None
+
     row = conn.execute(
         "SELECT id FROM training_samples WHERE session_id = ? AND source = ?",
         (sample.session_id, sample.source),

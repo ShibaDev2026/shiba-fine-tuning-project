@@ -12,6 +12,7 @@ import json
 import logging
 import re
 import sqlite3
+import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 
@@ -92,7 +93,7 @@ def _is_ollama_available(base_url: str) -> bool:
         req = urllib.request.Request(f"{base_url}/api/tags", method="HEAD")
         with urllib.request.urlopen(req, timeout=3):
             return True
-    except Exception:
+    except (urllib.error.URLError, OSError, TimeoutError):
         return False
 
 

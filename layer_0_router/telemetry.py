@@ -4,6 +4,7 @@
 import hashlib
 import logging
 import sqlite3
+from dataclasses import dataclass
 from pathlib import Path
 
 from shiba_config import CONFIG
@@ -12,12 +13,36 @@ logger = logging.getLogger(__name__)
 
 DB_PATH = CONFIG.paths.db
 
-# 否定採納的中英文關鍵字（觸發 auto rejected）
+# C4：採納啟發式由「無否定即採納」改為多維結構。
+# 否定關鍵字 → accepted=False / rewrote=False（明確拒絕）
+# 改寫關鍵字 → accepted=False / rewrote=True（軟拒絕，user 自行修正）
+# 確認關鍵字 → accepted=True  / rewrote=False（明確採納）
+# 三者皆無  → accepted=None              （模糊；保留 NULL，等待下次或 manual）
 _REJECTION_KEYWORDS = [
     "不對", "不行", "重做", "不符合", "不好", "錯了", "不是這樣",
     "換回", "用 claude", "用claude", "let claude", "redo", "try again",
     "that's wrong", "not right", "doesn't work",
 ]
+
+# 軟拒絕：user 提供修正版（接受結構但要求改內容）
+_REWRITE_KEYWORDS = [
+    "改成", "應該是", "改為", "正確是", "正確的是",
+    "should be", "actually", "fix to", "change to",
+]
+
+# 明確採納：user 主動確認正向訊號
+_CONFIRM_KEYWORDS = [
+    "好的", "好", "對", "正確", "謝謝", "感謝", "完美", "棒", "讚",
+    "thanks", "thank you", "thx", "perfect", "great", "looks good", "lgtm",
+]
+
+
+@dataclass
+class AcceptanceSignal:
+    """單次 user follow-up 的多維採納判定結果。"""
+    accepted: bool | None     # True=採納 / False=拒絕 / None=模糊（不寫入）
+    rewrote: bool             # True=user 提供修正版（軟拒絕 + 高訓練價值）
+    matched_keyword: str | None  # 命中的關鍵字（debug / audit）
 
 
 def _conn() -> sqlite3.Connection:
@@ -79,28 +104,40 @@ def update_acceptance(
     logger.debug("採納更新 decision_id=%s accepted=%s source=%s", decision_id, accepted, source)
 
 
-def infer_acceptance_from_text(next_user_message: str) -> bool | None:
+def infer_acceptance_from_text(next_user_message: str) -> AcceptanceSignal:
     """
-    語意比對：回傳 True（採納）/ False（拒絕）/ None（無法判定）。
-    僅用於 auto 模式，manual 覆寫優先。
+    多維啟發式採納判定。
+
+    優先序：拒絕 > 改寫 > 確認 > 模糊（None）。
+    僅用於 auto 模式，manual 覆寫優先。模糊情境保留 NULL，
+    避免「無否定即推定採納」的 false positive 拉高 acceptance_rate。
     """
     msg = next_user_message.lower()
+
     for kw in _REJECTION_KEYWORDS:
         if kw.lower() in msg:
-            return False
-    # 無否定訊號，保守推定採納
-    return True
+            return AcceptanceSignal(accepted=False, rewrote=False, matched_keyword=kw)
+
+    for kw in _REWRITE_KEYWORDS:
+        if kw.lower() in msg:
+            return AcceptanceSignal(accepted=False, rewrote=True, matched_keyword=kw)
+
+    for kw in _CONFIRM_KEYWORDS:
+        if kw.lower() in msg:
+            return AcceptanceSignal(accepted=True, rewrote=False, matched_keyword=kw)
+
+    return AcceptanceSignal(accepted=None, rewrote=False, matched_keyword=None)
 
 
 def update_pending_decisions(session_id: str, next_user_message: str) -> int:
     """
     在 stop_hook 或下次 session_start_hook 呼叫：
     對同一 session 內 user_accepted=NULL 的 local 決策，
-    以語意比對自動更新。回傳更新筆數。
+    以多維啟發式自動更新。回傳實際更新筆數（模糊訊號不寫入時為 0）。
     """
-    accepted = infer_acceptance_from_text(next_user_message)
-    if accepted is None:
-        return 0
+    signal = infer_acceptance_from_text(next_user_message)
+    if signal.accepted is None:
+        return 0  # 模糊訊號保留 NULL，等下次或 manual 覆寫
 
     with _conn() as conn:
         rows = conn.execute(
@@ -118,10 +155,10 @@ def update_pending_decisions(session_id: str, next_user_message: str) -> int:
             conn.execute(
                 """
                 UPDATE router_decisions
-                   SET user_accepted = ?, acceptance_source = 'auto'
+                   SET user_accepted = ?, user_rewrote = ?, acceptance_source = 'auto'
                  WHERE id = ?
                 """,
-                (1 if accepted else 0, row["id"]),
+                (1 if signal.accepted else 0, 1 if signal.rewrote else 0, row["id"]),
             )
         return len(rows)
 

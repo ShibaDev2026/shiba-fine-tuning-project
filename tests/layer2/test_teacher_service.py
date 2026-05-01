@@ -12,12 +12,9 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from layer_2_chamber.backend.services.teacher_service import (
-    _SCORE_AUTO_APPROVE,
-    _SCORE_AUTO_REJECT,
     get_active_teachers,
     get_today_usage,
     is_quota_available,
-    score_sample,
     upsert_teacher,
 )
 
@@ -116,88 +113,5 @@ class TestQuota:
         assert get_today_usage(conn, tid) == 0
 
 
-class TestScoreSample:
-    def _mock_teacher_result(self, score: float):
-        """回傳指定分數的 mock _call_teacher"""
-        return MagicMock(return_value={"score": score, "reason": f"score={score}"})
-
-    def test_auto_approved_when_score_ge_8(self, tmp_path):
-        conn = _make_db(tmp_path)
-        _add_teacher(conn)
-        sid = _add_sample(conn)
-
-        with patch("layer_2_chamber.backend.services.teacher_service._call_teacher") as mock_call, \
-             patch("layer_2_chamber.backend.services.teacher_service.get_api_key", return_value="key"):
-            mock_call.return_value = {"score": 9.0, "reason": "excellent"}
-            result = score_sample(conn, sid, "inst", "inp", "out")
-
-        assert result["status"] == "approved"
-        assert result["score"] == 9.0
-        row = conn.execute("SELECT status FROM training_samples WHERE id=?", (sid,)).fetchone()
-        assert row["status"] == "approved"
-
-    def test_auto_rejected_when_score_lt_6(self, tmp_path):
-        conn = _make_db(tmp_path)
-        _add_teacher(conn)
-        sid = _add_sample(conn)
-
-        with patch("layer_2_chamber.backend.services.teacher_service._call_teacher") as mock_call, \
-             patch("layer_2_chamber.backend.services.teacher_service.get_api_key", return_value="key"):
-            mock_call.return_value = {"score": 4.0, "reason": "poor"}
-            result = score_sample(conn, sid, "inst", "inp", "out")
-
-        assert result["status"] == "rejected"
-
-    def test_needs_review_when_score_6_to_7(self, tmp_path):
-        conn = _make_db(tmp_path)
-        _add_teacher(conn, name="T1", priority=0)
-        _add_teacher(conn, name="T2", priority=1)
-        sid = _add_sample(conn)
-
-        with patch("layer_2_chamber.backend.services.teacher_service._call_teacher") as mock_call, \
-             patch("layer_2_chamber.backend.services.teacher_service.get_api_key", return_value="key"):
-            # 兩裁判都給 6.5，差距 0 → needs_review（平均 < 8）
-            mock_call.return_value = {"score": 6.5, "reason": "borderline"}
-            result = score_sample(conn, sid, "inst", "inp", "out")
-
-        assert result["status"] == "needs_review"
-
-    def test_needs_review_when_disagreement_gt_2(self, tmp_path):
-        conn = _make_db(tmp_path)
-        _add_teacher(conn, name="T1", priority=0)
-        _add_teacher(conn, name="T2", priority=1)
-        sid = _add_sample(conn)
-
-        scores = [7.0, 4.0]  # 差距 3 > 2
-        call_count = 0
-
-        def side_effect(*args, **kwargs):
-            nonlocal call_count
-            s = scores[call_count % 2]
-            call_count += 1
-            return {"score": s, "reason": f"score={s}"}
-
-        with patch("layer_2_chamber.backend.services.teacher_service._call_teacher", side_effect=side_effect), \
-             patch("layer_2_chamber.backend.services.teacher_service.get_api_key", return_value="key"):
-            result = score_sample(conn, sid, "inst", "inp", "out")
-
-        assert result["status"] == "needs_review"
-        assert "分歧" in result["reason"]
-
-    def test_no_teachers_returns_pending(self, tmp_path):
-        conn = _make_db(tmp_path)
-        sid = _add_sample(conn)
-        result = score_sample(conn, sid, "inst", "inp", "out")
-        assert result["status"] == "pending"
-
-    def test_usage_log_written_after_scoring(self, tmp_path):
-        conn = _make_db(tmp_path)
-        tid = _add_teacher(conn)
-        sid = _add_sample(conn)
-
-        with patch("layer_2_chamber.backend.services.teacher_service._call_teacher") as mock_call, \
-             patch("layer_2_chamber.backend.services.teacher_service.get_api_key", return_value="key"):
-            mock_call.return_value = {"score": 9.0, "reason": "ok"}
-            score_sample(conn, sid, "inst", "inp", "out")
-
-        assert get_today_usage(conn, tid) == 1
+# A4：score_sample 已移除（兩裁判流程被 services/multi_judge.multi_judge_score 取代）。
+# 三方投票邏輯由 tests/layer2/test_multi_judge.py 涵蓋（若無則待後續補）。

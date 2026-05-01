@@ -100,7 +100,10 @@ def _collect_votes(
     output: str,
     available_teachers: list,
 ) -> list[dict]:
-    """呼叫最多 3 個可用 Teacher，蒐集投票。"""
+    """
+    呼叫最多 3 個可用 Teacher，蒐集投票。
+    C1 early exit：取得 2 票且兩票一致（全 approved 或全 rejected）→ 停止，省一次 API 呼叫。
+    """
     votes = []
     for teacher in available_teachers[:3]:
         result = _call_teacher(teacher, instruction, input_text, output, conn, sample_id)
@@ -114,6 +117,9 @@ def _collect_votes(
             "approved": result["score"] >= _APPROVED_THRESHOLD,
             "reason": result["reason"],
         })
+        # 兩票一致 → 第三票改不了結果，提前停止
+        if len(votes) >= 2 and votes[-1]["approved"] == votes[-2]["approved"]:
+            break
     return votes
 
 

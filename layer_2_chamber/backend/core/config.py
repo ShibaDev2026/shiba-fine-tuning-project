@@ -150,6 +150,106 @@ def _run_token_quota_migration(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def _run_exchange_ids_migration(conn: sqlite3.Connection) -> None:
+    """
+    C3 幂等 migration：training_samples 新增 source_exchange_ids（JSON list）。
+    既有 layer1_bridge_v2 樣本以「該 session 當下所有乾淨 exchange」backfill，
+    讓 dedup 從 session-level 升為 exchange-level，
+    保留 SEAL「跳過失敗重試、保留成功 exchange」哲學。
+    """
+    if _column_exists(conn, "training_samples", "source_exchange_ids"):
+        return  # 已 migration 過
+
+    conn.execute(
+        "ALTER TABLE training_samples ADD COLUMN source_exchange_ids TEXT"
+    )
+
+    # 僅 backfill v2 樣本；舊版 layer1_bridge / error_repair 不適用 exchange-level
+    rows = conn.execute(
+        "SELECT id, session_id FROM training_samples "
+        "WHERE source = 'layer1_bridge_v2' AND session_id IS NOT NULL"
+    ).fetchall()
+    if rows and _table_exists(conn, "exchanges"):
+        import json as _json
+        for row in rows:
+            ex_ids = [
+                r[0] for r in conn.execute(
+                    "SELECT e.id FROM exchanges e "
+                    "JOIN sessions s ON s.id = e.session_id "
+                    "WHERE s.uuid = ? "
+                    "  AND e.has_error = 0 "
+                    "  AND e.has_final_text = 1 "
+                    "  AND e.status = 'completed'",
+                    (row["session_id"],),
+                ).fetchall()
+            ]
+            conn.execute(
+                "UPDATE training_samples SET source_exchange_ids = ? WHERE id = ?",
+                (_json.dumps(ex_ids), row["id"]),
+            )
+    conn.commit()
+
+
+def _run_keychain_nullable_migration(conn: sqlite3.Connection) -> None:
+    """
+    C6 幂等 migration：teachers.keychain_ref NOT NULL → nullable（支援本地 Ollama teacher）。
+    SQLite 不支援 ALTER COLUMN DROP NOT NULL，需用重建表格的方式。
+    """
+    info = conn.execute("PRAGMA table_info(teachers)").fetchall()
+    keychain_col = next((r for r in info if r[1] == "keychain_ref"), None)
+    if keychain_col is None or keychain_col[3] == 0:
+        return  # 欄位不存在或已是 nullable，跳過
+
+    conn.executescript("""
+        PRAGMA foreign_keys=OFF;
+
+        CREATE TABLE IF NOT EXISTS teachers_c6 (
+            id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+            name                    TEXT NOT NULL UNIQUE,
+            model_id                TEXT NOT NULL,
+            api_base                TEXT NOT NULL,
+            keychain_ref            TEXT,
+            priority                INTEGER NOT NULL DEFAULT 0,
+            daily_limit             INTEGER NOT NULL DEFAULT 250,
+            is_active               INTEGER NOT NULL DEFAULT 1,
+            is_daily_limit_reached  INTEGER NOT NULL DEFAULT 0,
+            created_at              TEXT NOT NULL DEFAULT (datetime('now')),
+            daily_request_limit     INTEGER DEFAULT 250,
+            daily_token_limit       INTEGER DEFAULT NULL,
+            quota_reset_period      TEXT DEFAULT 'daily',
+            requests_today          INTEGER DEFAULT 0,
+            input_tokens_today      INTEGER DEFAULT 0,
+            output_tokens_today     INTEGER DEFAULT 0,
+            quota_exhausted_at      TEXT DEFAULT NULL,
+            quota_exhausted_type    TEXT DEFAULT NULL
+        );
+
+        INSERT INTO teachers_c6
+            (id, name, model_id, api_base, keychain_ref, priority, daily_limit,
+             is_active, is_daily_limit_reached, created_at,
+             daily_request_limit, daily_token_limit, quota_reset_period,
+             requests_today, input_tokens_today, output_tokens_today,
+             quota_exhausted_at, quota_exhausted_type)
+        SELECT
+            id, name, model_id, api_base, keychain_ref, priority, daily_limit,
+            is_active, is_daily_limit_reached, created_at,
+            COALESCE(daily_request_limit, daily_limit),
+            daily_token_limit,
+            COALESCE(quota_reset_period, 'daily'),
+            COALESCE(requests_today, 0),
+            COALESCE(input_tokens_today, 0),
+            COALESCE(output_tokens_today, 0),
+            quota_exhausted_at, quota_exhausted_type
+        FROM teachers;
+
+        DROP TABLE teachers;
+        ALTER TABLE teachers_c6 RENAME TO teachers;
+
+        PRAGMA foreign_keys=ON;
+    """)
+    conn.commit()
+
+
 def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
     """檢查資料表是否存在"""
     row = conn.execute(
@@ -165,7 +265,8 @@ def init_layer2_db() -> sqlite3.Connection:
     回傳已啟用 WAL + foreign_keys 的 connection。
     """
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    # C5：timeout=30s，避免多排程併發 + Layer 1 hook 同時寫入時 lock contention
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=30.0)
     conn.row_factory = sqlite3.Row
 
     # WAL 模式減少 Layer 1 hook 與 Layer 2 API 的寫入競爭
@@ -185,6 +286,10 @@ def init_layer2_db() -> sqlite3.Connection:
     _run_quota_migration(conn)
     # Token 維度配額 migration（幂等）
     _run_token_quota_migration(conn)
+    # C6：keychain_ref NOT NULL → nullable（支援本地 Ollama teacher）
+    _run_keychain_nullable_migration(conn)
+    # C3：source_exchange_ids 欄位（exchange-level dedup）
+    _run_exchange_ids_migration(conn)
 
     return conn
 

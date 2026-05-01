@@ -3,6 +3,34 @@
 所有版本變更依照 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/) 格式記錄。
 版本號遵循 [Semantic Versioning](https://semver.org/lang/zh-TW/)。
 
+## [1.2.0] - 2026-05-01
+
+A/B/C 三級架構檢視一輪完成（A3-A5 對齊、B1-B7 靜默失效修補、C1-C6 效能與正確性強化）。
+
+### Changed
+
+- **C3 exchange-level dedup（`pipeline.py` + `core/config.py` + `schema_layer2.sql`）**：`training_samples` 新增 `source_exchange_ids` 欄位（JSON list of `exchanges.id`），`_PATH_A_V2_SQL` 改用 `json_each` 排除已被任一 v2 樣本涵蓋的 exchange.id，取代原本「session.uuid 整段排除」邏輯；同 session 加入新乾淨 exchange 後仍能再產出新樣本（保 SEAL「跳過失敗重試、保留成功 exchange」哲學）。`_run_exchange_ids_migration` backfill 既有 v2 樣本。
+- **C4 多維採納啟發式（`layer_0_router/telemetry.py`）**：`infer_acceptance_from_text` 從「無否定即推定採納」二值化升級為 `AcceptanceSignal(accepted, rewrote, matched_keyword)` 三維結構；新增 `_REWRITE_KEYWORDS`（軟拒絕＋修正訊號）與 `_CONFIRM_KEYWORDS`（明確採納），未命中任何關鍵字回傳 `accepted=None` 保留 NULL，避免拉高 acceptance_rate false positive。`update_pending_decisions` 同步寫入 `user_rewrote`。
+- **C5 排程併發保護（`core/background.py` + `core/config.py`）**：`setup_scheduler` 七個 job 統一加上 `max_instances=1` / `coalesce=True` / `misfire_grace_time=300`，避免 refiner 跨 tick 重疊或 backlog 雪崩；`init_layer2_db` 的 `sqlite3.connect()` 顯式 `timeout=30.0`，緩解 Layer 1 hook + Layer 2 排程同時寫入時的 SQLite lock contention。
+- **C1 multi_judge early exit（`services/multi_judge.py`）**：`_collect_votes` 取得前兩票若一致（同為 approved 或 rejected），第三票必不影響結果，提前中止節省 1 次 Teacher API call（最多省 33% 配額）。
+- **A3/A4/A5 spec ↔ code 對齊**：`CLAUDE.md` 多 Judge 流程與 Layer 1→2 橋接條件依 v2 實作改寫；`pipeline.py` 移除 `_extract_path_a` v1 死碼；`multi_judge.py` 刪除無人呼叫的 `score_sample` / `_pick_available_teacher` / 三個 score 常數，避免文件與行為長期分歧。
+
+### Fixed
+
+- **B1 `runner.py finished_at`**：寫入時用 `datetime.now(timezone.utc).isoformat()`，加 ISO 格式驗證測試（型別 + T 分隔符），確保 `fromisoformat` 後續解析不會靜默失敗。
+- **B2 `dataset_formatter.py`**：`samples=[]` 改為 `raise ValueError`，避免空 file 被當成有效訓練集合送入 Layer 3；移除 `_calc_stable_target` 死碼。
+- **B3 移除 `threshold` 參數（`runner.py` + `server.py` + `tests/layer3/test_runner.py`）**：`run_finetune_if_ready` 拿掉外部 `threshold=30` 注入，門檻完全由 `trigger_policy.should_trigger` 決定，避免 server 與 trigger 雙頭設定不一致。
+- **B4 收緊 `try-except`（`pipeline.py` / `refiner_service.py` / `teacher_service.py`）**：原本的 `except Exception` 改為精確 exception type（`json.JSONDecodeError`、`urllib.error.URLError` 等），避免 KeyboardInterrupt / SystemExit 被默默吞掉。
+- **B5 `compress_cold_data` 條件（`core/background.py`）**：以「session 無 30 天內 pending/raw 樣本」NOT EXISTS 取代原本的 approved-IN list，超過 30 天的卡死樣本視為永久失敗允許壓縮，避免 decay 永遠卡住。
+- **B6 `lib/exchanges.py` SAVEPOINT**：批次 INSERT 用 SAVEPOINT 包覆，session 級寫入失敗時整段回滾，避免「半邊資料」污染 exchanges 語意層。
+- **B7 集中式 alert（`core/background.py`）**：新增 `_send_alert(alert_type, message, context)` 統一出口，CRITICAL log 必出 + `SHIBA_ALERT_WEBHOOK` env 可選 POST；W4/W5 改走此通道。
+- **C2 Ebbinghaus cadence 驗證（`tests/layer3/test_trigger_policy.py`）**：補測試確認 6 小時排程節奏覆蓋 `{1,2,4,7,15,30}` 日視窗 ±0.5 day 不漏不重。
+- **C6 `teachers.keychain_ref` nullable（`schema_layer2.sql` + `core/config.py`）**：移除 NOT NULL 約束讓本地 Ollama teacher 不必偽造 keychain ref；`_run_keychain_nullable_migration` 用 table-rebuild dance 升級舊 DB。
+
+### Tests
+
+新增 11 tests：5 × 採納啟發式（C4）、3 × multi_judge early exit（C1）、3 × compress_cold_data B5 條件、1 × pipeline_v2 exchange-level dedup（C3）、1 × scheduler 併發保護（C5）、2 × Ebbinghaus 視窗（C2）、1 × runner finished_at ISO 格式（B1）。全 105 tests 通過（7 個 pre-existing 失敗為 teachers schema 遺漏 `daily_request_limit` × 6 + router mock unpack × 1，與本輪改動無關）。
+
 ## [1.1.2] - 2026-04-30
 
 ### Fixed

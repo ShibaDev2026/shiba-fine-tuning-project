@@ -1,7 +1,7 @@
-"""pipeline.py 單元測試
+"""pipeline.py 單元測試（A3 後 v2 only）
 
 涵蓋範圍：
-- 路徑 A：橋接條件篩選、exchange 級 SEAL 篩選、decay_score 門檻、adapter_block 標記
+- 路徑 A v2：exchanges 語意層 SEAL 篩選、decay_score 門檻、adapter_block 標記
 - 路徑 B：error-repair 抽取、修復回覆配對
 - 重複防呆：同一 session 不重複寫入
 - 輔助函式：_get_adapter_block、_parse_json_list、_pick_primary_event
@@ -20,7 +20,7 @@ from layer_2_chamber.backend.extraction.pipeline import (
     _get_adapter_block,
     _parse_json_list,
     _pick_primary_event,
-    run_extraction,
+    run_extraction_v2,
 )
 
 # ── Fixtures ─────────────────────────────────────────────────────────────
@@ -59,7 +59,6 @@ def _seed_session(
     uuid: str,
     event_types: list[str],
     exchange_count: int = 3,
-    has_tool_use: int = 1,
 ) -> int:
     cur = conn.execute(
         """INSERT INTO sessions (project_id, uuid, exchange_count, event_types, tool_counts)
@@ -104,16 +103,6 @@ def _seed_message(
     return cur.lastrowid
 
 
-def _seed_branch_message(
-    conn: sqlite3.Connection, branch_id: int, message_id: int, seq: int
-) -> None:
-    conn.execute(
-        "INSERT INTO branch_messages (branch_id, message_id, seq) VALUES (?, ?, ?)",
-        (branch_id, message_id, seq),
-    )
-    conn.commit()
-
-
 def _seed_tool_execution(
     conn: sqlite3.Connection,
     message_id: int,
@@ -131,6 +120,79 @@ def _seed_tool_execution(
     )
     conn.commit()
     return cur.lastrowid
+
+
+def _seed_exchange(
+    conn: sqlite3.Connection,
+    session_id: int,
+    branch_id: int,
+    exchange_idx: int,
+    user_message_id: int,
+    final_assistant_message_id: int | None,
+    has_tool_use: int = 1,
+    has_error: int = 0,
+    has_final_text: int = 1,
+    status: str = "completed",
+    tool_names: list[str] | None = None,
+    assistant_tool_msg_ids: list[int] | None = None,
+) -> int:
+    """建立一筆 exchange + exchange_messages 紀錄（v2 SQL 必需）"""
+    cur = conn.execute(
+        """INSERT INTO exchanges
+           (session_id, branch_id, exchange_idx, user_message_id, final_assistant_message_id,
+            has_tool_use, has_error, has_final_text, status, tool_names, started_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))""",
+        (
+            session_id, branch_id, exchange_idx,
+            user_message_id, final_assistant_message_id,
+            has_tool_use, has_error, has_final_text, status,
+            json.dumps(tool_names or []),
+        ),
+    )
+    exchange_id = cur.lastrowid
+
+    seq = 0
+    conn.execute(
+        "INSERT INTO exchange_messages (exchange_id, message_id, seq, role_in_exchange) "
+        "VALUES (?, ?, ?, 'user_open')",
+        (exchange_id, user_message_id, seq),
+    )
+    seq += 1
+    for asst_msg_id in (assistant_tool_msg_ids or []):
+        conn.execute(
+            "INSERT INTO exchange_messages (exchange_id, message_id, seq, role_in_exchange) "
+            "VALUES (?, ?, ?, 'assistant_tool')",
+            (exchange_id, asst_msg_id, seq),
+        )
+        seq += 1
+    if final_assistant_message_id is not None:
+        conn.execute(
+            "INSERT INTO exchange_messages (exchange_id, message_id, seq, role_in_exchange) "
+            "VALUES (?, ?, ?, 'assistant_final')",
+            (exchange_id, final_assistant_message_id, seq),
+        )
+    conn.commit()
+    return exchange_id
+
+
+def _seed_block1_session(conn, project_id: int, uuid: str, event_types: list[str], decay_score: float = 0.9):
+    """便利 helper：建一個 block1 session（user→assistant_tool→assistant_final）含 2 個 exchange"""
+    sid = _seed_session(conn, project_id, uuid, event_types)
+    bid = _seed_branch(conn, sid, decay_score=decay_score)
+    for idx in range(2):
+        u = _seed_message(conn, sid, f"{uuid}-u{idx}", "user", f"user 訊息 {idx}")
+        a_tool = _seed_message(conn, sid, f"{uuid}-at{idx}", "assistant", "執行中", has_tool_use=1, tool_names=["Bash"])
+        a_final = _seed_message(conn, sid, f"{uuid}-af{idx}", "assistant", f"完成回覆 {idx}")
+        _seed_tool_execution(conn, a_tool, f"{uuid}-tool{idx}", "Bash")
+        _seed_exchange(
+            conn, sid, bid, exchange_idx=idx,
+            user_message_id=u,
+            final_assistant_message_id=a_final,
+            has_tool_use=1, has_error=0, has_final_text=1,
+            tool_names=["Bash"],
+            assistant_tool_msg_ids=[a_tool],
+        )
+    return sid, bid
 
 
 # ── 輔助函式測試 ─────────────────────────────────────────────────────────
@@ -179,83 +241,64 @@ class TestPickPrimaryEvent:
         assert result == "code_gen"
 
 
-# ── 路徑 A 測試 ──────────────────────────────────────────────────────────
+# ── 路徑 A v2 測試 ───────────────────────────────────────────────────────
 
-class TestPathA:
-    def test_valid_session_extracted(self, tmp_path):
-        """git_ops + has_tool_use + exchange_count>=2 應被抽取"""
+class TestPathAV2:
+    def test_valid_block1_session_extracted(self, tmp_path):
+        """git_ops session（2 個乾淨 exchange）→ 抽出 source='layer1_bridge_v2'"""
         conn = _make_db(tmp_path)
         pid = _seed_project(conn)
-        sid = _seed_session(conn, pid, "sess-a1", ["git_ops"], exchange_count=3)
-        bid = _seed_branch(conn, sid, decay_score=0.9)
+        _seed_block1_session(conn, pid, "sess-a1", ["git_ops"])
 
-        m1 = _seed_message(conn, sid, "m1", "user", "請幫我 commit 這個修改")
-        m2 = _seed_message(conn, sid, "m2", "assistant", "好的，執行 git commit -m 'fix: ...'", has_tool_use=1, tool_names=["Bash"])
-        _seed_branch_message(conn, bid, m1, 1)
-        _seed_branch_message(conn, bid, m2, 2)
-        _seed_tool_execution(conn, m2, "tool-git-001", "Bash")
-
-        stats = run_extraction(conn)
+        stats = run_extraction_v2(conn)
         assert stats["path_a"] == 1
-        row = conn.execute("SELECT * FROM training_samples WHERE source='layer1_bridge'").fetchone()
+        row = conn.execute(
+            "SELECT * FROM training_samples WHERE source='layer1_bridge_v2'"
+        ).fetchone()
         assert row["event_type"] == "git_ops"
         assert row["adapter_block"] == 1
         assert row["status"] == "raw"
 
-    def test_non_bridge_event_type_skipped(self, tmp_path):
-        """knowledge_qa session 不符合路徑 A 橋接條件"""
+    def test_block2_event_type_extracted(self, tmp_path):
+        """A3 spec 對齊：debugging 等 block2 event 也應橋接（v2 全橋）"""
         conn = _make_db(tmp_path)
         pid = _seed_project(conn)
-        sid = _seed_session(conn, pid, "sess-a2", ["knowledge_qa"], exchange_count=3)
-        _seed_branch(conn, sid, decay_score=0.9)
+        _seed_block1_session(conn, pid, "sess-a-block2", ["debugging"])
 
-        stats = run_extraction(conn)
-        assert stats["path_a"] == 0
+        stats = run_extraction_v2(conn)
+        assert stats["path_a"] == 1
+        row = conn.execute(
+            "SELECT adapter_block, event_type FROM training_samples WHERE source='layer1_bridge_v2'"
+        ).fetchone()
+        assert row["adapter_block"] == 2
+        assert row["event_type"] == "debugging"
 
     def test_low_decay_score_skipped(self, tmp_path):
-        """decay_score < 0.3 的 session 跳過（FOREVER 加權）"""
+        """decay_score < 0.3 的 branch 跳過（FOREVER 加權）"""
         conn = _make_db(tmp_path)
         pid = _seed_project(conn)
-        sid = _seed_session(conn, pid, "sess-a3", ["git_ops"], exchange_count=3)
-        bid = _seed_branch(conn, sid, decay_score=0.1)
+        _seed_block1_session(conn, pid, "sess-a3", ["git_ops"], decay_score=0.1)
 
-        m1 = _seed_message(conn, sid, "m1", "user", "commit 請求")
-        m2 = _seed_message(conn, sid, "m2", "assistant", "完成 commit", has_tool_use=1)
-        _seed_branch_message(conn, bid, m1, 1)
-        _seed_branch_message(conn, bid, m2, 2)
-
-        stats = run_extraction(conn)
+        stats = run_extraction_v2(conn)
         assert stats["path_a"] == 0
 
-    def test_exchange_count_below_threshold_skipped(self, tmp_path):
-        """exchange_count < 2 不符合條件"""
+    def test_has_error_exchange_skipped(self, tmp_path):
+        """exchanges.has_error=1 應排除（SEAL 篩選）"""
         conn = _make_db(tmp_path)
         pid = _seed_project(conn)
-        sid = _seed_session(conn, pid, "sess-a4", ["git_ops"], exchange_count=1)
-        _seed_branch(conn, sid, decay_score=0.9)
-
-        stats = run_extraction(conn)
-        assert stats["path_a"] == 0
-
-    def test_adapter_block2_for_debugging(self, tmp_path):
-        """debugging event → adapter_block=2"""
-        conn = _make_db(tmp_path)
-        pid = _seed_project(conn)
-        # debugging 不在路徑A橋接條件內（_BRIDGE_EVENT_TYPES = block1 only）
-        # 驗證 code_gen + debugging 混合時，adapter_block 依 primary event 決定
-        sid = _seed_session(conn, pid, "sess-a5", ["code_gen"], exchange_count=3)
+        sid = _seed_session(conn, pid, "sess-a4", ["git_ops"])
         bid = _seed_branch(conn, sid, decay_score=0.9)
+        for idx in range(2):
+            u = _seed_message(conn, sid, f"u{idx}", "user", f"q{idx}")
+            af = _seed_message(conn, sid, f"af{idx}", "assistant", f"a{idx}")
+            _seed_exchange(
+                conn, sid, bid, exchange_idx=idx,
+                user_message_id=u, final_assistant_message_id=af,
+                has_error=1,  # 錯誤回合
+            )
 
-        m1 = _seed_message(conn, sid, "m1", "user", "寫一個函式解析 JSON")
-        m2 = _seed_message(conn, sid, "m2", "assistant", "完成，這是程式碼...", has_tool_use=1)
-        _seed_branch_message(conn, bid, m1, 1)
-        _seed_branch_message(conn, bid, m2, 2)
-        _seed_tool_execution(conn, m2, "tool-code-001", "Bash")
-
-        stats = run_extraction(conn)
-        assert stats["path_a"] == 1
-        row = conn.execute("SELECT adapter_block FROM training_samples WHERE source='layer1_bridge'").fetchone()
-        assert row["adapter_block"] == 1  # code_gen → block1
+        stats = run_extraction_v2(conn)
+        assert stats["path_a"] == 0
 
 
 # ── 路徑 B 測試 ──────────────────────────────────────────────────────────
@@ -272,7 +315,7 @@ class TestPathB:
         m3 = _seed_message(conn, sid, "m3", "assistant", "發現錯誤，修正方法是...")
         _seed_tool_execution(conn, m2, "tool-001", "Bash", is_error=1)
 
-        stats = run_extraction(conn)
+        stats = run_extraction_v2(conn)
         assert stats["path_b"] == 1
         row = conn.execute("SELECT * FROM training_samples WHERE source='error_repair'").fetchone()
         assert "Bash" in row["instruction"]
@@ -286,49 +329,24 @@ class TestPathB:
 
         m1 = _seed_message(conn, sid, "m1", "assistant", "執行中...", has_tool_use=1)
         _seed_tool_execution(conn, m1, "tool-002", "Bash", is_error=1)
-        # 沒有後續 assistant 訊息
 
-        stats = run_extraction(conn)
+        stats = run_extraction_v2(conn)
         assert stats["path_b"] == 0
-
-    def test_same_session_only_once(self, tmp_path):
-        """同一 session 有多個 tool error，只產生一筆樣本"""
-        conn = _make_db(tmp_path)
-        pid = _seed_project(conn)
-        sid = _seed_session(conn, pid, "sess-b3", ["terminal_ops"], exchange_count=3)
-
-        m1 = _seed_message(conn, sid, "m1", "assistant", "第一次失敗", has_tool_use=1)
-        m2 = _seed_message(conn, sid, "m2", "assistant", "修復回覆一")
-        m3 = _seed_message(conn, sid, "m3", "assistant", "第二次失敗", has_tool_use=1)
-        _seed_tool_execution(conn, m1, "tool-003", "Bash", is_error=1)
-        _seed_tool_execution(conn, m3, "tool-004", "Edit", is_error=1)
-
-        stats = run_extraction(conn)
-        assert stats["path_b"] == 1
 
 
 # ── 重複防呆測試 ─────────────────────────────────────────────────────────
 
 class TestDeduplication:
     def test_same_session_not_extracted_twice(self, tmp_path):
-        """第二次跑 run_extraction 同一 session 應 skipped"""
+        """第二次跑 run_extraction_v2 同一 session 應 skipped"""
         conn = _make_db(tmp_path)
         pid = _seed_project(conn)
-        sid = _seed_session(conn, pid, "sess-dup", ["git_ops"], exchange_count=3)
-        bid = _seed_branch(conn, sid, decay_score=0.9)
+        _seed_block1_session(conn, pid, "sess-dup", ["git_ops"])
 
-        m1 = _seed_message(conn, sid, "m1", "user", "commit 請求")
-        m2 = _seed_message(conn, sid, "m2", "assistant", "完成", has_tool_use=1)
-        _seed_branch_message(conn, bid, m1, 1)
-        _seed_branch_message(conn, bid, m2, 2)
-        _seed_tool_execution(conn, m2, "tool-dup-001", "Bash")
-
-        stats1 = run_extraction(conn)
-        stats2 = run_extraction(conn)
+        stats1 = run_extraction_v2(conn)
+        stats2 = run_extraction_v2(conn)
 
         assert stats1["path_a"] == 1
-        # 第二次：SQL 層 NOT IN 已過濾，path_a=0，skipped=0（未進入 _is_duplicate）
         assert stats2["path_a"] == 0
         assert stats2["skipped"] == 0
-        # DB 仍只有一筆，確認沒有重複寫入
         assert conn.execute("SELECT COUNT(*) FROM training_samples").fetchone()[0] == 1
