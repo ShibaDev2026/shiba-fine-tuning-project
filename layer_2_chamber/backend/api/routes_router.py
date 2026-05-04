@@ -160,10 +160,18 @@ def router_status():
     except Exception:
         ollama_online = False
 
+    # 從 layer_0_router 讀取實際設定值，避免與 classifier.py 脫節
+    try:
+        from layer_0_router.classifier import CLASSIFIER_MODEL
+        from layer_0_router.router import LOCAL_MODEL
+    except Exception:
+        CLASSIFIER_MODEL = "unknown"
+        LOCAL_MODEL = "unknown"
+
     return {
         "ollama_online": ollama_online,
-        "classifier_model": "gemma3:2b",
-        "local_model": "qwen3:30b-a3b",
+        "classifier_model": CLASSIFIER_MODEL,
+        "local_model": LOCAL_MODEL,
         "router_enabled": True,
     }
 
