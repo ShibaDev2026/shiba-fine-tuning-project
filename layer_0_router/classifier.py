@@ -10,7 +10,7 @@ from shiba_config import CONFIG
 
 logger = logging.getLogger(__name__)
 
-CLASSIFIER_MODEL = "gemma3:2b"
+CLASSIFIER_MODEL = "gemma3:4b"
 OLLAMA_BASE = CONFIG.services.ollama_base_url
 ROUTER_TIMEOUT = 30  # 預留 model swap 時間（OLLAMA_MAX_LOADED_MODELS=1）
 

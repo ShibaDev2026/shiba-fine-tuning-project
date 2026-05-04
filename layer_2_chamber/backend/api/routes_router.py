@@ -199,10 +199,17 @@ def get_drift_stats(conn: sqlite3.Connection = Depends(get_db)):
       - 計算 centroid cosine distance
     回傳 {block, cosine_dist, threshold, passed}；無法計算時 None。
     """
-    try:
-        import numpy as np
-    except ImportError:
-        return {"blocks": {}, "error": "numpy 不可用"}
+    import math
+
+    def _mean_vec(vecs: list[list[float]]) -> list[float]:
+        n = len(vecs)
+        return [sum(v[i] for v in vecs) / n for i in range(len(vecs[0]))]
+
+    def _cosine_dist(a: list[float], b: list[float]) -> float:
+        dot = sum(x * y for x, y in zip(a, b))
+        na = math.sqrt(sum(x * x for x in a))
+        nb = math.sqrt(sum(x * x for x in b))
+        return 1.0 - dot / (na * nb + 1e-8)
 
     results = {}
     for adapter_block in [1, 2]:
@@ -246,34 +253,29 @@ def get_drift_stats(conn: sqlite3.Connection = Depends(get_db)):
             }
             continue
 
-        # 計算 centroid
         def to_vecs(rows):
             vecs = []
             for r in rows:
                 try:
-                    v = np.array(json.loads(r[0]), dtype=np.float32)
-                    if v.size > 0:
-                        vecs.append(v)
+                    v = json.loads(r[0])
+                    if isinstance(v, list) and v:
+                        vecs.append([float(x) for x in v])
                 except Exception:
                     pass
-            return np.stack(vecs) if vecs else None
+            return vecs or None
 
-        new_mat = to_vecs(new_rows)
-        old_mat = to_vecs(old_rows)
-        if new_mat is None or old_mat is None:
+        new_vecs = to_vecs(new_rows)
+        old_vecs = to_vecs(old_rows)
+        if new_vecs is None or old_vecs is None:
             results[f"block{adapter_block}"] = {
                 "cosine_dist": None,
                 "error": "embedding 解析失敗",
             }
             continue
 
-        new_centroid = new_mat.mean(axis=0)
-        old_centroid = old_mat.mean(axis=0)
-        cos_sim = float(
-            np.dot(new_centroid, old_centroid)
-            / (np.linalg.norm(new_centroid) * np.linalg.norm(old_centroid) + 1e-8)
-        )
-        cos_dist = 1.0 - cos_sim
+        new_centroid = _mean_vec(new_vecs)
+        old_centroid = _mean_vec(old_vecs)
+        cos_dist = _cosine_dist(new_centroid, old_centroid)
 
         results[f"block{adapter_block}"] = {
             "cosine_dist": round(cos_dist, 4),
