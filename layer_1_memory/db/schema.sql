@@ -251,7 +251,11 @@ CREATE TABLE IF NOT EXISTS finetune_runs (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     adapter_block INTEGER NOT NULL,                 -- 1 | 2
     status        TEXT NOT NULL DEFAULT 'pending'
-                    CHECK(status IN ('pending', 'running', 'done', 'failed')),
+                    CHECK(status IN (
+                        'pending', 'pending_manual',
+                        'running', 'gate_eval', 'gate_rejected',
+                        'done', 'failed'
+                    )),
     dataset_path  TEXT,                             -- export 出的 train.jsonl 路徑
     adapter_path  TEXT,                             -- LoRA adapter 輸出目錄
     gguf_path     TEXT,                             -- 轉檔後 GGUF 路徑
@@ -260,7 +264,11 @@ CREATE TABLE IF NOT EXISTS finetune_runs (
     error_msg     TEXT,                             -- failed 時的錯誤摘要
     started_at    TEXT,                             -- ISO timestamp（runner 寫入）
     finished_at   TEXT,                             -- ISO timestamp（done/failed 時寫入）
-    created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+    created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+    -- D：首次訓練人工把關（is_first_run 時 trigger_policy 設 pending_manual，等待人工 approve）
+    requires_manual_approval INTEGER NOT NULL DEFAULT 0,
+    approved_by_human        INTEGER NOT NULL DEFAULT 0,
+    approved_at              TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_finetune_runs_block_status ON finetune_runs(adapter_block, status, id);

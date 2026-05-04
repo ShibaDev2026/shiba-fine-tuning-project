@@ -1,6 +1,7 @@
 # layer_2_chamber/backend/api/routes_router.py
 """Phase 0 路由層 API — router_decisions 查詢、統計、狀態與採納更新"""
 
+import json
 import sqlite3
 import urllib.request
 import urllib.error
@@ -10,6 +11,8 @@ from ..core.config import get_db
 from shiba_config import CONFIG
 
 router = APIRouter(prefix="/api/v1/router", tags=["router"])
+
+_DRIFT_THRESHOLD = 0.35  # 對齊 trigger_policy
 
 
 # ── B-1 + B-2：補欄位、加日期篩選 ───────────────────────────────────────────
@@ -183,3 +186,105 @@ def update_decision_acceptance(
     )
     conn.commit()
     return {"ok": True, "decision_id": decision_id, "accepted": body.accepted}
+
+
+# ── B-2：分布偏移趨勢（trigger_policy signal C 監控）──────────────────────────
+@router.get("/stats/drift")
+def get_drift_stats(conn: sqlite3.Connection = Depends(get_db)):
+    """
+    各 adapter block 的分布偏移狀態。
+    對每個 block：
+      - 取近 7 天 embedding（新樣本）
+      - 取上次訓練前的 embedding（歷史樣本）
+      - 計算 centroid cosine distance
+    回傳 {block, cosine_dist, threshold, passed}；無法計算時 None。
+    """
+    try:
+        import numpy as np
+    except ImportError:
+        return {"blocks": {}, "error": "numpy 不可用"}
+
+    results = {}
+    for adapter_block in [1, 2]:
+        # 最近 7 天的 embedding
+        new_rows = conn.execute(
+            "SELECT embedding FROM exchange_embeddings "
+            "WHERE created_at >= datetime('now', '-7 days') AND embedding IS NOT NULL"
+        ).fetchall()
+
+        if len(new_rows) < 5:
+            results[f"block{adapter_block}"] = {
+                "cosine_dist": None,
+                "error": f"新樣本不足（{len(new_rows)} < 5）",
+            }
+            continue
+
+        # 上次訓練的時間點
+        last_run = conn.execute(
+            "SELECT started_at FROM finetune_runs WHERE adapter_block=? AND status='done' "
+            "ORDER BY id DESC LIMIT 1",
+            (adapter_block,),
+        ).fetchone()
+        if not last_run:
+            results[f"block{adapter_block}"] = {
+                "cosine_dist": None,
+                "error": "未有訓練歷史",
+            }
+            continue
+
+        last_run_dt = last_run[0]
+        old_rows = conn.execute(
+            "SELECT embedding FROM exchange_embeddings "
+            "WHERE created_at < ? AND embedding IS NOT NULL",
+            (last_run_dt,),
+        ).fetchall()
+
+        if len(old_rows) < 5:
+            results[f"block{adapter_block}"] = {
+                "cosine_dist": None,
+                "error": f"歷史樣本不足（{len(old_rows)} < 5）",
+            }
+            continue
+
+        # 計算 centroid
+        def to_vecs(rows):
+            vecs = []
+            for r in rows:
+                try:
+                    v = np.array(json.loads(r[0]), dtype=np.float32)
+                    if v.size > 0:
+                        vecs.append(v)
+                except Exception:
+                    pass
+            return np.stack(vecs) if vecs else None
+
+        new_mat = to_vecs(new_rows)
+        old_mat = to_vecs(old_rows)
+        if new_mat is None or old_mat is None:
+            results[f"block{adapter_block}"] = {
+                "cosine_dist": None,
+                "error": "embedding 解析失敗",
+            }
+            continue
+
+        new_centroid = new_mat.mean(axis=0)
+        old_centroid = old_mat.mean(axis=0)
+        cos_sim = float(
+            np.dot(new_centroid, old_centroid)
+            / (np.linalg.norm(new_centroid) * np.linalg.norm(old_centroid) + 1e-8)
+        )
+        cos_dist = 1.0 - cos_sim
+
+        results[f"block{adapter_block}"] = {
+            "cosine_dist": round(cos_dist, 4),
+            "threshold": _DRIFT_THRESHOLD,
+            "passed": cos_dist <= _DRIFT_THRESHOLD,
+            "new_samples": len(new_rows),
+            "old_samples": len(old_rows),
+        }
+
+    return {
+        "blocks": results,
+        "threshold": _DRIFT_THRESHOLD,
+        "status": "ok",
+    }

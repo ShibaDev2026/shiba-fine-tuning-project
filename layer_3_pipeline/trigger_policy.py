@@ -32,6 +32,8 @@ class TriggerDecision:
     signal_a: bool = False
     signal_b: bool = False
     signal_c: bool = False
+    # D：首次訓練人工把關；True 時 runner 建立 pending_manual run，不立即啟動訓練
+    requires_manual: bool = False
 
 
 def should_trigger(conn: sqlite3.Connection, adapter_block: int) -> TriggerDecision:
@@ -58,6 +60,15 @@ def should_trigger(conn: sqlite3.Connection, adapter_block: int) -> TriggerDecis
         f"無觸發（approved={approved}，等待信號）"
     )
 
+    # D：偵測首次訓練（該 block 從未有 done run）→ 標記 requires_manual，
+    # 讓 runner 建立 pending_manual run 等待 Shiba 人工 approve，不立即執行訓練。
+    is_first_run = _last_finetune_datetime(conn, adapter_block) is None
+    if should_train and is_first_run:
+        logger.info(
+            "block%d 首次訓練偵測到，標記 requires_manual（reason=%s）",
+            adapter_block, reason,
+        )
+
     return TriggerDecision(
         should_train=should_train,
         reason=reason,
@@ -65,6 +76,7 @@ def should_trigger(conn: sqlite3.Connection, adapter_block: int) -> TriggerDecis
         signal_a=sig_a,
         signal_b=sig_b,
         signal_c=sig_c,
+        requires_manual=should_train and is_first_run,
     )
 
 
@@ -102,7 +114,11 @@ def _last_finetune_datetime(conn: sqlite3.Connection, adapter_block: int):
         return None
     try:
         ts = row[0].replace("Z", "+00:00")
-        return dt.datetime.fromisoformat(ts)
+        parsed = dt.datetime.fromisoformat(ts)
+        # SQLite datetime('now') 輸出不含 tz offset → 視為 UTC
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=dt.timezone.utc)
+        return parsed
     except (ValueError, AttributeError):
         return None
 
@@ -208,6 +224,19 @@ def _signal_distribution_drift(conn: sqlite3.Connection, adapter_block: int) -> 
     cos_dist = 1.0 - cos_sim
 
     if cos_dist > DRIFT_THRESHOLD:
+        # B-1：分布偏移觸發告警（集中式 B7 出口）
+        from shiba_alert import send_alert
+        send_alert(
+            "distribution_drift",
+            f"block{adapter_block} 分布偏移超過閾值：cosine_dist={cos_dist:.3f} > {DRIFT_THRESHOLD}",
+            {
+                "adapter_block": adapter_block,
+                "cosine_dist": cos_dist,
+                "threshold": DRIFT_THRESHOLD,
+                "new_samples": len(new_rows),
+                "old_samples": len(old_rows),
+            },
+        )
         return True, f"signal_c: 分布偏移 cosine_dist={cos_dist:.3f} > {DRIFT_THRESHOLD}"
 
     return False, f"signal_c: 分布穩定（cosine_dist={cos_dist:.3f}）"

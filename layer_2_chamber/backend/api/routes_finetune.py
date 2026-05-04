@@ -89,6 +89,44 @@ def trigger_status(conn: sqlite3.Connection = Depends(get_db)):
     return result
 
 
+@router.get("/pending_manual")
+def list_pending_manual(conn: sqlite3.Connection = Depends(get_db)):
+    """列出等待人工 approve 的首次訓練 run"""
+    rows = conn.execute(
+        """SELECT id, adapter_block, status, sample_count, created_at
+           FROM finetune_runs
+           WHERE status = 'pending_manual'
+           ORDER BY id DESC"""
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+@router.post("/{run_id}/approve")
+def approve_manual_run(run_id: int, conn: sqlite3.Connection = Depends(get_db)):
+    """
+    人工審核通過：pending_manual → pending，讓 Layer 3 runner 下次 trigger 時撿起執行。
+    """
+    row = conn.execute(
+        "SELECT id, status FROM finetune_runs WHERE id=?", (run_id,)
+    ).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail=f"run_id={run_id} 不存在")
+    if row["status"] != "pending_manual":
+        raise HTTPException(
+            status_code=409,
+            detail=f"run_id={run_id} 狀態為 '{row['status']}'，非 pending_manual，無需 approve",
+        )
+    conn.execute(
+        """UPDATE finetune_runs
+           SET status='pending', approved_by_human=1,
+               approved_at=datetime('now')
+           WHERE id=?""",
+        (run_id,),
+    )
+    conn.commit()
+    return {"status": "approved", "run_id": run_id}
+
+
 @router.get("/ollama")
 def ollama_status():
     """Ollama 載入中模型 + 全部模型列表"""

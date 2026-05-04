@@ -3,6 +3,31 @@
 所有版本變更依照 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/) 格式記錄。
 版本號遵循 [Semantic Versioning](https://semver.org/lang/zh-TW/)。
 
+## [1.3.0] - 2026-05-04
+
+Grok 外部審視回應：CADB 四項架構升級完成（A 廠牌多樣性、C retention 防遺忘、D 首次把關、B 告警儀表板）。
+
+### Added
+
+- **C Retention/Golden Set（`gatekeeper.py` + `schema_layer2.sql` + `config.py` + `scripts/freeze_golden_set.py`）**：新建 `golden_samples` 表凍結歷史高分樣本（score≥9 的 approved），shadow A/B gate 時以此集合驗證新模型是否在舊知識上維持水準（≥85% 不退化才放行），防止災難性遺忘；`_run_golden_samples_migration` idempotent 初始化；`freeze_golden_set.py` 一次性手動凍結腳本。
+- **A Judge 廠牌多樣性（`multi_judge.py` + `schema_layer2.sql` + `config.py`）**：`teachers` 新增 `vendor` TEXT 欄（google/xai/openai/mistral/local），`_vendor_of` helper 安全讀取；`_collect_votes` C1 早停加廠牌異質條件（兩票一致 + 來自不同 vendor 才早停），避免 Gemini Flash + Flash-Lite 同源決策風險；不同 vendor 強制至少三票以保證異質性門檻，全同 vendor 時仍允許三票（防外部 API 全當機無法評分）。
+- **D 首次訓練人工把關（`trigger_policy.py` + `runner.py` + `routes_finetune.py` + `schema.sql` + `layer_3_pipeline/server.py` + `config.py`）**：`finetune_runs` 新增 `requires_manual_approval` / `approved_by_human` / `approved_at` 三欄；status CHECK 擴充至包含 `pending_manual` / `gate_eval` / `gate_rejected`（修正既有 gate_eval/gate_rejected 未納入 CHECK 的 bug）；`trigger_policy.TriggerDecision.requires_manual` 標記首次訓練（無既有 done run），`runner` 建立 `pending_manual` run 不啟動實際訓練；`routes_finetune` 新增 `GET /pending_manual` 列出待審核、`POST /{run_id}/approve` 人工核准後降為 `pending` 讓 runner 撿起。
+- **B Drift 告警 + 儀表板（`shiba_alert.py` + `trigger_policy.py` + `routes_router.py` + `background.py`）**：新建 `shiba_alert.py` 公用模組統一告警出口（背景層與 trigger 層共用），alert 同時輸出 CRITICAL log + 可選 webhook；`trigger_policy._signal_distribution_drift` 觸發時呼 `send_alert(distribution_drift)`；`routes_router` 新增 `GET /stats/drift` endpoint 對各 block 實時計算 cosine_dist、threshold、是否通過判定，供儀表板監控分布漂移趨勢。
+- **D4 首次訓練 tests**：`tests/layer3/test_trigger_policy_manual.py` 2 tests（首次 requires_manual=True、後續 requires_manual=False）。
+- **A3/C3/B3 新測試**：`test_multi_judge_vendor.py` 3 tests（同源無早停、異質早停、全同源允許三票）、`test_gatekeeper_retention.py` 3 tests（退化阻止、保留通過、樣本不足略過）、`test_drift_alert.py` 2 tests（超閾值告警、正常不告警）。
+
+### Changed
+
+- **background.py**：`_send_alert` 移到 `shiba_alert.py` 公用模組，改 import 保持相容；W4/W5 告警同走新通道。
+- **config.py**：新增 `_run_teachers_vendor_migration`（backfill 廠牌）、`_run_golden_samples_migration`（建表）、`_run_finetune_manual_migration`（status CHECK 擴充 + 三欄 ADD）。
+- **trigger_policy.py**：`_last_finetune_datetime` 修正 naive datetime bug（SQLite `datetime('now')` 無 tz offset，假設為 UTC）；`_signal_distribution_drift` 超閾值時呼 alert；`should_trigger` 加首次偵測邏輯回傳 `requires_manual`。
+- **server.py**：inline `finetune_runs` DDL 同步 status CHECK（加 pending_manual/gate_eval/gate_rejected）。
+- **freeze_golden_set.py**：新建。支援 `--dry-run` 預演、各 event_type 均勻配額（各 ~7 筆）、上限 50 筆防止 shadow eval 過慢、無重複寫入。
+
+### Tests
+
+新增 10 tests，全 113 tests 通過（7 個 pre-existing 失敗同 v1.2.0 註記）。
+
 ## [1.2.0] - 2026-05-01
 
 A/B/C 三級架構檢視一輪完成（A3-A5 對齊、B1-B7 靜默失效修補、C1-C6 效能與正確性強化）。

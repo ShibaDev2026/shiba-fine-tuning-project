@@ -92,6 +92,15 @@ def multi_judge_score(
     }
 
 
+def _vendor_of(teacher) -> str:
+    """安全取廠牌：欄位不存在或為 NULL 時回 'unknown'。"""
+    try:
+        v = teacher["vendor"]
+    except (KeyError, IndexError):
+        return "unknown"
+    return v or "unknown"
+
+
 def _collect_votes(
     conn: sqlite3.Connection,
     sample_id: int,
@@ -102,23 +111,37 @@ def _collect_votes(
 ) -> list[dict]:
     """
     呼叫最多 3 個可用 Teacher，蒐集投票。
-    C1 early exit：取得 2 票且兩票一致（全 approved 或全 rejected）→ 停止，省一次 API 呼叫。
+
+    C1 early exit（A 強化）：兩票一致 + 來自不同 vendor → 停止，省一次 API 呼叫。
+    同 vendor 兩票一致不視為共識（避免 Gemini Flash + Flash-Lite 同源鎖死），繼續抓第三票。
+    若第三票仍同 vendor（所有可用 teacher 同源），仍計三票全收 — 不額外封鎖，
+    避免「外部 API 全當機只剩一家」時無法評分。
     """
     votes = []
+    used_vendors: set[str] = set()
+
     for teacher in available_teachers[:3]:
         result = _call_teacher(teacher, instruction, input_text, output, conn, sample_id)
         if result is None:
             continue
+        vendor = _vendor_of(teacher)
         # _call_teacher 已內部處理 log_usage 與 requests_today 更新
         votes.append({
             "teacher_id": teacher["id"],
             "teacher_name": teacher["name"],
+            "vendor": vendor,
             "score": result["score"],
             "approved": result["score"] >= _APPROVED_THRESHOLD,
             "reason": result["reason"],
         })
-        # 兩票一致 → 第三票改不了結果，提前停止
-        if len(votes) >= 2 and votes[-1]["approved"] == votes[-2]["approved"]:
+        used_vendors.add(vendor)
+
+        # 兩票一致 + 廠牌異質 → 第三票改不了結果且共識來源獨立，提前停止
+        if (
+            len(votes) >= 2
+            and votes[-1]["approved"] == votes[-2]["approved"]
+            and len(used_vendors) >= 2
+        ):
             break
     return votes
 

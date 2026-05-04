@@ -7,43 +7,14 @@ background.py — APScheduler 背景排程
 3. 每日凌晨 2 點：冷資料壓縮（超過 90 天未存取的 branch 標記 decay_score=0）
 """
 
-import json
 import logging
-import os
 from datetime import datetime, timedelta, timezone
 
 import sqlite3
 
+from shiba_alert import send_alert
+
 logger = logging.getLogger(__name__)
-
-
-def _send_alert(alert_type: str, message: str, context: dict | None = None) -> None:
-    """
-    B7 集中式 alert 出口。
-    - 無論是否有 webhook，都以 CRITICAL 等級寫入 log（方便 grep / CloudWatch）。
-    - 若環境變數 SHIBA_ALERT_WEBHOOK 已設，POST JSON 至該 URL；失敗不拋異常。
-    """
-    payload = {
-        "alert_type": alert_type,
-        "message": message,
-        "context": context or {},
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-    }
-    logger.critical("[SHIBA-ALERT] type=%s msg=%s ctx=%s", alert_type, message, json.dumps(context or {}))
-
-    webhook_url = os.environ.get("SHIBA_ALERT_WEBHOOK", "").strip()
-    if not webhook_url:
-        return
-
-    try:
-        import urllib.request
-        body = json.dumps(payload).encode()
-        req = urllib.request.Request(webhook_url, data=body,
-                                     headers={"Content-Type": "application/json"})
-        with urllib.request.urlopen(req, timeout=5):
-            pass
-    except Exception as e:
-        logger.warning("Alert webhook 傳送失敗 url=%s：%s", webhook_url, e)
 
 
 def score_pending_samples(conn_factory) -> dict:
@@ -205,7 +176,7 @@ def _run_extraction_job(conn_factory) -> None:
             "WHERE status='raw' AND created_at < datetime('now', '-1 day')"
         ).fetchone()[0]
         if stale > 0:
-            _send_alert(
+            send_alert(
                 "refiner_stale",
                 f"有 {stale} 筆 raw 樣本逾 24h 未精煉，請確認 refiner job 或 Ollama 狀態",
                 {"stale_count": stale},
@@ -228,7 +199,7 @@ def _run_extraction_job(conn_factory) -> None:
         except ImportError:
             logger.debug("weight 同步略過：Layer 0 未安裝")
         except Exception as e:
-            _send_alert("weight_sync_failed", f"W5 weight 同步失敗：{e}", {"error": str(e)})
+            send_alert("weight_sync_failed", f"W5 weight 同步失敗：{e}", {"error": str(e)})
     finally:
         conn.close()
 

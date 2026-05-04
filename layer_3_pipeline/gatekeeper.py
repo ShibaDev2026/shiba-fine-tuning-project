@@ -1,12 +1,13 @@
 # layer_3_pipeline/gatekeeper.py
 """
 P0-2 Shadow Gate：新模型上線前的 A/B 評估守門員。
-本地 Qwen 自評（零成本），三條件全過才 deploy。
+本地 Qwen 自評（零成本），四條件全過才 deploy。
 
-三條件：
+四條件：
   1. bootstrap 95% CI 下界 > 0.50（統計顯著勝出）
   2. latency_p50 ≤ 舊模型 × 1.10
   3. 採納率預估 ≥ 當前基線（資料不足則略過）
+  4. retention_score ≥ 0.85（C：golden set 防遺忘；資料不足則略過）
 """
 
 import json
@@ -29,6 +30,11 @@ OLLAMA_TIMEOUT = 60
 JUDGE_NUM_PREDICT = 32       # judge 只需回答 A/B
 RESPONSE_NUM_PREDICT = 256   # 評估用回應不需太長
 
+# C：retention 防遺忘參數
+RETENTION_THRESHOLD = 0.85   # golden set 上 ≥85% 不退化才放行
+RETENTION_MIN_N = 5          # 有效 golden 樣本數下限，不足則略過
+RETENTION_MAX_N = 30         # 上限（避免 golden 累積後 gate 過慢；隨機抽樣）
+
 
 @dataclass
 class GateResult:
@@ -41,6 +47,9 @@ class GateResult:
     n_evaluated: int
     shadow_tag: str = ""
     failure_details: list[str] = field(default_factory=list)
+    # C：retention/防遺忘指標；None = golden 樣本不足，略過該條件
+    retention_score: float | None = None
+    retention_n: int = 0
 
 
 # ── public API ──────────────────────────────────────────────────
@@ -84,10 +93,19 @@ def run_gate(
         from layer_0_router.telemetry import get_acceptance_rate
         acceptance_baseline = get_acceptance_rate(days=7)
 
+        # C：第 4 條件，golden set 防遺忘評估（zero-cost，old_model 自評）
+        retention_score, retention_n = _evaluate_retention(
+            shadow_tag=shadow_tag,
+            old_model=old_model,
+            judge_model=old_model,
+            conn=conn,
+        )
+
         passed, reason, failures = _check_conditions(
             ci_lower=ci_lower,
             latency_ratio=latency_ratio,
             acceptance_baseline=acceptance_baseline,
+            retention_score=retention_score,
         )
 
         result = GateResult(
@@ -100,13 +118,17 @@ def run_gate(
             n_evaluated=n_eval,
             shadow_tag=shadow_tag,
             failure_details=failures,
+            retention_score=retention_score,
+            retention_n=retention_n,
         )
         logger.info(
             "Shadow gate 結果：passed=%s win_rate=%.3f ci_lower=%.3f "
-            "latency_ratio=%s acceptance=%.3f n=%d",
+            "latency_ratio=%s acceptance=%.3f retention=%s(n=%d) n=%d",
             passed, win_rate, ci_lower,
             f"{latency_ratio:.3f}" if latency_ratio else "N/A",
-            acceptance_baseline or 0.0, n_eval,
+            acceptance_baseline or 0.0,
+            f"{retention_score:.3f}" if retention_score is not None else "N/A",
+            retention_n, n_eval,
         )
         return result
 
@@ -299,14 +321,84 @@ def _latency_ratio(
     return new_p50 / old_p50
 
 
+def _evaluate_retention(
+    shadow_tag: str,
+    old_model: str,
+    judge_model: str,
+    conn: sqlite3.Connection,
+) -> tuple[float | None, int]:
+    """
+    C：以 golden_samples 為固定回歸集，評估新模型是否保留舊知識（防災難性遺忘）。
+
+    流程：對每筆 golden 同時跑 old_model 與 shadow_tag 取得回應，
+    用 judge_model（同 _judge_pair）做 pairwise 裁定。
+    retention_score 計分：
+      - judge 判 new 勝（True）→ 視為保留
+      - judge 拒答（None）→ 視為平手 / 保留（不算退化）
+      - judge 判 old 勝（False）→ 視為退化
+    回傳 (retention_score, n_total)；golden 不足 RETENTION_MIN_N 則回 (None, n)。
+
+    為節制 gate 時間，golden ≥ RETENTION_MAX_N 時隨機抽樣 RETENTION_MAX_N 筆。
+    判斷 retention 時 self-preference bias 倒向 old_model，門檻偏嚴 = 對 deploy 較保守，符合防遺忘初衷。
+    """
+    rows = conn.execute(
+        "SELECT instruction, input FROM golden_samples WHERE is_active=1"
+    ).fetchall()
+    n_active = len(rows)
+
+    if n_active < RETENTION_MIN_N:
+        logger.info(
+            "Retention 略過：active golden_samples 不足（%d < %d）",
+            n_active, RETENTION_MIN_N,
+        )
+        return None, n_active
+
+    if n_active > RETENTION_MAX_N:
+        rows = random.sample(list(rows), RETENTION_MAX_N)
+
+    not_degraded = 0
+    total = 0
+    for row in rows:
+        prompt = row["instruction"]
+        if row["input"]:
+            prompt = f"{prompt}\n\n{row['input']}"
+
+        old_resp, _ = _call_ollama(old_model, prompt)
+        new_resp, _ = _call_ollama(shadow_tag, prompt)
+        if not old_resp or not new_resp:
+            continue  # 推論失敗的 golden 不計入分母
+
+        total += 1
+        verdict = _judge_pair(judge_model, prompt, old_resp, new_resp)
+        # verdict True = new 勝；None = judge 平手 → 皆視為「保留水準」
+        # verdict False = new 退化 → 計入失敗
+        if verdict is not False:
+            not_degraded += 1
+
+    if total < RETENTION_MIN_N:
+        logger.info(
+            "Retention 有效樣本不足：total=%d < %d，略過",
+            total, RETENTION_MIN_N,
+        )
+        return None, total
+
+    score = not_degraded / total
+    logger.info(
+        "Retention 評估完成：not_degraded=%d/%d score=%.3f",
+        not_degraded, total, score,
+    )
+    return score, total
+
+
 def _check_conditions(
     ci_lower: float,
     latency_ratio: float | None,
     acceptance_baseline: float | None,
+    retention_score: float | None,
 ) -> tuple[bool, str, list[str]]:
     """
-    三條件檢查，回傳 (passed, reason, failures)。
-    latency_ratio / acceptance_baseline 若為 None，該條件略過（不計為失敗）。
+    四條件檢查，回傳 (passed, reason, failures)。
+    latency_ratio / acceptance_baseline / retention_score 若為 None，該條件略過（不計為失敗）。
     """
     failures = []
 
@@ -319,6 +411,11 @@ def _check_conditions(
     # 採納率條件：新模型上線後才能量測，此處以「不退化」作門檻
     # 目前以基線存在即認為條件待觀察，不作為阻塞條件（資料累積中）
     # 未來採納率有 72h 觀察視窗再回頭判定
+
+    if retention_score is not None and retention_score < RETENTION_THRESHOLD:
+        failures.append(
+            f"retention_score {retention_score:.3f} < {RETENTION_THRESHOLD}（golden 退化）"
+        )
 
     if failures:
         return False, " | ".join(failures), failures

@@ -40,6 +40,22 @@ def run_finetune_if_ready(
         logger.info("block%d 未觸發：%s", adapter_block, decision.reason)
         return None
 
+    # D：首次訓練 → 建立 pending_manual run，等待人工 approve；不執行實際訓練
+    if decision.requires_manual:
+        cur = conn.execute(
+            """INSERT INTO finetune_runs
+               (adapter_block, status, requires_manual_approval, created_at)
+               VALUES (?, 'pending_manual', 1, datetime('now'))""",
+            (adapter_block,),
+        )
+        conn.commit()
+        run_id = cur.lastrowid
+        logger.info(
+            "block%d 首次訓練：建立 pending_manual run_id=%d，請至 /api/v1/finetune/%d/approve 人工審核",
+            adapter_block, run_id, run_id,
+        )
+        return {"status": "pending_manual", "run_id": run_id, "reason": decision.reason}
+
     logger.info("block%d 觸發訓練：%s", adapter_block, decision.reason)
 
     dataset_dir = work_dir / f"block{adapter_block}"

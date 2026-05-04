@@ -35,7 +35,11 @@ def _startup():
                 id            INTEGER PRIMARY KEY AUTOINCREMENT,
                 adapter_block INTEGER NOT NULL,
                 status        TEXT NOT NULL DEFAULT 'pending'
-                                CHECK(status IN ('pending', 'running', 'done', 'failed')),
+                                CHECK(status IN (
+                                    'pending', 'pending_manual',
+                                    'running', 'gate_eval', 'gate_rejected',
+                                    'done', 'failed'
+                                )),
                 dataset_path  TEXT,
                 adapter_path  TEXT,
                 gguf_path     TEXT,
@@ -44,7 +48,10 @@ def _startup():
                 error_msg     TEXT,
                 started_at    TEXT,
                 finished_at   TEXT,
-                created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+                created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+                requires_manual_approval INTEGER NOT NULL DEFAULT 0,
+                approved_by_human        INTEGER NOT NULL DEFAULT 0,
+                approved_at              TEXT
             )
         """)
         conn.execute(

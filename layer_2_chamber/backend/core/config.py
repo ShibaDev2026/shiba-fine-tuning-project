@@ -250,6 +250,143 @@ def _run_keychain_nullable_migration(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def _run_teachers_vendor_migration(conn: sqlite3.Connection) -> None:
+    """
+    A 幂等 migration：teachers 新增 vendor 欄位，並 backfill 已知 teacher 的廠牌。
+    multi_judge C1 早停會強制 ≥2 vendor，避免 Gemini Flash + Flash-Lite 同源鎖死。
+    """
+    if _column_exists(conn, "teachers", "vendor"):
+        return
+
+    conn.execute(
+        "ALTER TABLE teachers ADD COLUMN vendor TEXT NOT NULL DEFAULT 'unknown'"
+    )
+
+    # backfill 已知 model_id → vendor 對應；未知值保留 'unknown'，由人工修正
+    vendor_map = [
+        ("google",   ("gemini-2.5-flash", "gemini-2.5-flash-lite")),
+        ("xai",      ("grok-3-mini",)),
+        ("openai",   ("gpt-4o-mini",)),
+        ("mistral",  ("open-mistral-7b",)),
+        ("local",    ("qwen2.5:7b",)),
+    ]
+    for vendor, model_ids in vendor_map:
+        placeholders = ",".join("?" for _ in model_ids)
+        conn.execute(
+            f"UPDATE teachers SET vendor = ? WHERE model_id IN ({placeholders})",
+            (vendor, *model_ids),
+        )
+    conn.commit()
+
+
+def _run_finetune_manual_migration(conn: sqlite3.Connection) -> None:
+    """
+    D 幂等 migration：finetune_runs 新增首次訓練人工把關三欄，
+    並以重建表方式把 status CHECK 對齊 runner.py 實際使用的值（含 gate_eval / gate_rejected）。
+    """
+    if not _table_exists(conn, "finetune_runs"):
+        return  # Layer 1 尚未初始化，跳過
+    if _column_exists(conn, "finetune_runs", "requires_manual_approval"):
+        return  # 已 migration
+
+    # 先用 ADD COLUMN 加三欄（不改 CHECK，用 executescript 重建時一起改）
+    for sql in [
+        "ALTER TABLE finetune_runs ADD COLUMN requires_manual_approval INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE finetune_runs ADD COLUMN approved_by_human INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE finetune_runs ADD COLUMN approved_at TEXT",
+    ]:
+        try:
+            conn.execute(sql)
+        except Exception:
+            pass
+
+    # 重建表以更新 status CHECK（加入 pending_manual / gate_eval / gate_rejected）
+    conn.executescript("""
+        PRAGMA foreign_keys=OFF;
+
+        CREATE TABLE IF NOT EXISTS finetune_runs_d (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            adapter_block INTEGER NOT NULL,
+            status        TEXT NOT NULL DEFAULT 'pending'
+                            CHECK(status IN (
+                                'pending', 'pending_manual',
+                                'running', 'gate_eval', 'gate_rejected',
+                                'done', 'failed'
+                            )),
+            dataset_path  TEXT,
+            adapter_path  TEXT,
+            gguf_path     TEXT,
+            ollama_model  TEXT,
+            sample_count  INTEGER,
+            error_msg     TEXT,
+            started_at    TEXT,
+            finished_at   TEXT,
+            created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+            requires_manual_approval INTEGER NOT NULL DEFAULT 0,
+            approved_by_human        INTEGER NOT NULL DEFAULT 0,
+            approved_at              TEXT
+        );
+
+        INSERT INTO finetune_runs_d
+            (id, adapter_block, status, dataset_path, adapter_path, gguf_path,
+             ollama_model, sample_count, error_msg, started_at, finished_at, created_at,
+             requires_manual_approval, approved_by_human, approved_at)
+        SELECT
+            id, adapter_block,
+            CASE status
+                WHEN 'pending'       THEN 'pending'
+                WHEN 'pending_manual' THEN 'pending_manual'
+                WHEN 'running'       THEN 'running'
+                WHEN 'gate_eval'     THEN 'gate_eval'
+                WHEN 'gate_rejected' THEN 'gate_rejected'
+                WHEN 'done'          THEN 'done'
+                WHEN 'failed'        THEN 'failed'
+                ELSE 'failed'
+            END,
+            dataset_path, adapter_path, gguf_path,
+            ollama_model, sample_count, error_msg, started_at, finished_at, created_at,
+            COALESCE(requires_manual_approval, 0),
+            COALESCE(approved_by_human, 0),
+            approved_at
+        FROM finetune_runs;
+
+        DROP TABLE finetune_runs;
+        ALTER TABLE finetune_runs_d RENAME TO finetune_runs;
+
+        CREATE INDEX IF NOT EXISTS idx_finetune_runs_block_status
+            ON finetune_runs(adapter_block, status, id);
+
+        PRAGMA foreign_keys=ON;
+    """)
+    conn.commit()
+
+
+def _run_golden_samples_migration(conn: sqlite3.Connection) -> None:
+    """
+    C 幂等 migration：建立 golden_samples 表（凍結歷史高分樣本，shadow gate retention 用）。
+    schema_layer2.sql 已含 CREATE TABLE IF NOT EXISTS，但既有 DB 不會自動重跑 schema，
+    這裡在 init 時保證該表與索引存在。
+    """
+    if _table_exists(conn, "golden_samples"):
+        return
+
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS golden_samples (
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            source_sample_id INTEGER NOT NULL REFERENCES training_samples(id),
+            instruction      TEXT NOT NULL,
+            input            TEXT NOT NULL DEFAULT '',
+            expected_output  TEXT NOT NULL,
+            event_type       TEXT NOT NULL,
+            score            REAL NOT NULL,
+            frozen_at        TEXT NOT NULL DEFAULT (datetime('now')),
+            is_active        INTEGER NOT NULL DEFAULT 1
+        );
+        CREATE INDEX IF NOT EXISTS idx_golden_event ON golden_samples(event_type, is_active);
+    """)
+    conn.commit()
+
+
 def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
     """檢查資料表是否存在"""
     row = conn.execute(
@@ -290,6 +427,12 @@ def init_layer2_db() -> sqlite3.Connection:
     _run_keychain_nullable_migration(conn)
     # C3：source_exchange_ids 欄位（exchange-level dedup）
     _run_exchange_ids_migration(conn)
+    # A：teachers.vendor 欄位（廠牌異質性，C1 早停判定用）
+    _run_teachers_vendor_migration(conn)
+    # C：golden_samples 表（retention 評估，gatekeeper 第 4 條件用）
+    _run_golden_samples_migration(conn)
+    # D：finetune_runs 首次訓練人工把關欄位 + status CHECK 修正
+    _run_finetune_manual_migration(conn)
 
     return conn
 
