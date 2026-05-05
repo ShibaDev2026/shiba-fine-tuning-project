@@ -11,9 +11,11 @@ venv/
 .coverage
 htmlcov/
 
-# Plan 檔與 CLAUDE.md 不進版控
-docs/superpowers/
+# CLAUDE.md 為 Claude Code 個人補充規範，不入版控（外部 agent 讀 AGENTS.md）
 CLAUDE.md
+
+# 第三方參考 repo（內含獨立 .git/，整包不入版控；保留在 disk 供離線閱讀）
+docs/references/git/*/
 
 # macOS
 .DS_Store

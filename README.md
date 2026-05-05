@@ -160,12 +160,28 @@ bash scripts/db_backup.sh
 | `router_decisions` | 路由決策與採納率 |
 | `finetune_runs` | 訓練執行記錄 |
 
+## 文件結構
+
+```
+docs/
+├── design/        # Layer 0/1/2/3 實裝規格（架構 + phase1 memory + layer 2/3 schema/pipeline）
+├── references/
+│   ├── papers/    # 學術論文（PAPERS_INDEX.md + 4 篇全文目錄）
+│   ├── blogs/     # 第三方技術文章
+│   └── git/       # 參考 open-source 專案（Claudest …）
+└── archive/       # 一次性報告與過時 plan
+    └── plans/     # 從 ~/.claude/plans/ 歸檔的歷史計畫
+```
+
+`AGENTS.md` 是對外 AI agent / coding 工具的公開規範入口；`CLAUDE.md` 為專案擁有者的個人補充（不入版控）。
+
 ## 版本歷程
 
-當前版本：**v1.3.0**（2026-05-04）
+當前版本：**v1.3.1**（2026-05-06）
 
 | 版本 | 日期 | 主要內容 |
 |------|------|---------|
+| v1.3.1 | 2026-05-06 | 文件目錄一次性整理（`docs/{design,references,archive}/`）+ `AGENTS.md` 對外規範對齊 v1.3.0 事實；純文件變更不動執行碼 |
 | v1.3.0 | 2026-05-04 | Grok 外部審視回應：A（Judge 廠牌多樣性）、C（Retention/Golden Set 防遺忘）、D（首次訓練人工把關）、B（Drift 告警 + 儀表板）；shiba_alert.py 公用告警模組；gatekeeper 第 4 條件 retention_score ≥ 0.85；trigger_policy 首次訓練 requires_manual；routes_finetune manual approve endpoint；新建 10 tests |
 | v1.2.0 | 2026-05-01 | A/B/C 三級架構檢視一輪：A3-A5 spec/code 對齊、B1-B7 靜默失效修補（finished_at ISO、threshold 拆耦、try-except 收緊、cold-compress 條件、SAVEPOINT、集中 alert）、C1-C6 效能與正確性（multi_judge early exit、Ebbinghaus 視窗、exchange-level dedup、多維採納啟發式、排程併發保護、keychain_ref nullable）|
 | v1.1.2 | 2026-04-30 | A1：router_decisions/finetune_runs DDL 集中至 schema.sql；A2：signal C 分布偏移 embedding 讀取改 json.loads |

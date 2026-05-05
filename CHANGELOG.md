@@ -3,6 +3,27 @@
 所有版本變更依照 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/) 格式記錄。
 版本號遵循 [Semantic Versioning](https://semver.org/lang/zh-TW/)。
 
+## [1.3.1] - 2026-05-06
+
+文件目錄一次性整理 + 對外 agent 規範書（`AGENTS.md`）對齊最新事實。純文件變更，不動執行碼。
+
+### Added
+
+- **`AGENTS.md`**：對外 AI agent / coding 工具的規範入口（`CLAUDE.md` 為個人補充、不入版控；外部讀本走 `AGENTS.md`）。內容對齊 v1.3.0 事實：DB 路徑 `./data/shiba-brain.db`、Layer 0 分類器 `gemma3:4b`、`multi_judge` 三方投票完整邏輯、Layer 1→2 橋接條件 `has_final_text=1 AND has_error=0`、文件導覽指向 `docs/{design,references,archive}/`。
+- **`docs/design/`**：Layer 0/1/2/3 實裝規格 5 份從 `docs/superpowers/plans/` 攤平搬入並改為日期前綴命名。
+- **`docs/archive/plans/`**：歷史 plan 4 份（含從 `~/.claude/plans/` 歸檔的 3 份）統一日期前綴。
+- **`docs/archive/2026-04-25-codex-review.md`**：原 `2026-04-25_codex_suggestion.md` 一次性外部審視報告歸檔。
+
+### Changed
+
+- **`docs/references/`**：扁平化原 `references-{paper,blog,git}/` → `references/{papers,blogs,git}/`，移除工具導向的命名前綴。
+- **`.gitignore`**：移除已不存在的 `docs/superpowers/`；新增 `docs/references/git/*/` 整個第三方 repo 不入版控（內含獨立 `.git/` 會被 Git 視為 gitlink，整包排除最乾淨；副本仍留在 disk 供離線閱讀）。
+
+### Removed
+
+- 空殼資料夾 `docs/superpowers/`、`docs/references-{paper,blog,git}/`。
+- 各層遺留 `.DS_Store`。
+
 ## [1.3.0] - 2026-05-04
 
 Grok 外部審視回應：CADB 四項架構升級完成（A 廠牌多樣性、C retention 防遺忘、D 首次把關、B 告警儀表板）。
