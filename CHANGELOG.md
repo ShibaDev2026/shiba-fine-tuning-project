@@ -3,6 +3,39 @@
 所有版本變更依照 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/) 格式記錄。
 版本號遵循 [Semantic Versioning](https://semver.org/lang/zh-TW/)。
 
+## [1.4.0] - 2026-05-07
+
+模型 yaml 化重構 Step 1+2 完成：DB 雙表機制（`model_registry` 版本歷史 + `router_config` 選擇器）+ 師父 CRUD + 共用 UI 元件。下載新模型 → 寫 yaml → DB 切換的閉環打通至前端唯讀展示為止；前端可切 dropdown 與 Layer 0 解硬寫排在 v1.5.0（Step 3-7）。
+
+### Added
+
+- **Step 1 — model yaml schema + loader（commit `7a4a2ec`）**：5 份 yaml（`config/models/{classifier,compressor,responder,training_base}*.yaml`）+ 專案根 `models_loader.py`（frozen dataclass module-level singleton，與 `shiba_config.CONFIG` 並列），`from models_loader import MODELS` 即可拿到所有 yaml 解析結果與 `stems_by_role(role)` 查詢 helper。實作中追加第 5 份 `responder-qwen36-35b-a3b-nvfp4.yaml`（既有機台 nvfp4 模型 smoke test 通過）。
+- **Step 2 — DB 雙表機制（commit `b706e78`）**：
+  - `model_registry`（schema in `config/db/schema_model_registry.sql`）：版本歷史 + 完整 yaml snapshot JSON，含 `is_current=1` partial unique index、`change_kind` enum（`created`/`modified`/`restored`/`removed`）、`UNIQUE(model_name, content_hash)` 防止 restore 時 hash 重複；`models_db.py::sync_model_registry` 啟動時 idempotent 同步 yaml ↔ DB，覆蓋 6 種變動情境（created/modified/restored/removed/hash-switch/unchanged）。
+  - `router_config`（migration in `core/config.py::_run_router_config_migration`）：純選擇器表 `key/value/updated_at`，seed 時依 `MODELS.stems_by_role(role)` 字典序取第一個 stem 當預設；含 `ollama_status='online'` 維護 flag。
+  - `main.py` lifespan：`init_model_registry → sync_model_registry`，失敗只 log 不擋 API 啟動（degrade-friendly）。
+  - 新 endpoints：`routes_models`（list/by-role）、`routes_router_config`（GET/PUT 選擇）。
+  - 前端 `PhaseModels.vue` 4 列 grid 唯讀頁（`align-items:start` 頂部對齊、`min-width:0` 防內容溢出 grid item、STANDBY 卡 normal flow 排在 ACTIVE 卡下方），Sidebar 加「模型設置」入口。
+- **師父 CRUD + 共用 UI 元件（commit `2bd6c28`）**：
+  - `routes_teachers.py` 補 8 endpoints（list/get/create/update/delete/test/enable/disable）+ connectivity smoke test endpoint。
+  - `PhaseTeachers.vue`：卡片可點開詳情面板、停用反灰、CRUD 表單。
+  - 4 個 `frontend-vue/src/components/shared/` 共用元件：`Modal`（dialog 容器）、`ConfirmDialog`（破壞性操作確認）、`FormField`（label + input + error）、`Toast`（全域訊息匯流）。
+  - `stores/toast.ts`：Toast 訊息佇列 pinia store，`App.vue` 統一 mount 一次。
+- **plan 檔歸檔**：`docs/archive/plans/2026-05-07-yaml-schema-1-yaml-2-4-glimmering-candy.md` 含完整 7-step 計畫 + 執行偏離記錄（snapshot 改放 model_registry、`local_enabled`→`ollama_status`、`_config.py` 移到 Step 3）。
+
+### Changed
+
+- **`routes_finetune.ollama_status`（commit `ceb9ed0`）**：從 `subprocess.run(["ollama", "ps"/"list"])` 改為 `httpx` 打 `/api/ps`、`/api/tags`，container 內無 ollama CLI 也能回狀態，符合 docker-compose 部署語境。
+- **前端 polish（commit `ceb9ed0`）**：`DateFilterBar` 加捷徑按鈕 + 自訂文字輸入 + 換行容錯；`Pagination`/`DataTable`/`Btn` 樣式統一與小幅修補；`PhaseRouter`/`PhaseMemory` 日期與顯示細節調整；`api/dateFilter.ts` 工具強化。
+
+### Fixed
+
+- **Hook 繁中過濾硬化（commit `ceb9ed0`）**：`stop_hook.py` 與 `services/paraphrase_service.py` 強化簡中變體偵測，避免 RAG 資料被簡體中文污染（延續 v1.3.x 的 exchange_embeddings 清理脈絡）。
+
+### Tests
+
+本版未新增測試（v1.4.0 範圍以架構與 UI 為主）；Step 3 將強制走 `superpowers:test-driven-development` 補齊 Layer 0 三檔解硬寫測試。
+
 ## [1.3.1] - 2026-05-06
 
 文件目錄一次性整理 + 對外 agent 規範書（`AGENTS.md`）對齊最新事實。純文件變更，不動執行碼。

@@ -16,6 +16,21 @@
 
 - **2026-05-07 Step 1**：loader 位置從 `config/models_loader.py` 改為專案根 `models_loader.py`。理由：與 `shiba_config.py` 並列（兩者皆為 yaml 載入器），保持 `config/` 純放 yaml 不混 .py；`from models_loader import MODELS` 與 `from shiba_config import CONFIG` 形成對稱。後續 Step 3-6 的 import 路徑全部以此為準。
 - **2026-05-07 Step 1**：新增第 5 份 yaml `responder-qwen36-35b-a3b-nvfp4.yaml`（使用者要求接入 35B 模型，但採用機器既有的 `qwen3.6:35b-a3b-nvfp4` 而非新下載 Qwen3.5）。Smoke test 通過：Ollama 0.21.0 + 既有 MLX dylib 環境下 nvfp4 模型可正常推論。
+- **2026-05-07 Step 2**：snapshot 改放 `model_registry.snapshot` 而非原 plan 的 `router_config.snapshot`，分兩表設計：
+  - `model_registry`：版本歷史 + 完整 yaml snapshot（含 `is_current` partial unique index、`change_kind` enum）
+  - `router_config`：純選擇器，欄位簡化為 `key/value/updated_at`（沒有 snapshot/snapshot_at 欄位）
+  - 取資料路徑：`router_config 取 active stem` → `model_registry WHERE model_name=stem AND is_current=1` → 解 snapshot JSON
+  - 優點：版本歷史、restore、UI 顯示「目前版 vs 其他版本」全免費獲得
+- **2026-05-07 Step 2**：`local_enabled` 布林 key 改為 `ollama_status` 字串（`'online'` / `'offline'`），語意更直觀對應前端 ToggleSwitch 標籤。`is_local_enabled()` 比對 `== 'online'` 即可。
+- **2026-05-07 Step 2**：`_config.py` helper **沒在 Step 2 完成**（plan 原本標 Step 2 設計）。實際 Step 2 只做了 backend `routes_router_config.py` + `models_db.py` sync。`_config.py` 移到 Step 3 開頭做。
+- **2026-05-07 Step 2**：附帶完成的範圍外項目（一併進 step 2 commit b706e78）：teachers CRUD（routes_teachers + PhaseTeachers）、共用 UI 元件（Modal/Toast/ConfirmDialog/FormField）、PhaseModels 唯讀頁（4 列 grid 頂部對齊、min-width:0 防溢出）、各種 polish。
+
+## 已完成 Step（commit hash）
+
+| Step | Commit | 內容 |
+|------|--------|------|
+| 1 | `7a4a2ec` | 5 份 yaml + `models_loader.py` + nvfp4 smoke test |
+| 2 | `b706e78` | `model_registry` + `router_config` + lifespan sync + PhaseModels 唯讀頁 |
 
 ## 既有可重用資產（Phase 1 探索結果）
 
@@ -214,12 +229,24 @@ INSERT INTO router_config(key, value) VALUES
 ---
 
 ### Step 3：Layer 0 三檔改寫
-- `layer_0_router/classifier.py:13`：`CLASSIFIER_MODEL = "gemma3:4b"` → `snap = load_active_snapshot("classifier")`，由 snap 取 `ollama_tag` + `inference.*` + `prompt.system`
-- `layer_0_router/compressor.py:12`：同上
-- `layer_0_router/router.py:17`：同上 + 前置 `is_local_enabled()` 檢查（False → 直接 return None 走 Claude）
-- 三處**只讀 DB snapshot 不讀 yaml**（執行階段絕緣）
-- helper `layer_0_router/_config.py` 已於 Step 2 設計
-- **TDD**：先寫測試假設 hardcode 環境，再改成讀 snapshot，確保既有行為不破壞 — **強制啟用 `superpowers:test-driven-development` skill**
+
+**子任務**（修訂自原 plan，反映 Step 2 偏離）：
+
+- **3.1** 新建 `layer_0_router/_config.py`（Step 2 沒做，補在這裡）：
+  - `load_active_snapshot(role: str) -> dict`：
+    1. `SELECT value FROM router_config WHERE key = f'{role}_model_yaml'` → 拿 active stem
+    2. `SELECT snapshot FROM model_registry WHERE model_name=stem AND is_current=1` → 拿 JSON
+    3. `json.loads(snapshot)` 回傳 dict
+    4. 含 50ms in-process cache（避免 hot path 每 request 打 DB）
+  - `is_local_enabled() -> bool`：
+    1. `SELECT value FROM router_config WHERE key='ollama_status'`
+    2. `return value == 'online'`
+- **3.2** TDD（強制啟用 `superpowers:test-driven-development`）：先寫測試 mock `_config.py` 回 hardcode 等價值，驗三檔行為與改寫前完全一致。
+- **3.3** 改寫三檔，**只讀 DB snapshot 不讀 yaml**（執行階段絕緣）：
+  - `classifier.py:13`：`CLASSIFIER_MODEL = "gemma3:4b"` → `snap = load_active_snapshot("classifier")`，由 snap 取 `ollama_tag` + `inference.*` + `prompt.system`
+  - `compressor.py:12`：同上（role=`compressor`）
+  - `router.py:17`：同上（role=`responder`）+ 前置 `is_local_enabled()` 檢查，False → return None 走 Claude
+- **3.4** 整合測試：真實 DB + Ollama 跑 happy path（送一個 prompt 走完 classify → compress → respond），驗 `router_decisions` 寫入正確。
 
 **/model: Opus, /effort: medium**（生產路徑 hot path，要驗證 fallback）
 
