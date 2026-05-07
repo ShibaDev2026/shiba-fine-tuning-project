@@ -321,10 +321,21 @@ def _write_exchange_embeddings(session_uuid: str, parsed, active_branch) -> None
         if cmd:
             exec_by_msg.setdefault(ex["message_uuid"], []).append(cmd)
 
+    # 系統保留前綴：這些訊息是 Claude Code 產生的 meta-text，不是使用者指令
+    _SYSTEM_PREFIXES = (
+        "<local-command-caveat>",
+        "<local-command-stdout>",
+        "<local-command-stderr>",
+        "[Request interrupted by user",
+    )
+
     # 收集 user message → 後續實際指令的因果對
     messages = active_branch.messages
     for i, msg in enumerate(messages):
         if msg.role != "user" or not msg.content:
+            continue
+        # 過濾系統保留訊息，避免存入 exchange_embeddings
+        if msg.content.lstrip().startswith(_SYSTEM_PREFIXES):
             continue
 
         # 收集此 user message 之後的 assistant 實際執行指令
@@ -367,9 +378,13 @@ def _write_exchange_embeddings(session_uuid: str, parsed, active_branch) -> None
     if all_cmds:
         exchange_count = sum(1 for m in messages if m.role == "user")
         if exchange_count >= 2:
-            # 找最長的 user 訊息（>15 字），作為 session 代表性 instruction
+            # 找最長的 user 訊息（>15 字，排除系統保留文字），作為 session 代表性 instruction
             best_msg = max(
-                (m for m in messages if m.role == "user" and m.content and len(m.content) > 15),
+                (
+                    m for m in messages
+                    if m.role == "user" and m.content and len(m.content) > 15
+                    and not m.content.lstrip().startswith(_SYSTEM_PREFIXES)
+                ),
                 key=lambda m: len(m.content),
                 default=None,
             )

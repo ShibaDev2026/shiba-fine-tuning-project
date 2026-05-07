@@ -53,10 +53,14 @@ const stats    = ref<Stats | null>(null)
 const loading  = ref(true)
 const error    = ref<string | null>(null)
 
-// 日期篩選
-const dateMode = ref<DateMode>('today')
-const dateFrom = ref('')
-const dateTo   = ref('')
+// 日期篩選（預設近 7 天）
+const _now2 = new Date()
+const _d72  = new Date(_now2); _d72.setDate(_d72.getDate() - 6)
+const _p2   = (n: number) => String(n).padStart(2, '0')
+const _iso2 = (d: Date) => `${d.getFullYear()}-${_p2(d.getMonth() + 1)}-${_p2(d.getDate())}`
+const dateMode = ref<DateMode>('7d')
+const dateFrom = ref(_iso2(_d72))
+const dateTo   = ref(_iso2(_now2))
 // 分頁
 const pageSize    = ref(10)
 const currentPage = ref(1)
@@ -86,9 +90,6 @@ async function fetchData(mode: DateMode = dateMode.value, from = dateFrom.value,
 onMounted(() => fetchData())
 
 function handleDateChange(payload: { mode: DateMode; from: string; to: string }) {
-  dateMode.value = payload.mode
-  dateFrom.value = payload.from
-  dateTo.value = payload.to
   fetchData(payload.mode, payload.from, payload.to)
 }
 

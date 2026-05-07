@@ -83,9 +83,14 @@ const statusLoading = ref(true)
 const loading       = ref(true)
 const error         = ref<string | null>(null)
 
-const dateMode    = ref<DateMode>('today')
-const dateFrom    = ref('')
-const dateTo      = ref('')
+const dateMode    = ref<DateMode>('7d')
+// 預設帶入近 7 天範圍供 DateFilterBar 顯示
+const _now = new Date()
+const _d7  = new Date(_now); _d7.setDate(_d7.getDate() - 6)
+const _pad = (n: number) => String(n).padStart(2, '0')
+const _iso = (d: Date) => `${d.getFullYear()}-${_pad(d.getMonth() + 1)}-${_pad(d.getDate())}`
+const dateFrom    = ref(_iso(_d7))
+const dateTo      = ref(_iso(_now))
 const pageSize    = ref(10)
 const currentPage = ref(1)
 
@@ -130,9 +135,6 @@ async function fetchStatus() {
 onMounted(() => { fetchData(); fetchStatus() })
 
 function handleDateChange(p: { mode: DateMode; from: string; to: string }) {
-  dateMode.value = p.mode
-  dateFrom.value = p.from
-  dateTo.value   = p.to
   fetchData(p.mode, p.from, p.to)
 }
 
@@ -385,6 +387,9 @@ const selMeta = computed(() => {
           :date-from="dateFrom"
           :date-to="dateTo"
           quick-bg="#f5c518"
+          @update:mode="dateMode = $event"
+          @update:date-from="dateFrom = $event"
+          @update:date-to="dateTo = $event"
           @change="handleDateChange"
         />
       </div>

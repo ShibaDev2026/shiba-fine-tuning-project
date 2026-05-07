@@ -129,34 +129,31 @@ def approve_manual_run(run_id: int, conn: sqlite3.Connection = Depends(get_db)):
 
 @router.get("/ollama")
 def ollama_status():
-    """Ollama 載入中模型 + 全部模型列表"""
-    loaded = []
-    all_models = []
+    """Ollama 載入中模型 + 全部模型列表（透過 HTTP API，相容 Docker 環境）"""
+    base = CONFIG.services.ollama_base_url.rstrip("/")
+    loaded: list[dict] = []
+    all_models: list[dict] = []
 
     try:
-        ps = subprocess.run(["ollama", "ps"], capture_output=True, text=True, timeout=10)
-        for line in ps.stdout.strip().splitlines()[1:]:
-            parts = line.split()
-            if parts:
-                loaded.append({"name": parts[0], "size": parts[1] if len(parts) > 1 else None})
+        r = httpx.get(f"{base}/api/ps", timeout=5)
+        for m in r.json().get("models", []):
+            loaded.append({"name": m.get("name"), "size": m.get("size_vram")})
     except Exception:
         pass
 
     try:
-        ls = subprocess.run(["ollama", "list"], capture_output=True, text=True, timeout=10)
-        for line in ls.stdout.strip().splitlines()[1:]:
-            parts = line.split()
-            if parts:
-                all_models.append({
-                    "name": parts[0],
-                    "size": parts[2] if len(parts) > 2 else None,
-                    "modified": " ".join(parts[3:]) if len(parts) > 3 else None,
-                })
+        r = httpx.get(f"{base}/api/tags", timeout=5)
+        for m in r.json().get("models", []):
+            all_models.append({
+                "name": m.get("name"),
+                "size": m.get("size"),
+                "modified": m.get("modified_at"),
+            })
     except Exception:
         pass
 
     return {
         "loaded_models": loaded,
         "all_models": all_models,
-        "vram_used": None,
+        "vram_used": None,  # Ollama API 目前不提供 VRAM 總量
     }
