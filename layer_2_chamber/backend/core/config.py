@@ -387,6 +387,57 @@ def _run_golden_samples_migration(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def _run_router_config_migration(conn: sqlite3.Connection) -> None:
+    """幂等 migration：建立 router_config 表並 seed 預設選擇值。
+
+    router_config 儲存「目前各 role 選用哪個 yaml stem」與 Ollama 維護狀態。
+    - 每個 key 一列（key/value pattern）
+    - ollama_status：'online' | 'offline'（維護模式由此 flag 控制）
+    - *_model_yaml：各 role 當前選用的 yaml stem
+    初次建立時從 models_loader 取第一個 stem 當預設值（依 stem 字典序）。
+    """
+    if _table_exists(conn, "router_config"):
+        return
+
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS router_config (
+            key         TEXT PRIMARY KEY,           -- e.g. classifier_model_yaml / ollama_status
+            value       TEXT NOT NULL,              -- stem 或 status string
+            updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+    """)
+
+    # seed 預設值（只在建表時執行一次）
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent.parent))
+    from models_loader import MODELS
+
+    defaults: list[tuple[str, str]] = [
+        ("ollama_status", "online"),
+    ]
+    role_key_map = {
+        "classifier":    "classifier_model_yaml",
+        "compressor":    "compressor_model_yaml",
+        "responder":     "responder_model_yaml",
+        "training_base": "training_base_block1_yaml",
+    }
+    for role, key in role_key_map.items():
+        stems = MODELS.stems_by_role(role)
+        if stems:
+            defaults.append((key, stems[0]))   # 字典序第一個
+
+    # training_base block2 預設與 block1 同
+    block1 = next((v for k, v in defaults if k == "training_base_block1_yaml"), None)
+    if block1:
+        defaults.append(("training_base_block2_yaml", block1))
+
+    conn.executemany(
+        "INSERT OR IGNORE INTO router_config(key, value) VALUES (?, ?)", defaults
+    )
+    conn.commit()
+
+
 def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
     """檢查資料表是否存在"""
     row = conn.execute(
@@ -433,6 +484,8 @@ def init_layer2_db() -> sqlite3.Connection:
     _run_golden_samples_migration(conn)
     # D：finetune_runs 首次訓練人工把關欄位 + status CHECK 修正
     _run_finetune_manual_migration(conn)
+    # E：router_config 模型選擇表 + ollama_status
+    _run_router_config_migration(conn)
 
     return conn
 

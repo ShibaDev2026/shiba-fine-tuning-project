@@ -4,6 +4,7 @@ const router = createRouter({
   history: createWebHistory(),
   routes: [
     { path: '/',          redirect: '/router' },
+    { path: '/models',    component: () => import('../views/PhaseModels.vue') },
     { path: '/router',    component: () => import('../views/PhaseRouter.vue') },
     { path: '/memory',    component: () => import('../views/PhaseMemory.vue') },
     { path: '/teachers',  component: () => import('../views/PhaseTeachers.vue') },
