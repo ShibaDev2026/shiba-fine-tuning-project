@@ -1,0 +1,45 @@
+# Layer 0 compressor 專用配置
+# 與 classifier-gemma3-4b.yaml 共用同一顆 Ollama 模型，但 prompt 與輸出長度不同
+# 對應 router_config.compressor_model_yaml = "compressor-gemma3-4b"
+
+# ─── 識別 ───
+display_name: Gemma 3 4B (Compressor)
+role: compressor
+ollama_tag: gemma3:4b
+description: 將長 context 壓縮為短摘要，餵給 responder 前置處理
+
+# ─── 推論參數 ───
+inference:
+  think: false
+  num_ctx: 8192                    # 壓縮場景輸入較長，比 classifier 多
+  temperature: 0.2
+  top_p: 0.9
+  top_k: 40
+  repeat_penalty: 1.05
+  num_predict: 512                 # 摘要長度上限
+  stop: []
+  keep_alive: 10m
+  timeout_seconds: 30
+
+# ─── Prompt 配置 ───
+prompt:
+  system: |
+    你是嚴謹的中文摘要員。請保留事實要點，去除贅詞。
+  user_template: null
+
+# ─── 模型元資料 ───
+meta:
+  family: gemma
+  quantization: q4_K_M
+  size_gb: 3.3
+  min_ram_gb: 8
+  supports_thinking: true
+  supports_vision: false
+  supports_audio: false
+
+# ─── 維護 ───
+maintenance:
+  yaml_version: 1
+  added_at: "2026-05-07"
+  notes: |
+    壓縮 prompt 與 classifier 不同；num_ctx 翻倍以容納長輸入。
