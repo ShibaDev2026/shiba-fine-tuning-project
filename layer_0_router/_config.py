@@ -85,16 +85,19 @@ def invalidate_cache() -> None:
     _snapshot_cache.clear()
 
 
-def split_inference(inference: dict | None) -> tuple[dict, str | None]:
-    """把 yaml inference dict 拆成 (ollama_options, keep_alive)。
+def split_inference(inference: dict | None) -> tuple[dict, str | None, bool | None]:
+    """把 yaml inference dict 拆成 (ollama_options, keep_alive, think)。
 
     - `keep_alive` 抽到 Ollama request body 頂層（Ollama API 規定不能放 options 內）
+    - `think` 同樣抽到 body 頂層（Ollama 0.9+ 規格：think 是頂層欄位，
+      放 options 內會被忽略導致 thinking-only 模型空回應）；None 代表 yaml 沒設
     - `timeout_seconds` 直接丟棄（Layer 0 client timeout 固定 30s，不吃 yaml；
       模型切換的 swap 等待由前端倒數提示處理）
-    - 其餘 keys（think/num_ctx/temperature/top_p/top_k/repeat_penalty/num_predict/stop）
+    - 其餘 keys（num_ctx/temperature/top_p/top_k/repeat_penalty/num_predict/stop）
       組成 Ollama options dict
     """
     src = dict(inference or {})
     keep_alive = src.pop("keep_alive", None)
+    think = src.pop("think", None)
     src.pop("timeout_seconds", None)
-    return src, keep_alive
+    return src, keep_alive, think

@@ -3,6 +3,24 @@
 所有版本變更依照 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/) 格式記錄。
 版本號遵循 [Semantic Versioning](https://semver.org/lang/zh-TW/)。
 
+## [Unreleased]
+
+模型 yaml 化重構 Step 3 完成（v1.5.0 候選；待 Step 4-7 收齊一併 release）。
+
+### Added
+
+- **Step 3.1-3.3（commit `2cd6b21`）**：`layer_0_router/_config.py` 含 `load_active_snapshot` / `is_local_enabled` / `split_inference` / 50ms in-process cache；三檔（`classifier.py` / `compressor.py` / `router.py`）改讀 `router_config` + `model_registry.snapshot` JSON，徹底解硬寫；offline kill switch 由 `router_config.ollama_status` 即時生效。
+- **Step 3 範圍外順手修**（同 commit `2cd6b21`）：`layer_2_chamber/backend/api/routes_router.py:163-176`（/router/status）與 `layer_3_pipeline/gatekeeper.py:151`（_get_current_model fallback）原 import `CLASSIFIER_MODEL/LOCAL_MODEL` 已移除，改呼 `load_active_snapshot`，避免 backend 啟動失敗。
+
+### Fixed
+
+- **Ollama `think` flag 位置 bug**：`split_inference` 原將 `think` 留在 options dict，但 Ollama 0.9+ 規格 `think` 是 body 頂層欄位（與 `keep_alive`/`messages` 同層），放錯位置 Ollama 直接忽略，導致 thinking-only 模型（Qwen3-30B）整段進 thinking 軌跡、`message.content` 全空、`num_predict` 截斷才停。修法：`split_inference` 改回三元組 `(options, keep_alive, think)`，三檔（router/classifier/compressor）呼叫端把 `think` 提到 body 頂層；`tests/layer0/test_config.py::TestSplitInference` 三 case 同步更新。real Ollama 驗證：修復前 `tokens_response=1024`（截斷）/ `out_len=0`，修復後 `tokens_response=719`（自然結束）/ `out_len=500`。
+- **README 過時模型字串**：`classifier` 描述 `gemma3:2b` → `gemma3:4b`（v1.3.0 已換但 README 漏改）+ Layer 0 模型表「分類（Fast）」同步。
+
+### Tests
+
+- `tests/layer0/`：24/24 全綠；`TestSplitInference` 三 case 改成驗三元組（options 7 keys / keep_alive / think）。
+
 ## [1.4.0] - 2026-05-07
 
 模型 yaml 化重構 Step 1+2 完成：DB 雙表機制（`model_registry` 版本歷史 + `router_config` 選擇器）+ 師父 CRUD + 共用 UI 元件。下載新模型 → 寫 yaml → DB 切換的閉環打通至前端唯讀展示為止；前端可切 dropdown 與 Layer 0 解硬寫排在 v1.5.0（Step 3-7）。

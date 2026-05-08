@@ -19,9 +19,10 @@
 
 每次對話開始時，由 Gemma 分類決定走本地模型或 Claude：
 
-- `classifier.py`：Gemma E2B（gemma3:2b）任務分類
-- `compressor.py`：Gemma E4B（gemma3:4b）壓縮 RAG context
-- `router.py`：主協調器，local → 壓縮 → Qwen 推論 → 注入建議
+- `classifier.py`：gemma3:4b 任務分類（v1.5.0 起改讀 `model_registry.snapshot` JSON，不再 hardcode）
+- `compressor.py`：gemma3:4b 壓縮 RAG context（同上 DB-driven）
+- `router.py`：主協調器，local → 壓縮 → Qwen 推論 → 注入建議；offline kill switch 由 `router_config.ollama_status` 控制
+- `_config.py`：snapshot 載入 + `is_local_enabled` + `split_inference`（拆出 `keep_alive` / `think` 至 Ollama body 頂層）
 - `telemetry.py`：**P0-1** 採納率追蹤，寫入 `router_decisions` 表
 
 ### Layer 1 — 日常記憶層
@@ -66,7 +67,7 @@
 
 | 用途 | 模型 |
 |------|------|
-| 分類（Fast） | gemma3:2b（think: false） |
+| 分類（Fast） | gemma3:4b（think: false） |
 | 壓縮（Primary） | gemma3:4b（think: false） |
 | 回應（Response） | qwen3:30b-a3b → shiba-block1 |
 | Judge（初裁） | Gemini 2.5 Flash（250 req/day）|

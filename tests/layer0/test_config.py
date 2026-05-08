@@ -160,7 +160,7 @@ class TestIsLocalEnabled:
 # ── split_inference ───────────────────────────────────────────
 class TestSplitInference:
     def test_full_yaml_inference_splits_three_buckets(self):
-        """yaml 完整 9+keep_alive+timeout = 11 keys 拆成 (options 9, keep_alive, 丟 timeout)"""
+        """yaml 完整 11 keys 拆成 (options 7, keep_alive, think) — timeout_seconds 丟棄"""
         from layer_0_router._config import split_inference
 
         full = {
@@ -169,12 +169,14 @@ class TestSplitInference:
             "num_predict": 256, "stop": [], "keep_alive": "10m",
             "timeout_seconds": 30,
         }
-        opts, keep_alive = split_inference(full)
+        opts, keep_alive, think = split_inference(full)
         assert keep_alive == "10m"
+        assert think is False  # think 抽出到 body 頂層
         assert "keep_alive" not in opts
+        assert "think" not in opts  # think 不再留在 options（Ollama 會忽略）
         assert "timeout_seconds" not in opts  # 丟棄，不進 options
         assert opts == {
-            "think": False, "num_ctx": 4096, "temperature": 0.0,
+            "num_ctx": 4096, "temperature": 0.0,
             "top_p": 1.0, "top_k": 40, "repeat_penalty": 1.0,
             "num_predict": 256, "stop": [],
         }
@@ -182,8 +184,8 @@ class TestSplitInference:
     def test_none_or_empty_returns_empty(self):
         from layer_0_router._config import split_inference
 
-        assert split_inference(None) == ({}, None)
-        assert split_inference({}) == ({}, None)
+        assert split_inference(None) == ({}, None, None)
+        assert split_inference({}) == ({}, None, None)
 
     def test_does_not_mutate_input(self):
         """不可破壞傳入 dict（snapshot cache 共用同物件，會污染下次呼叫）"""

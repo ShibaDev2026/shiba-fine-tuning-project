@@ -35,7 +35,7 @@ def compress_context(context: str) -> str:
 
     try:
         snap = load_active_snapshot("compressor")
-        options, keep_alive = split_inference(snap.get("inference"))
+        options, keep_alive, think = split_inference(snap.get("inference"))
         system = (snap.get("prompt") or {}).get("system")
 
         body_dict = {
@@ -48,6 +48,8 @@ def compress_context(context: str) -> str:
             body_dict["system"] = system
         if keep_alive:
             body_dict["keep_alive"] = keep_alive
+        if think is not None:
+            body_dict["think"] = think
 
         body = json.dumps(body_dict).encode()
 

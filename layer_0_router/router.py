@@ -92,7 +92,7 @@ def _call_qwen(prompt: str, context: str) -> tuple[str, int | None, int | None] 
     """
     try:
         snap = load_active_snapshot("responder")
-        options, keep_alive = split_inference(snap.get("inference"))
+        options, keep_alive, think = split_inference(snap.get("inference"))
         system = (snap.get("prompt") or {}).get("system")
 
         messages = []
@@ -110,6 +110,8 @@ def _call_qwen(prompt: str, context: str) -> tuple[str, int | None, int | None] 
         }
         if keep_alive:
             body_dict["keep_alive"] = keep_alive
+        if think is not None:
+            body_dict["think"] = think
 
         body = json.dumps(body_dict).encode()
 

@@ -24,6 +24,13 @@
 - **2026-05-07 Step 2**：`local_enabled` 布林 key 改為 `ollama_status` 字串（`'online'` / `'offline'`），語意更直觀對應前端 ToggleSwitch 標籤。`is_local_enabled()` 比對 `== 'online'` 即可。
 - **2026-05-07 Step 2**：`_config.py` helper **沒在 Step 2 完成**（plan 原本標 Step 2 設計）。實際 Step 2 只做了 backend `routes_router_config.py` + `models_db.py` sync。`_config.py` 移到 Step 3 開頭做。
 - **2026-05-07 Step 2**：附帶完成的範圍外項目（一併進 step 2 commit b706e78）：teachers CRUD（routes_teachers + PhaseTeachers）、共用 UI 元件（Modal/Toast/ConfirmDialog/FormField）、PhaseModels 唯讀頁（4 列 grid 頂部對齊、min-width:0 防溢出）、各種 polish。
+- **2026-05-08 Step 3**：originally not in plan — 順手修兩個外部依賴的 ImportError：
+  - `layer_2_chamber/backend/api/routes_router.py:163-176`（/router/status 端點）原 import `CLASSIFIER_MODEL/LOCAL_MODEL` 改成 `load_active_snapshot`
+  - `layer_3_pipeline/gatekeeper.py:151`（_get_current_model fallback）同上
+  - 不修就 backend 跑不起來，必修非可選。
+- **2026-05-08 Step 3**：`split_inference` helper 加進 `_config.py`（plan 原本沒設計）。理由：yaml inference 有 11 keys，其中 `keep_alive` 必須放 Ollama body 頂層、`timeout_seconds` 不傳給 Ollama 也不給 client（client timeout 寫死 30s，模型切換等待由前端倒數提示，留待 Step 5）；剩餘 9 keys 才進 options。三檔 inline 拆解會重複，抽成 helper 並補 3 個 unit test。
+- **2026-05-08 Step 3**：incident — production DB malformed（host stop_hook + backend container 併發 WAL race，rebuilt via `.recover` + FTS5 rebuild，21559 exchanges 全救回）。SOP 已存 reference memory `reference_db_corruption_recovery.md`。
+- **2026-05-08 Step 3.4 驗證後 bug 修復**：integration test 發現 Qwen3-30B `tokens_response=1024`（num_predict 截斷）但 `out_len=0`（content 空）。診斷：`split_inference` 把 `think` 留在 options dict，但 Ollama 0.9+ 規格 `think` 是 body 頂層欄位，放錯位置會被忽略 → thinking-only 模型整段進 thinking 軌跡而 message.content 為空。修法：`split_inference` 改 3-tuple `(options, keep_alive, think)`，三檔呼叫端把 `think` 提到 body 頂層；測試三 case 同步調整；real Ollama 再測 `tokens_response=719`（自然結束）/ `out_len=500`。Qwen3 即便 `think:false` 仍會做 reasoning（thinking 文字混進 content 開頭），徹底壓抑需 prompt 加 `/no_think` 標記，留待 Step 5 前端切換完成後一併 prompt tuning。
 
 ## 已完成 Step（commit hash）
 
@@ -31,6 +38,8 @@
 |------|--------|------|
 | 1 | `7a4a2ec` | 5 份 yaml + `models_loader.py` + nvfp4 smoke test |
 | 2 | `b706e78` | `model_registry` + `router_config` + lifespan sync + PhaseModels 唯讀頁 |
+| 3.1-3.3 | `2cd6b21` | `_config.py` + 三檔改寫 + offline kill switch + 順手修外部依賴；24/24 layer0 unit test 綠 |
+| 3.4 | _本次 commit_ | 整合測試（real Ollama happy path + `router_decisions` 寫入驗證 + offline killswitch）+ Ollama `think` flag 位置 bug 修復；24/24 unit test 綠 |
 
 ## 既有可重用資產（Phase 1 探索結果）
 
