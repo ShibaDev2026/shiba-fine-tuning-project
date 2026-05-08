@@ -1,5 +1,8 @@
 # layer_0_router/compressor.py
-"""Gemma E4B：壓縮長 context 為簡短摘要，供 Qwen 使用"""
+"""Gemma 壓縮器：把長 context 壓成簡短摘要供 Qwen 使用。
+
+模型/參數從 snapshot 讀取（透過 _config.load_active_snapshot）。
+"""
 
 import json
 import logging
@@ -7,11 +10,12 @@ import urllib.request
 
 from shiba_config import CONFIG
 
+from ._config import load_active_snapshot, split_inference
+
 logger = logging.getLogger(__name__)
 
-COMPRESSOR_MODEL = "gemma3:4b"
 OLLAMA_BASE = CONFIG.services.ollama_base_url
-COMPRESS_TIMEOUT = 30  # 預留 model swap 時間
+COMPRESS_TIMEOUT = 30  # client timeout 固定 30s
 _MIN_LEN_TO_COMPRESS = 200
 
 _COMPRESS_PROMPT = """\
@@ -24,18 +28,28 @@ _COMPRESS_PROMPT = """\
 
 def compress_context(context: str) -> str:
     """
-    壓縮 context 字串。短於 200 字直接回傳；Ollama 離線時回傳截斷版。
+    壓縮 context 字串。短於 200 字直接回傳；Ollama 離線或 DB 失敗時回傳截斷版。
     """
     if len(context) < _MIN_LEN_TO_COMPRESS:
         return context
 
     try:
-        body = json.dumps({
-            "model": COMPRESSOR_MODEL,
+        snap = load_active_snapshot("compressor")
+        options, keep_alive = split_inference(snap.get("inference"))
+        system = (snap.get("prompt") or {}).get("system")
+
+        body_dict = {
+            "model": snap["ollama_tag"],
             "prompt": _COMPRESS_PROMPT.format(context=context[:1000]),
             "stream": False,
-            "options": {"temperature": 0.1, "think": False, "num_predict": 150},
-        }).encode()
+            "options": options,
+        }
+        if system:
+            body_dict["system"] = system
+        if keep_alive:
+            body_dict["keep_alive"] = keep_alive
+
+        body = json.dumps(body_dict).encode()
 
         req = urllib.request.Request(
             f"{OLLAMA_BASE}/api/generate",

@@ -160,18 +160,19 @@ def router_status():
     except Exception:
         ollama_online = False
 
-    # 從 layer_0_router 讀取實際設定值，避免與 classifier.py 脫節
+    # 從 router_config + model_registry snapshot 讀當前模型（yaml 化後唯一真相來源）
     try:
-        from layer_0_router.classifier import CLASSIFIER_MODEL
-        from layer_0_router.router import LOCAL_MODEL
+        from layer_0_router._config import load_active_snapshot
+        classifier_model = load_active_snapshot("classifier")["ollama_tag"]
+        local_model = load_active_snapshot("responder")["ollama_tag"]
     except Exception:
-        CLASSIFIER_MODEL = "unknown"
-        LOCAL_MODEL = "unknown"
+        classifier_model = "unknown"
+        local_model = "unknown"
 
     return {
         "ollama_online": ollama_online,
-        "classifier_model": CLASSIFIER_MODEL,
-        "local_model": LOCAL_MODEL,
+        "classifier_model": classifier_model,
+        "local_model": local_model,
         "router_enabled": True,
     }
 

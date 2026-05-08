@@ -8,25 +8,32 @@ import urllib.request
 
 from shiba_config import CONFIG
 
+from ._config import is_local_enabled, load_active_snapshot, split_inference
 from .classifier import classify_prompt
 from .compressor import compress_context
 from .telemetry import record_decision
 
 logger = logging.getLogger(__name__)
 
-LOCAL_MODEL = "qwen3:30b-a3b"  # 未來換成 shiba-block1:YYYYMMDD
 OLLAMA_BASE = CONFIG.services.ollama_base_url
-QWEN_TIMEOUT = 30
+QWEN_TIMEOUT = 30  # client timeout 固定 30s（不吃 yaml）
 
 
 def route(prompt: str, rag_context: str, session_id: str | None = None) -> str | None:
     """
     主路由邏輯。
+    - offline kill switch（router_config.ollama_status='offline'）→ 直接回 None
     - local → 壓縮 context → 呼叫 Qwen → 回傳注入字串
     - claude 或任何失敗 → 回傳 None（由 session_start_hook 走正常 RAG 流程）
     決策同步寫入 router_decisions（P0-1 採納率追蹤）。
     """
     t0 = time.monotonic()
+
+    if not is_local_enabled():
+        logger.info("路由決策：claude（offline kill switch）")
+        _record(session_id, prompt, "claude", "offline_killswitch", None, t0, None, None)
+        return None
+
     classification = classify_prompt(prompt)
     decision = classification["decision"]
     reason = classification.get("reason")
@@ -83,18 +90,28 @@ def _call_qwen(prompt: str, context: str) -> tuple[str, int | None, int | None] 
     呼叫本地 Qwen（Ollama /api/chat）。
     回傳 (response_text, tokens_prompt, tokens_response)；失敗時回傳 None。
     """
-    messages = []
-    if context:
-        messages.append({"role": "system", "content": f"相關記憶：{context}"})
-    messages.append({"role": "user", "content": prompt})
-
     try:
-        body = json.dumps({
-            "model": LOCAL_MODEL,
+        snap = load_active_snapshot("responder")
+        options, keep_alive = split_inference(snap.get("inference"))
+        system = (snap.get("prompt") or {}).get("system")
+
+        messages = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        if context:
+            messages.append({"role": "system", "content": f"相關記憶：{context}"})
+        messages.append({"role": "user", "content": prompt})
+
+        body_dict = {
+            "model": snap["ollama_tag"],
             "messages": messages,
             "stream": False,
-            "options": {"temperature": 0.7, "think": False, "num_predict": 512},
-        }).encode()
+            "options": options,
+        }
+        if keep_alive:
+            body_dict["keep_alive"] = keep_alive
+
+        body = json.dumps(body_dict).encode()
 
         req = urllib.request.Request(
             f"{OLLAMA_BASE}/api/chat",
