@@ -31,6 +31,11 @@
 - **2026-05-08 Step 3**：`split_inference` helper 加進 `_config.py`（plan 原本沒設計）。理由：yaml inference 有 11 keys，其中 `keep_alive` 必須放 Ollama body 頂層、`timeout_seconds` 不傳給 Ollama 也不給 client（client timeout 寫死 30s，模型切換等待由前端倒數提示，留待 Step 5）；剩餘 9 keys 才進 options。三檔 inline 拆解會重複，抽成 helper 並補 3 個 unit test。
 - **2026-05-08 Step 3**：incident — production DB malformed（host stop_hook + backend container 併發 WAL race，rebuilt via `.recover` + FTS5 rebuild，21559 exchanges 全救回）。SOP 已存 reference memory `reference_db_corruption_recovery.md`。
 - **2026-05-08 Step 3.4 驗證後 bug 修復**：integration test 發現 Qwen3-30B `tokens_response=1024`（num_predict 截斷）但 `out_len=0`（content 空）。診斷：`split_inference` 把 `think` 留在 options dict，但 Ollama 0.9+ 規格 `think` 是 body 頂層欄位，放錯位置會被忽略 → thinking-only 模型整段進 thinking 軌跡而 message.content 為空。修法：`split_inference` 改 3-tuple `(options, keep_alive, think)`，三檔呼叫端把 `think` 提到 body 頂層；測試三 case 同步調整；real Ollama 再測 `tokens_response=719`（自然結束）/ `out_len=500`。Qwen3 即便 `think:false` 仍會做 reasoning（thinking 文字混進 content 開頭），徹底壓抑需 prompt 加 `/no_think` 標記，留待 Step 5 前端切換完成後一併 prompt tuning。
+- **2026-05-09 Step 5**：PUT /router/config key 條件由 `*_model_yaml` 放寬為 `*_yaml`，理由：Step 2 寫入 `router_config` 時推論型用 `{role}_model_yaml` 但訓練型用 `training_base_block{N}_yaml`（沒有 `_model_` 中綴），Step 5 想單一 endpoint 同時支援推論 + 訓練切換，故統一以 `_yaml` 結尾為 model 切換路徑。`ollama_status` 走獨立分支驗 enum。
+- **2026-05-09 Step 5**：原 plan 寫「ToggleSwitch 綁 `local_enabled`」但實際 DB key 是 `ollama_status`（Step 2 偏離已記錄），前端遵循 DB 真相，store 直接用 `ollama_status` 命名，避免雙層命名歧異。
+- **2026-05-09 Step 5**：原 plan 範圍只切 classifier + responder（兩個 Select），實際補上 compressor 第三個 dropdown，理由：Step 1 已切分 classifier/compressor 兩份獨立 yaml，UI 不顯示就無法切，補上才完整；模板用 `v-for role in (...)` 統一渲染。
+- **2026-05-09 Step 6**：`get_training_base_hf_repo(block)` 走獨立 DB 查詢未重用 `load_active_snapshot`，理由：訓練型 key 命名 `training_base_block{N}_yaml` 與推論型 `{role}_model_yaml` 不同 pattern，硬塞 Role enum 反而要改 cache 鍵；獨立 helper 讀 50ms 內仍有 in-process cache 經由 sqlite 快，且訓練是離線批次任務，hot path 不敏感。
+- **2026-05-09 Step 6**：`mlx_trainer.py` + `gguf_converter.py` 不再宣告 `BASE_MODELS` dict，改在每次 train/convert 呼叫時 lazy 取 `get_training_base_hf_repo(block)`。理由：避免 import 時 DB 還沒初始化（session 啟動順序）+ 切 base 後立即生效不需 reload module。
 
 ## 已完成 Step（commit hash）
 
@@ -40,7 +45,9 @@
 | 2 | `b706e78` | `model_registry` + `router_config` + lifespan sync + PhaseModels 唯讀頁 |
 | 3.1-3.3 | `2cd6b21` | `_config.py` + 三檔改寫 + offline kill switch + 順手修外部依賴；24/24 layer0 unit test 綠 |
 | 3.4 | `bc07f98` | 整合測試（real Ollama happy path + `router_decisions` 寫入驗證 + offline killswitch）+ Ollama `think` flag 位置 bug 修復；24/24 unit test 綠 |
-| 4 | _本次 commit_ | `routes_router.py` +4 端點：`GET /models/installed`、`GET /models/by-role`、`PUT /config`、`POST /config/reload`；改 `GET /status` 加 roles 詳細狀態 + yaml_modified 偵測 |
+| 4 | `60aaac6` | `routes_router.py` +4 端點：`GET /models/installed`、`GET /models/by-role`、`PUT /config`、`POST /config/reload`；改 `GET /status` 加 roles 詳細狀態 + yaml_modified 偵測 |
+| 5 | _本次 commit_ | 前端 `Select.vue` + `ToggleSwitch.vue` + `api/router.ts` + `stores/router.ts`，PhaseRouter 系統狀態列改造（3 dropdown + ToggleSwitch + ⚠️ 已修改徽章 + Reload 按鈕）；PUT /config 擴 `*_yaml` + `ollama_status` 雙路徑 |
+| 6 | _本次 commit_ | `_config.py` 加 `get_training_base_hf_repo(block)`；`mlx_trainer.py` + `gguf_converter.py` 拔 `BASE_MODELS` hardcode dict 改讀 router_config + snapshot |
 
 ## 既有可重用資產（Phase 1 探索結果）
 

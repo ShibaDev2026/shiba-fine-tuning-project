@@ -17,7 +17,7 @@ from shiba_config import CONFIG
 
 DB_PATH = CONFIG.paths.db
 
-Role = Literal["classifier", "compressor", "responder", "training_base_block1"]
+Role = Literal["classifier", "compressor", "responder"]
 
 _CACHE_TTL_SEC = 0.05  # 50ms：足夠涵蓋同 request 內多次呼叫
 _snapshot_cache: dict[str, tuple[float, dict]] = {}
@@ -83,6 +83,42 @@ def is_local_enabled() -> bool:
 def invalidate_cache() -> None:
     """清 snapshot cache；給 PUT /router/config 切換 model 時呼叫，或測試使用。"""
     _snapshot_cache.clear()
+
+
+def get_training_base_hf_repo(adapter_block: int) -> str:
+    """取 Layer 3 訓練 base 的 hf_repo（從 router_config + model_registry snapshot 解出）。
+
+    流程：router_config[training_base_block{N}_yaml] → stem
+        → model_registry.snapshot.hf_repo。
+    block 1/2 各自獨立 key；訓練 key 命名為 `training_base_block{N}_yaml`，
+    與推論型 `{role}_model_yaml` 不同 pattern，故走獨立查詢不重用 load_active_snapshot。
+    DB miss 一律 raise RuntimeError；訓練流程是離線批次任務，hard fail 比 silent default 安全。
+    """
+    if adapter_block not in (1, 2):
+        raise ValueError(f"adapter_block 須為 1 或 2，收到：{adapter_block!r}")
+
+    cfg_key = f"training_base_block{adapter_block}_yaml"
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT value FROM router_config WHERE key=?", (cfg_key,)
+        ).fetchone()
+        if row is None:
+            raise RuntimeError(f"router_config 缺 key={cfg_key}（lifespan sync 漏？）")
+        stem = row["value"]
+        snap_row = conn.execute(
+            "SELECT snapshot FROM model_registry WHERE model_name=? AND is_current=1",
+            (stem,),
+        ).fetchone()
+        if snap_row is None:
+            raise RuntimeError(f"model_registry 找不到 model_name={stem} is_current=1")
+        snap = json.loads(snap_row["snapshot"])
+
+    hf_repo = snap.get("hf_repo")
+    if not hf_repo:
+        raise RuntimeError(
+            f"training_base block{adapter_block} snapshot 缺 hf_repo（yaml 是否誤用推論型 schema？）"
+        )
+    return hf_repo
 
 
 def split_inference(inference: dict | None) -> tuple[dict, str | None, bool | None]:

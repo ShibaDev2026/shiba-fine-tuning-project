@@ -177,6 +177,12 @@ def router_status(conn: sqlite3.Connection = Depends(get_db)):
         classifier_model = "unknown"
         local_model = "unknown"
 
+    # ollama_status kill switch（前端 ToggleSwitch 用）
+    status_row = conn.execute(
+        "SELECT value FROM router_config WHERE key='ollama_status'"
+    ).fetchone()
+    ollama_status = status_row["value"] if status_row else "offline"
+
     # 各推論 role 詳細狀態（供前端「yaml 已修改」徽章）
     roles: dict = {}
     for role in _INFERENCE_ROLES:
@@ -218,6 +224,7 @@ def router_status(conn: sqlite3.Connection = Depends(get_db)):
 
     return {
         "ollama_online": ollama_online,
+        "ollama_status": ollama_status,
         "classifier_model": classifier_model,
         "local_model": local_model,
         "router_enabled": True,
@@ -445,48 +452,65 @@ def put_router_config(
     body: RouterConfigBody,
     conn: sqlite3.Connection = Depends(get_db),
 ):
-    """切換某 role 的 active model（body: {key, value=new_stem}）。
+    """更新 router_config（支援 model 切換 + ollama_status kill switch）。
 
-    1. 驗 stem yaml 存在（models_loader）
-    2. 驗 model_registry 有此 stem is_current=1（若無則先 sync）
-    3. 原子更新 router_config.value + updated_at
-    4. 清 in-process snapshot cache
+    分支驗證：
+    - `*_model_yaml`：驗 stem yaml 存在 + model_registry has is_current=1（不在則先 sync）
+    - `ollama_status`：驗 value ∈ {online, offline}
+    其他 key：拒絕（避免誤寫）
+
+    流程：原子更新 router_config.value + updated_at → invalidate snapshot cache
     """
     from models_loader import MODELS
     from models_db import sync_model_registry
     from layer_0_router._config import invalidate_cache
 
-    # 1. 驗 yaml 存在
-    try:
-        MODELS.get_by_stem(body.value)
-    except KeyError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-
-    # 2. 驗 router_config key 存在
+    # 驗 router_config key 存在
     cfg_row = conn.execute(
         "SELECT value FROM router_config WHERE key=?", (body.key,)
     ).fetchone()
     if cfg_row is None:
         raise HTTPException(status_code=404, detail=f"router_config key={body.key!r} 不存在")
 
-    # 3. 確保 model_registry 有此 stem（不在就先 sync）
-    reg = conn.execute(
-        "SELECT id FROM model_registry WHERE model_name=? AND is_current=1",
-        (body.value,),
-    ).fetchone()
-    if reg is None:
-        sync_model_registry(conn)
+    # 分支驗證
+    if body.key.endswith("_yaml"):
+        # model 切換路徑（推論型 *_model_yaml + 訓練型 training_base_block{N}_yaml）
+        try:
+            MODELS.get_by_stem(body.value)
+        except KeyError as e:
+            raise HTTPException(status_code=404, detail=str(e))
+
         reg = conn.execute(
             "SELECT id FROM model_registry WHERE model_name=? AND is_current=1",
             (body.value,),
         ).fetchone()
         if reg is None:
+            sync_model_registry(conn)
+            reg = conn.execute(
+                "SELECT id FROM model_registry WHERE model_name=? AND is_current=1",
+                (body.value,),
+            ).fetchone()
+            if reg is None:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"sync 後仍找不到 model_name={body.value!r}；請確認 yaml 檔名與 role 一致",
+                )
+
+    elif body.key == "ollama_status":
+        # kill switch 路徑
+        if body.value not in ("online", "offline"):
             raise HTTPException(
-                status_code=409,
-                detail=f"sync 後仍找不到 model_name={body.value!r}；請確認 yaml 檔名與 role 一致",
+                status_code=400,
+                detail=f"ollama_status 僅可為 'online'/'offline'，收到：{body.value!r}",
             )
 
-    # 4. 原子更新
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail=f"key={body.key!r} 不支援更新（允許：*_yaml、ollama_status）",
+        )
+
+    # 原子更新
     conn.execute(
         "UPDATE router_config SET value=?, updated_at=datetime('now') WHERE key=?",
         (body.value, body.key),
