@@ -10,8 +10,6 @@ background.py — APScheduler 背景排程
 import logging
 from datetime import datetime, timedelta, timezone
 
-import sqlite3
-
 from shiba_alert import send_alert
 
 logger = logging.getLogger(__name__)
@@ -112,53 +110,60 @@ def setup_scheduler(app, conn_factory):
         "replace_existing": True,
     }
 
-    # 每 15 分鐘抽取新樣本
+    # 每 15 分鐘抽取新樣本（cron 錯開：minute 0/15/30/45，避免與 refiner/paraphrase 同秒觸發）
     scheduler.add_job(
         lambda: _run_extraction_job(conn_factory),
-        trigger="interval", minutes=15,
+        trigger="cron", minute="0,15,30,45",
         id="extraction", **_common,
     )
 
-    # 每 10 分鐘批次精煉 raw 樣本
+    # 每 10 分鐘批次精煉 raw 樣本（cron 錯開：minute 2/12/22/32/42/52）
     scheduler.add_job(
         lambda: _run_refiner_job(conn_factory),
-        trigger="interval", minutes=10,
+        trigger="cron", minute="2,12,22,32,42,52",
         id="refiner", **_common,
     )
 
-    # 每小時批次評分
+    # 每小時批次評分（cron：每小時 03 分，與其他 15min job 錯開）
     scheduler.add_job(
         lambda: score_pending_samples(conn_factory),
-        trigger="interval", hours=1,
+        trigger="cron", minute=3,
         id="scoring", **_common,
     )
 
-    # 每 15 分鐘補充 exchange_embeddings 同義說法變體
+    # 每 15 分鐘補充 exchange_embeddings 同義說法變體（cron 錯開：minute 7/22/37/52）
     scheduler.add_job(
         lambda: _run_paraphrase_job(conn_factory),
-        trigger="interval", minutes=15,
+        trigger="cron", minute="7,22,37,52",
         id="paraphrase", **_common,
     )
 
-    # 每日凌晨 2 點冷資料壓縮
+    # 每日凌晨 2 點冷資料壓縮（不動）
     scheduler.add_job(
         lambda: compress_cold_data(conn_factory),
         trigger="cron", hour=2, minute=0,
         id="cold_compress", **_common,
     )
 
-    # 每 6 小時檢查是否達 fine-tune 門檻
+    # 每 6 小時檢查是否達 fine-tune 門檻（cron 錯開：每 6 小時 08 分）
     scheduler.add_job(
         lambda: _run_finetune_check(conn_factory),
-        trigger="interval", hours=6,
+        trigger="cron", hour="*/6", minute=8,
         id="finetune_check", **_common,
     )
 
-    # 每日 UTC 00:05 重置 teacher 每日額度旗標
+    # 每日 UTC 00:05 重置 teacher 每日額度旗標（不動）
     scheduler.add_job(
         lambda: _reset_daily_limits(conn_factory),
         trigger="cron", hour=0, minute=5,
         id="daily_limit_reset", **_common,
+    )
+
+    # WAL checkpoint：每日 03:30 TRUNCATE，避免 WAL 無限膨脹
+    scheduler.add_job(
+        lambda: _wal_checkpoint(conn_factory),
+        trigger="cron", hour=3, minute=30,
+        id="wal_checkpoint", **_common,
     )
 
     return scheduler
@@ -251,3 +256,17 @@ def _run_finetune_check(conn_factory) -> None:
             logger.warning("fine-tune 排程略過 block%d：Layer 3 服務未啟動", block)
         except Exception as e:
             logger.error("fine-tune 排程失敗 block%d：%s", block, e)
+
+
+def _wal_checkpoint(conn_factory) -> None:
+    """每日 03:30 執行 WAL TRUNCATE checkpoint，避免 WAL 無限膨脹。"""
+    conn = conn_factory()
+    try:
+        busy, log_size, checkpointed = conn.execute(
+            "PRAGMA wal_checkpoint(TRUNCATE)"
+        ).fetchone()
+        logger.info("WAL checkpoint TRUNCATE: busy=%d log=%d ckpt=%d", busy, log_size, checkpointed)
+    except Exception as e:
+        logger.error("WAL checkpoint 失敗：%s", e)
+    finally:
+        conn.close()
