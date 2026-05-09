@@ -15,7 +15,7 @@ services:
       - PYTHONPATH=/app
     extra_hosts:
       - "host.docker.internal:host-gateway"  # 讓 Ollama（host）可被 container 存取
-    restart: unless-stopped
+    restart: on-failure:3   # DB malformed 時限制重啟次數，避免無限重試加重損壞
 
   frontend:
     build: ./frontend-vue
