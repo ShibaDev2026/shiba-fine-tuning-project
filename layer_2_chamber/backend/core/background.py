@@ -159,13 +159,6 @@ def setup_scheduler(app, conn_factory):
         id="daily_limit_reset", **_common,
     )
 
-    # WAL checkpoint：每日 03:30 TRUNCATE，避免 WAL 無限膨脹
-    scheduler.add_job(
-        lambda: _wal_checkpoint(conn_factory),
-        trigger="cron", hour=3, minute=30,
-        id="wal_checkpoint", **_common,
-    )
-
     return scheduler
 
 

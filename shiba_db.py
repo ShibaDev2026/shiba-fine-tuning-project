@@ -17,9 +17,10 @@
 
 設計原則：
 - PRAGMA 集中在 open_connection，呼叫方不得自行設 PRAGMA
-- synchronous=NORMAL：WAL 模式下對 process crash 安全；macOS bind mount 上 FULL 過慢
+- journal_mode=DELETE：macOS Virtualization.framework（Docker bind mount）下 WAL SHM
+  跨虛擬化層鎖定不一致；DELETE mode 無 SHM/WAL 檔案，根治 container malformed 問題
+- synchronous=NORMAL：DELETE mode 下對 process crash 安全；FULL 在 macOS bind mount 過慢
 - busy_timeout=30000：30s lock 等待，涵蓋 APScheduler job 最長持鎖窗口
-- wal_autocheckpoint=1000：約 4MB 自動 checkpoint，避免 WAL 無限膨脹
 - mmap_size=256MB：memory map 減少 syscall，macOS bind mount 下效果顯著
 - check_same_thread=False：APScheduler 與 uvicorn 在不同 thread 使用同一連線時不拋錯
 """
@@ -31,11 +32,13 @@ from typing import Generator, Literal
 from shiba_config import CONFIG
 
 # 全專案統一 PRAGMA；順序不可任意調換（journal_mode 須先設，其他才生效）
+# journal_mode=DELETE：macOS Virtualization.framework（Docker bind mount）下
+# WAL 模式的 SHM 鎖定跨虛擬化層不一致，導致 host integrity_check=ok 但 container
+# 回報 malformed；DELETE mode 無 SHM/WAL 檔案，根治此問題。
 _PRAGMAS = (
-    "PRAGMA journal_mode=WAL",
+    "PRAGMA journal_mode=DELETE",
     "PRAGMA synchronous=NORMAL",
     "PRAGMA busy_timeout=30000",
-    "PRAGMA wal_autocheckpoint=1000",
     "PRAGMA mmap_size=268435456",
     "PRAGMA temp_store=MEMORY",
     "PRAGMA foreign_keys=ON",
