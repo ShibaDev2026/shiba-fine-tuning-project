@@ -13,9 +13,7 @@ import sqlite3
 import time
 from typing import Literal
 
-from shiba_config import CONFIG
-
-DB_PATH = CONFIG.paths.db
+from shiba_db import open_connection
 
 Role = Literal["classifier", "compressor", "responder"]
 
@@ -24,9 +22,7 @@ _snapshot_cache: dict[str, tuple[float, dict]] = {}
 
 
 def _connect() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
+    return open_connection("reader")
 
 
 def load_active_snapshot(role: Role) -> dict:

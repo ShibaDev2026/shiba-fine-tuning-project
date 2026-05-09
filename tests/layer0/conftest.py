@@ -1,9 +1,7 @@
 """Layer 0 測試共用 fixture（autouse）。
 
-把 layer_0_router._config.DB_PATH 指向 tmp DB，避免 classifier/compressor/router
-在測試環境打 production shiba-brain.db。
-
-注意：layer_0_router.telemetry 的 DB_PATH 沒在這裡 monkeypatch（既有行為，本範圍不動）。
+monkeypatch shiba_db.open_connection（以及已 import 的模組參照），
+讓 Layer 0 所有測試連 tmp DB，避免打 production shiba-brain.db。
 """
 
 import json
@@ -81,13 +79,24 @@ def _seed_db(db_path: Path) -> None:
 
 @pytest.fixture(autouse=True)
 def _isolate_layer0_config_db(tmp_path, monkeypatch):
-    """所有 layer0 測試自動套：_config.DB_PATH → tmp DB；測前清 cache。"""
+    """所有 layer0 測試自動套：open_connection → tmp DB；測前清 cache。"""
     db = tmp_path / "layer0_test.db"
     _seed_db(db)
 
-    from layer_0_router import _config
+    import shiba_db
+    from layer_0_router import _config, telemetry
 
-    monkeypatch.setattr(_config, "DB_PATH", str(db))
+    # shiba_db.open_connection 已被各模組 `from shiba_db import open_connection`，
+    # 須在每個已 import 的模組命名空間各自 patch
+    def _patched_open(role="writer", timeout=30.0):
+        conn = sqlite3.connect(str(db), timeout=timeout, check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        return conn
+
+    monkeypatch.setattr(shiba_db, "open_connection", _patched_open)
+    monkeypatch.setattr(_config, "open_connection", _patched_open)
+    monkeypatch.setattr(telemetry, "open_connection", _patched_open)
+
     _config.invalidate_cache()
     yield db
     _config.invalidate_cache()

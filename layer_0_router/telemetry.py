@@ -3,15 +3,11 @@
 
 import hashlib
 import logging
-import sqlite3
 from dataclasses import dataclass
-from pathlib import Path
 
-from shiba_config import CONFIG
+from shiba_db import open_connection
 
 logger = logging.getLogger(__name__)
-
-DB_PATH = CONFIG.paths.db
 
 # C4：採納啟發式由「無否定即採納」改為多維結構。
 # 否定關鍵字 → accepted=False / rewrote=False（明確拒絕）
@@ -45,10 +41,8 @@ class AcceptanceSignal:
     matched_keyword: str | None  # 命中的關鍵字（debug / audit）
 
 
-def _conn() -> sqlite3.Connection:
-    c = sqlite3.connect(DB_PATH)
-    c.row_factory = sqlite3.Row
-    return c
+def _conn():
+    return open_connection("writer")
 
 
 def prompt_hash(prompt: str) -> str:

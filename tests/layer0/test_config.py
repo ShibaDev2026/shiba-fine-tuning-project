@@ -88,10 +88,19 @@ def tmp_db(tmp_path, monkeypatch):
     conn.commit()
     conn.close()
 
-    # 指 _config.DB_PATH 到 tmp DB；清 cache 防汙染
+    # monkeypatch open_connection 指向 tmp DB；清 cache 防汙染
+    import sqlite3 as _sqlite3
+
+    import shiba_db
     from layer_0_router import _config
 
-    monkeypatch.setattr(_config, "DB_PATH", str(p))
+    def _patched_open(role="writer", timeout=30.0):
+        conn = _sqlite3.connect(str(p), timeout=timeout, check_same_thread=False)
+        conn.row_factory = _sqlite3.Row
+        return conn
+
+    monkeypatch.setattr(shiba_db, "open_connection", _patched_open)
+    monkeypatch.setattr(_config, "open_connection", _patched_open)
     _config.invalidate_cache()
     return p
 
