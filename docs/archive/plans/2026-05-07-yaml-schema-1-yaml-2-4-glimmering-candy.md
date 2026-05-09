@@ -39,7 +39,8 @@
 | 1 | `7a4a2ec` | 5 份 yaml + `models_loader.py` + nvfp4 smoke test |
 | 2 | `b706e78` | `model_registry` + `router_config` + lifespan sync + PhaseModels 唯讀頁 |
 | 3.1-3.3 | `2cd6b21` | `_config.py` + 三檔改寫 + offline kill switch + 順手修外部依賴；24/24 layer0 unit test 綠 |
-| 3.4 | _本次 commit_ | 整合測試（real Ollama happy path + `router_decisions` 寫入驗證 + offline killswitch）+ Ollama `think` flag 位置 bug 修復；24/24 unit test 綠 |
+| 3.4 | `bc07f98` | 整合測試（real Ollama happy path + `router_decisions` 寫入驗證 + offline killswitch）+ Ollama `think` flag 位置 bug 修復；24/24 unit test 綠 |
+| 4 | _本次 commit_ | `routes_router.py` +4 端點：`GET /models/installed`、`GET /models/by-role`、`PUT /config`、`POST /config/reload`；改 `GET /status` 加 roles 詳細狀態 + yaml_modified 偵測 |
 
 ## 既有可重用資產（Phase 1 探索結果）
 
