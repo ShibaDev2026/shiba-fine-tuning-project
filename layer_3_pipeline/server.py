@@ -14,10 +14,8 @@ from .runner import run_finetune_if_ready
 
 def _conn_factory():
     """開啟 DB 連線（row_factory 已設定）"""
-    import sqlite3
-    conn = sqlite3.connect(str(CONFIG.paths.db))
-    conn.row_factory = sqlite3.Row
-    return conn
+    from shiba_db import open_connection
+    return open_connection("writer")
 
 
 app = FastAPI(title="Shiba Layer 3 Pipeline", version="0.9.0")

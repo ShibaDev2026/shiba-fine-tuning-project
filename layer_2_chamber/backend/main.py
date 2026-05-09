@@ -20,7 +20,6 @@ main.py — Layer 2 精神時光屋 FastAPI 入口
 
 from contextlib import asynccontextmanager
 import logging
-import sqlite3
 import sys
 from pathlib import Path
 
@@ -47,13 +46,10 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 logger = logging.getLogger(__name__)
 
 
-def _conn_factory() -> sqlite3.Connection:
+def _conn_factory():
     """給背景排程使用的 connection factory"""
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys=ON")
-    conn.execute("PRAGMA journal_mode=WAL")
-    return conn
+    from shiba_db import open_connection
+    return open_connection("writer")
 
 
 @asynccontextmanager

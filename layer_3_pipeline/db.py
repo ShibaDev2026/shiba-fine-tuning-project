@@ -2,17 +2,12 @@
 """finetune_runs 表 CRUD"""
 
 import sqlite3
-from pathlib import Path
 
-from shiba_config import CONFIG
-
-DB_PATH = CONFIG.paths.db
+from shiba_db import open_connection
 
 
 def get_connection() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
+    return open_connection("writer")
 
 
 def count_approved(conn: sqlite3.Connection, adapter_block: int) -> int:

@@ -450,16 +450,11 @@ def init_layer2_db() -> sqlite3.Connection:
     """
     開啟 shiba-brain.db 並確保 Layer 2 schema 已建立。
     使用 PRAGMA table_info 判斷是否需要執行 migration。
-    回傳已啟用 WAL + foreign_keys 的 connection。
+    回傳已套好全套 PRAGMA 的 connection（由 shiba_db 統一管理）。
     """
+    from shiba_db import open_connection
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    # C5：timeout=30s，避免多排程併發 + Layer 1 hook 同時寫入時 lock contention
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=30.0)
-    conn.row_factory = sqlite3.Row
-
-    # WAL 模式減少 Layer 1 hook 與 Layer 2 API 的寫入競爭
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA foreign_keys=ON")
+    conn = open_connection("writer")
 
     # 判斷是否所有 Layer 2 表都已存在
     missing = [t for t in LAYER2_TABLES if not _table_exists(conn, t)]
