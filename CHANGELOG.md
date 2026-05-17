@@ -3,6 +3,15 @@
 所有版本變更依照 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/) 格式記錄。
 版本號遵循 [Semantic Versioning](https://semver.org/lang/zh-TW/)。
 
+## [Unreleased]
+
+### Fixed
+
+- **SQLite Hardening PR2（事務原子化）**：
+  - **Step 5（stop_hook 4 段切分）**：`layer_1_memory/hooks/stop_hook.py` 將原本「一個 `with conn:` 包 4 個寫入區塊」改為 A=session / B=messages / C=branches / D=fts 四段獨立 try/except，任一段失敗 → re-raise → `get_connection` 統一 rollback（讀法 B：保 FK 完整性），同時 logger 標出具體失敗段別。
+  - **Step 6（multi_judge 三欄共一事務）**：`layer_2_chamber/backend/services/multi_judge.py` 將 `_update_sample_score`（寫 status/score）與 weight UPDATE 包進同一 `with conn:`；`teacher_service.py::_update_sample_score` 移除內層 `conn.commit()`，事務邊界交給 caller。徹底消除「score 寫了 weight 漏」部分狀態。quota 計數仍獨立 commit（精確化版本）。
+  - **驗證（三層）**：unit test 全綠 + dry run（檢視 transaction 邊界）+ smoke + E2E（`scripts/e2e_pr2_smoke.py` 兩案：multi_judge 三欄原子寫入、stop_hook C 段 raise 整體 rollback，docker 容器內驗證通過）。
+
 ## [1.5.0] - 2026-05-09
 
 模型 yaml 化重構 Step 3-7 全部完成。Layer 0 三顆推論模型 + Layer 3 訓練 base 完全解硬寫，前端 PhaseRouter 支援 dropdown 即時切換模型與 online/offline kill switch；DB corruption 事件觸發 SQLite hardening PR1 計畫（獨立進行）。
