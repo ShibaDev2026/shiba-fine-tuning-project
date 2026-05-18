@@ -419,11 +419,13 @@ def _run_rpm_migration(conn: sqlite3.Connection) -> None:
         "UPDATE teachers SET rpm_limit = 15, daily_request_limit = 1000 "
         "WHERE model_id = 'gemini-2.5-flash-lite'",
     )
-    # Anthropic Tier 1（conservative）
+    # Anthropic Tier 1（conservative；針對 Sonnet 4.6，未來新增 Haiku 等需另設）
     conn.execute(
-        "UPDATE teachers SET rpm_limit = 50 WHERE vendor = 'anthropic'",
+        "UPDATE teachers SET rpm_limit = 50 WHERE model_id = 'claude-sonnet-4-6'",
     )
-    # local / xai / 其餘：rpm_limit 保留 NULL（不限）
+    # local：rpm_limit 保留 NULL（不限）
+    # xai：smoke_test_teacher 為 dummy；未來新增實際 Grok teacher 時需補正確值
+    #       （Grok 3 Free Tier 約 60 RPM/1200 RPD，於 $25 credits 用盡前）
 
     conn.commit()
 
