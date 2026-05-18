@@ -387,6 +387,47 @@ def _run_golden_samples_migration(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def _run_rpm_migration(conn: sqlite3.Connection) -> None:
+    """
+    E 幂等 migration：teachers 新增 RPM 速率限制欄位。
+
+    新欄位：
+      rpm_limit            — 每分鐘請求上限（NULL = 不限）
+      rpm_window_start     — 當前 60s 窗口起點（ISO8601）
+      rpm_count_in_window  — 窗口內已用請求數
+      transient_backoff_until — RPM 超限後短暫回退結束時間（NULL = 無回退中）
+
+    backfill：依各廠牌 Free Tier 文件設定 rpm_limit；
+    同步修正 Gemini Flash-Lite daily_request_limit 250 → 1000（原 placeholder 值）。
+    """
+    if _column_exists(conn, "teachers", "rpm_limit"):
+        return  # 已 migration 過
+
+    for sql in [
+        "ALTER TABLE teachers ADD COLUMN rpm_limit INTEGER DEFAULT NULL",
+        "ALTER TABLE teachers ADD COLUMN rpm_window_start TEXT DEFAULT NULL",
+        "ALTER TABLE teachers ADD COLUMN rpm_count_in_window INTEGER DEFAULT 0",
+        "ALTER TABLE teachers ADD COLUMN transient_backoff_until TEXT DEFAULT NULL",
+    ]:
+        conn.execute(sql)
+
+    # Gemini Free Tier（Dec 2025 規格）
+    conn.execute(
+        "UPDATE teachers SET rpm_limit = 10 WHERE model_id = 'gemini-2.5-flash'",
+    )
+    conn.execute(
+        "UPDATE teachers SET rpm_limit = 15, daily_request_limit = 1000 "
+        "WHERE model_id = 'gemini-2.5-flash-lite'",
+    )
+    # Anthropic Tier 1（conservative）
+    conn.execute(
+        "UPDATE teachers SET rpm_limit = 50 WHERE vendor = 'anthropic'",
+    )
+    # local / xai / 其餘：rpm_limit 保留 NULL（不限）
+
+    conn.commit()
+
+
 def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
     """檢查資料表是否存在"""
     row = conn.execute(
@@ -433,6 +474,8 @@ def init_layer2_db() -> sqlite3.Connection:
     _run_golden_samples_migration(conn)
     # D：finetune_runs 首次訓練人工把關欄位 + status CHECK 修正
     _run_finetune_manual_migration(conn)
+    # E：teachers RPM 速率欄位 + backfill（區分 RPM 超限 vs 每日配額）
+    _run_rpm_migration(conn)
 
     return conn
 

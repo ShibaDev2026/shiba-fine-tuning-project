@@ -14,6 +14,11 @@ CREATE TABLE IF NOT EXISTS teachers (
     is_daily_limit_reached INTEGER NOT NULL DEFAULT 0, -- 1=當日額度耗盡
     -- A：廠牌標籤；multi_judge C1 早停強制 ≥2 vendor 才放行，避免 Gemini Flash + Flash-Lite 同源
     vendor        TEXT NOT NULL DEFAULT 'unknown', -- google / xai / openai / mistral / local
+    -- E：RPM 速率限制（區分短暫 RPM 超限 vs 每日配額耗盡，避免誤封整天）
+    rpm_limit              INTEGER DEFAULT NULL,   -- 每分鐘請求上限；NULL = 不限
+    rpm_window_start       TEXT DEFAULT NULL,       -- 當前 60s 窗口起點（ISO8601）
+    rpm_count_in_window    INTEGER DEFAULT 0,       -- 窗口內已消耗請求數
+    transient_backoff_until TEXT DEFAULT NULL,      -- RPM 超限短暫回退結束時間；NULL = 無回退
     created_at    TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
