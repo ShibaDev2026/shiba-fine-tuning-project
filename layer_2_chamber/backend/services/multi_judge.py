@@ -12,6 +12,7 @@ P1-2 多 Judge 投票（SEAL ReSTEM^EM 精神）。
 Judge approved 判定：score ≥ 8.0
 """
 
+import json
 import logging
 import sqlite3
 
@@ -83,6 +84,9 @@ def multi_judge_score(
         )
         conn.commit()
 
+    # B.1：非同步記錄 judge 一致性（失敗不影響主流程）
+    _log_judge_agreement(conn, sample_id, votes)
+
     return {
         "status": status,
         "weight": weight,
@@ -90,6 +94,30 @@ def multi_judge_score(
         "votes": votes,
         "high_value": high_value,
     }
+
+
+def _log_judge_agreement(
+    conn: sqlite3.Connection,
+    sample_id: int,
+    votes: list[dict],
+) -> None:
+    """
+    votes 持久化至 judge_agreement_logs（B.1）。
+    try/except 全包：失敗靜默記錄，不炸 multi_judge_score 主流程。
+    """
+    if not votes:
+        return
+    try:
+        votes_json = json.dumps(votes, ensure_ascii=False)
+        conn.execute(
+            """INSERT INTO judge_agreement_logs
+               (sample_id, votes_json)
+               VALUES (?, ?)""",
+            (sample_id, votes_json),
+        )
+        conn.commit()
+    except Exception as e:
+        logger.debug("judge_agreement_logs 寫入失敗（無害）：%s", e)
 
 
 def _vendor_of(teacher) -> str:
