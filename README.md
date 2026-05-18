@@ -201,6 +201,8 @@ docs/
 ---
 
 ## 參考來源
+### 外部資源，NCU資工所人工智慧與知識系統實驗室，博士後研究員 黃鈺晴 (e-mail:anna.yuqing@gmail.com)
+2026-05-17 討論平台改善空間，建議使用RAGAS，（Retrieval Augmented Generation Assessment）對RAG評估、測試和優化大型語言模型（LLM）中檢索增強生成（RAG）管道的開源框架，降低RAG幻覺，RAG與LLM提升品質。
 
 ### 學術論文
 
