@@ -220,31 +220,6 @@ docs/
 
 ## 參考來源
 
-### 外部資源
-
-NCU資工所人工智慧與知識系統實驗室，博士後研究員 黃鈺晴 (e-mail:anna.yuqing@gmail.com)
-2026-05-17 討論平台改善空間，建議使用RAGAS，（Retrieval Augmented Generation Assessment）對RAG評估、測試和優化大型語言模型（LLM）中檢索增強生成（RAG）管道的開源框架，降低RAG幻覺，RAG與LLM提升品質。
-
-2026-05-18 調整後結果：UUID 型基線完成。
-指標說明：
-i.  uuid_recall@k：ground truth UUID 中被召回的比例（真正率）
-ii. uuid_precision@k：召回 UUID 中屬 ground truth 的比例
-iii.hit@1：top-1 是否命中任一 ground truth
-iv. mrr：Mean Reciprocal Rank（第一個命中的排名倒數均值）
-v.  ctx_relevance：LLM judge 評分：召回的文字片段對 query 的語意相關性
-     
-  ┌─────────────┬───────┐
-  │    指標     │  值   │
-  ├─────────────┼───────┤
-  │ Recall@3    │ 0.744 │
-  ├─────────────┼───────┤
-  │ Precision@3 │ 0.613 │
-  ├─────────────┼───────┤
-  │ Hit@1       │ 0.643 │
-  ├─────────────┼───────┤
-  │ MRR         │ 0.762 │
-  └─────────────┴───────┘
-
 ### 學術論文
 
 | # | 論文 | arXiv | 對應設計 |
