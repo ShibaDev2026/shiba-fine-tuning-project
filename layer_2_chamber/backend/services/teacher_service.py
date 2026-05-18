@@ -242,6 +242,10 @@ def _call_teacher(
     )
     if "generativelanguage.googleapis.com" in teacher["api_base"]:
         raw, input_t, output_t, status = _call_gemini_rest(api_key, teacher["model_id"], prompt)
+    elif "api.anthropic.com" in teacher["api_base"]:
+        raw, input_t, output_t, status = _call_anthropic(
+            api_key, teacher["api_base"], teacher["model_id"], prompt
+        )
     else:
         raw, input_t, output_t, status = _call_openai_compat(
             api_key, teacher["api_base"], teacher["model_id"], prompt
@@ -337,6 +341,58 @@ def _call_openai_compat(
         return None, 0, 0, "quota_exceeded"
     except Exception as e:
         logger.error("OpenAI-compat 呼叫失敗：%s", e)
+        return None, 0, 0, "error"
+
+
+def _call_anthropic(
+    api_key: str,
+    api_base: str,
+    model_id: str,
+    prompt: str,
+    max_tokens: int = 150,
+    effort: str = "medium",
+) -> tuple[str | None, int, int, str]:
+    """
+    Anthropic Messages API 原生呼叫，回傳 (text, input_tokens, output_tokens, status)。
+    api_base 預期為 'https://api.anthropic.com/v1'；endpoint 自動補 /messages。
+    effort 預設 medium（Sonnet 4.6 官方推薦的成本/品質平衡點，API 預設為 high）。
+    """
+    import urllib.request
+    import urllib.error
+
+    url = f"{api_base.rstrip('/')}/messages"
+    body = json.dumps({
+        "model": model_id,
+        "max_tokens": max_tokens,
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0.1,
+        "output_config": {"effort": effort},
+    }).encode()
+
+    req = urllib.request.Request(
+        url,
+        data=body,
+        headers={
+            "Content-Type": "application/json",
+            "x-api-key": api_key,
+            "anthropic-version": "2023-06-01",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            data = json.loads(resp.read())
+            text = data["content"][0]["text"].strip()
+            usage = data.get("usage", {})
+            input_t = usage.get("input_tokens", 0)
+            output_t = usage.get("output_tokens", 0)
+            return text, input_t, output_t, "success"
+    except urllib.error.HTTPError as e:
+        if e.code == 429:
+            return None, 0, 0, "quota_exceeded"
+        logger.error("Anthropic REST 失敗 HTTP %s", e.code)
+        return None, 0, 0, "error"
+    except Exception as e:
+        logger.error("Anthropic REST 呼叫失敗：%s", e)
         return None, 0, 0, "error"
 
 
@@ -442,5 +498,7 @@ def call_teacher_for_test(
 
     if "generativelanguage.googleapis.com" in teacher["api_base"]:
         return _call_gemini_rest(api_key, teacher["model_id"], prompt, force_json=False, max_tokens=200)
+    elif "api.anthropic.com" in teacher["api_base"]:
+        return _call_anthropic(api_key, teacher["api_base"], teacher["model_id"], prompt, max_tokens=200)
     else:
         return _call_openai_compat(api_key, teacher["api_base"], teacher["model_id"], prompt, max_tokens=200)

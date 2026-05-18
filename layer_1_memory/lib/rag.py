@@ -161,6 +161,43 @@ def get_rag_context(
     return build_rag_output(sessions, token_budget=token_budget)
 
 
+def retrieve_for_eval(
+    query: str,
+    project_path: str | None = None,
+    top_n: int = 3,
+) -> dict:
+    """
+    評估專用 read-only 召回 API（不動 hot path）。
+    回傳結構化三元組供 RAGAS 計算 Context Precision / Recall。
+    """
+    vector_results = _vector_search(query, top_n=top_n)
+    if vector_results:
+        return {
+            "query": query,
+            "source": "vector",
+            "retrieved_contexts": [
+                "{}\n指令：{}".format(r["instruction"].strip(), r["commands"].strip())
+                for r in vector_results
+            ],
+            "retrieved_session_uuids": list({r["session_uuid"] for r in vector_results}),
+        }
+
+    # Fallback：FTS5
+    sessions = retrieve_relevant_sessions(query=query, project_path=project_path, top_n=top_n)
+    if not sessions:
+        return {"query": query, "source": "fts5", "retrieved_contexts": [], "retrieved_session_uuids": []}
+
+    return {
+        "query": query,
+        "source": "fts5",
+        "retrieved_contexts": [
+            "session: {}\n{}".format(s.get("session_uuid", ""), s.get("summary", ""))
+            for s in sessions
+        ],
+        "retrieved_session_uuids": [s.get("session_uuid", "") for s in sessions],
+    }
+
+
 def _vector_search(query: str, top_n: int = 3) -> list[dict]:
     """
     向量召回：取得 query embedding → cosine similarity 掃描 exchange_embeddings。
