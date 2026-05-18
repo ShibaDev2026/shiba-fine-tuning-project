@@ -243,10 +243,7 @@ docs/
 
 ### 外部資源
 
-**黃鈺晴（Anna Huang）博士後研究員**
-國立中央大學資訊工程學系，人工智慧與知識系統實驗室
-聯絡：anna.yuqing@gmail.com
-
+** 與國立中央大學資訊工程學系 人工智慧與知識系統實驗室 黃鈺晴（Anna Huang）博士後研究員 (e-mail：anna.yuqing@gmail.com)進行平台提升討論 **
 - **2026-05-17**：討論平台改善空間，建議採用 [RAGAS](https://docs.ragas.io)（Retrieval Augmented Generation Assessment）——對 RAG 評估、測試和優化大型語言模型（LLM）中檢索增強生成（RAG）管道的開源框架，藉此降低 RAG 幻覺、提升 RAG 與 LLM 整體品質。
 
 - **2026-05-18**：調整後完成 UUID 型基線評估。指標結果如下：
