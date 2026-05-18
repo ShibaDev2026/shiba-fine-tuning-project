@@ -154,10 +154,11 @@ def setup_scheduler(app, conn_factory):
         id="finetune_check", **_common,
     )
 
-    # 每日 UTC 00:05 重置 teacher 每日額度旗標
+    # PR-C：每日 PT 午夜 (= UTC 08:05) 重置 teacher 每日額度旗標 + RPM 窗口
+    # Gemini API 實際於太平洋時間午夜重置 RPD；UTC 時區需 +8h
     scheduler.add_job(
         lambda: _reset_daily_limits(conn_factory),
-        trigger="cron", hour=0, minute=5,
+        trigger="cron", hour=8, minute=5,  # PT midnight = UTC 08:00 ± few min
         id="daily_limit_reset", **_common,
     )
 
@@ -217,7 +218,7 @@ def _run_paraphrase_job(conn_factory) -> None:
 
 
 def _reset_daily_limits(conn_factory) -> None:
-    """每日 UTC 00:05 重置所有 teacher 的配額旗標與今日計數器"""
+    """PR-C：每日 PT 午夜重置所有 teacher 的配額旗標、計數器與 RPM 窗口"""
     conn = conn_factory()
     try:
         conn.execute("""
@@ -227,10 +228,13 @@ def _reset_daily_limits(conn_factory) -> None:
                 input_tokens_today     = 0,
                 output_tokens_today    = 0,
                 quota_exhausted_at     = NULL,
-                quota_exhausted_type   = NULL
+                quota_exhausted_type   = NULL,
+                rpm_window_start       = NULL,
+                rpm_count_in_window    = 0,
+                transient_backoff_until = NULL
         """)
         conn.commit()
-        logger.info("Teacher 每日配額已重置")
+        logger.info("Teacher 每日配額已重置（含 RPM 窗口）")
     finally:
         conn.close()
 
