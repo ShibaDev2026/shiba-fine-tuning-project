@@ -16,7 +16,7 @@ import json
 import logging
 import os
 import subprocess
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 import sqlite3
@@ -161,12 +161,194 @@ def get_today_usage(conn: sqlite3.Connection, teacher_id: int) -> int:
 
 
 def is_quota_available(conn: sqlite3.Connection, teacher: sqlite3.Row) -> bool:
-    """檢查 Teacher 今日配額是否還有餘裕（達限時自動標記）"""
-    used = get_today_usage(conn, teacher["id"])
-    if used >= teacher["daily_limit"]:
-        _mark_daily_limit_reached(conn, teacher["id"])
+    """
+    檢查 Teacher 是否可用（三層檢查，PR-B）：
+      1. 每日配額未耗盡（is_daily_limit_reached=0 且 used < daily_limit）
+      2. 不在短暫回退中（transient_backoff_until <= now 或為 NULL）
+      3. RPM 窗口未滿（由 _consume_rpm_slot 在實際呼叫前原子檢查）
+
+    本函式只做 1+2 兩層 cheap check；第 3 層在 _consume_rpm_slot 內做。
+    """
+    teacher_id = teacher["id"]
+
+    # 1. 每日配額（DB 標記優先，避免重複 COUNT(*)）
+    if teacher["is_daily_limit_reached"]:
         return False
+    used = get_today_usage(conn, teacher_id)
+    if used >= teacher["daily_limit"]:
+        _mark_daily_limit_reached(conn, teacher_id)
+        return False
+
+    # 2. 短暫回退（RPM 觸發後的冷卻期；過期則清除）
+    try:
+        backoff_until = teacher["transient_backoff_until"]
+    except (KeyError, IndexError):
+        backoff_until = None  # 舊 row 無此欄位（migration 未跑時 fallback）
+    if backoff_until:
+        try:
+            until = datetime.fromisoformat(backoff_until)
+            if until.tzinfo is None:
+                until = until.replace(tzinfo=timezone.utc)
+            if datetime.now(timezone.utc) < until:
+                return False
+            # 已過期 → 清除標記
+            conn.execute(
+                "UPDATE teachers SET transient_backoff_until=NULL WHERE id=?",
+                (teacher_id,),
+            )
+            conn.commit()
+        except ValueError:
+            pass  # 解析失敗，當作未設定
+
     return True
+
+
+def _consume_rpm_slot(conn: sqlite3.Connection, teacher: sqlite3.Row) -> bool:
+    """
+    PR-B：原子推進 RPM 窗口並 +1 計數；超限時設 transient_backoff_until。
+
+    回傳 True = 取得 slot 可發起請求；False = 窗口已滿，呼叫端應改試下一個 teacher。
+
+    rpm_limit IS NULL → 不限速率（local Ollama、低用量 teacher），直接回 True。
+    """
+    try:
+        rpm_limit = teacher["rpm_limit"]
+    except (KeyError, IndexError):
+        return True  # 舊 row：fail open
+    if rpm_limit is None:
+        return True
+
+    teacher_id = teacher["id"]
+    now = datetime.now(timezone.utc)
+
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute(
+            "SELECT rpm_window_start, rpm_count_in_window FROM teachers WHERE id=?",
+            (teacher_id,),
+        ).fetchone()
+        win_start_str = row["rpm_window_start"] if row else None
+        count = (row["rpm_count_in_window"] or 0) if row else 0
+
+        win_start = None
+        win_expired = True
+        if win_start_str:
+            try:
+                win_start = datetime.fromisoformat(win_start_str)
+                if win_start.tzinfo is None:
+                    win_start = win_start.replace(tzinfo=timezone.utc)
+                win_expired = (now - win_start).total_seconds() > 60.0
+            except ValueError:
+                win_expired = True
+
+        if win_expired:
+            new_start = now
+            new_count = 1
+        else:
+            new_start = win_start
+            new_count = count + 1
+
+        if new_count > rpm_limit:
+            # 觸頂 → 設回退到本窗口結束
+            backoff_end = new_start + timedelta(seconds=60)
+            conn.execute(
+                "UPDATE teachers SET transient_backoff_until=? WHERE id=?",
+                (backoff_end.isoformat(), teacher_id),
+            )
+            conn.commit()
+            logger.info(
+                "Teacher %d RPM 窗口滿（%d/%d），backoff to %s",
+                teacher_id, count, rpm_limit, backoff_end.isoformat(),
+            )
+            return False
+
+        conn.execute(
+            "UPDATE teachers SET rpm_window_start=?, rpm_count_in_window=? WHERE id=?",
+            (new_start.isoformat(), new_count, teacher_id),
+        )
+        conn.commit()
+        return True
+    except sqlite3.OperationalError as e:
+        # BEGIN IMMEDIATE 競爭失敗或其他 DB 異常 → fail open，避免阻塞主流程
+        logger.warning("Teacher %d RPM consume 失敗（fail open）：%s", teacher_id, e)
+        try:
+            conn.rollback()
+        except sqlite3.OperationalError:
+            pass
+        return True
+
+
+def _mark_transient_backoff(
+    conn: sqlite3.Connection, teacher_id: int, retry_after_seconds: int,
+) -> None:
+    """設定短暫回退結束時間（RPM 超限後使用，不動每日配額標記）"""
+    until = datetime.now(timezone.utc) + timedelta(seconds=max(retry_after_seconds, 1))
+    conn.execute(
+        "UPDATE teachers SET transient_backoff_until=? WHERE id=?",
+        (until.isoformat(), teacher_id),
+    )
+    conn.commit()
+    logger.info(
+        "Teacher %d 短暫回退 %ds（至 %s）",
+        teacher_id, retry_after_seconds, until.isoformat(),
+    )
+
+
+def _parse_google_429(body_bytes: bytes) -> tuple[str, int]:
+    """
+    解析 Google Gemini 429 回應體，回傳 (kind, retry_after_seconds)。
+
+    kind: 'day'   — QuotaFailure.quotaId 含 'PerDay' 或 retryDelay >= 3600
+          'minute'— QuotaFailure.quotaId 含 'PerMinute' 或 retryDelay < 3600
+          'minute'為解析失敗時的保守預設（短回退較安全，誤判為 day 會封鎖整天）
+    """
+    kind = "unknown"
+    retry = 60
+    try:
+        data = json.loads(body_bytes)
+        for d in data.get("error", {}).get("details", []):
+            t = d.get("@type", "")
+            if "QuotaFailure" in t:
+                for v in d.get("violations", []):
+                    qid = v.get("quotaId", "")
+                    if "PerDay" in qid or "PerDay" in v.get("quotaMetric", ""):
+                        kind = "day"
+                        break
+                    if "PerMinute" in qid:
+                        kind = "minute"
+            elif "RetryInfo" in t:
+                delay = d.get("retryDelay", "60s")
+                if isinstance(delay, str):
+                    if delay.endswith("s") and delay[:-1].replace(".", "").isdigit():
+                        retry = int(float(delay[:-1]))
+                    elif delay.endswith("m") and delay[:-1].isdigit():
+                        retry = int(delay[:-1]) * 60
+    except (json.JSONDecodeError, KeyError, ValueError):
+        pass
+
+    if kind == "unknown":
+        kind = "day" if retry >= 3600 else "minute"
+    return kind, retry
+
+
+def _parse_anthropic_429(http_error) -> tuple[str, int]:
+    """
+    解析 Anthropic 429 回應，回傳 (kind, retry_after_seconds)。
+
+    Anthropic 用 HTTP header 傳遞速率資訊：
+      retry-after：建議等待秒數
+      anthropic-ratelimit-requests-reset / -tokens-reset：UTC 重置時間
+    retry < 300s 視為短暫（RPM）；否則視為長期（保守當 day）。
+    """
+    retry = 60
+    try:
+        ra = http_error.headers.get("retry-after")
+        if ra and ra.isdigit():
+            retry = int(ra)
+    except (AttributeError, ValueError):
+        pass
+    kind = "day" if retry >= 300 else "minute"
+    return kind, retry
 
 
 # ── Keychain ─────────────────────────────────────────────────────────────
@@ -240,6 +422,12 @@ def _call_teacher(
         input=input_text[:200],
         output=output[:500],
     )
+
+    # PR-B：呼叫前原子搶 RPM slot；搶不到代表本分鐘已用完，跳過
+    if not _consume_rpm_slot(conn, teacher):
+        _log_usage(conn, teacher["id"], sample_id, 0, 0, "rate_limit_minute")
+        return None
+
     if "generativelanguage.googleapis.com" in teacher["api_base"]:
         raw, input_t, output_t, status = _call_gemini_rest(api_key, teacher["model_id"], prompt)
     elif "api.anthropic.com" in teacher["api_base"]:
@@ -251,10 +439,16 @@ def _call_teacher(
             api_key, teacher["api_base"], teacher["model_id"], prompt
         )
 
-    if status == "quota_exceeded":
+    # PR-B：429 分流（rate_limit_minute = 短暫回退；rate_limit_day = 整天封鎖）
+    # 保留 'quota_exceeded' 作 legacy 別名，視同 day（安全偏保守）
+    if status in ("rate_limit_minute",):
+        _log_usage(conn, teacher["id"], sample_id, 0, 0, "rate_limit_minute")
+        _mark_transient_backoff(conn, teacher["id"], retry_after_seconds=60)
+        return None
+    if status in ("rate_limit_day", "quota_exceeded"):
         _log_usage(conn, teacher["id"], sample_id, 0, 0, "quota_exceeded")
         _mark_daily_limit_reached(conn, teacher["id"])
-        _mark_quota_exhausted(conn, teacher["id"], "requests")
+        _mark_quota_exhausted(conn, teacher["id"], "daily")
         return None
 
     if raw is None:
@@ -308,7 +502,15 @@ def _call_gemini_rest(
             return text, input_t, output_t, "success"
     except urllib.error.HTTPError as e:
         if e.code == 429:
-            return None, 0, 0, "quota_exceeded"
+            # PR-B：解析 body 區分 RPM 短暫超限 vs 每日配額耗盡
+            try:
+                body = e.read()
+            except Exception:
+                body = b""
+            kind, retry = _parse_google_429(body)
+            status = "rate_limit_day" if kind == "day" else "rate_limit_minute"
+            logger.info("Gemini 429 kind=%s retry_after=%ds", kind, retry)
+            return None, 0, 0, status
         logger.error("Gemini REST 失敗 HTTP %s", e.code)
         return None, 0, 0, "error"
     except Exception as e:
@@ -338,7 +540,10 @@ def _call_openai_compat(
         output_t = resp.usage.completion_tokens if resp.usage else 0
         return content, input_t, output_t, "success"
     except RateLimitError:
-        return None, 0, 0, "quota_exceeded"
+        # PR-B：OpenAI-compat 端點（Ollama / Mistral / OpenAI）的 429 多為短暫，
+        # 預設視為 RPM 等級；若實際是 daily，下次重試仍會再次 429，最終透過
+        # daily_request_limit 上限觸發 daily 標記。
+        return None, 0, 0, "rate_limit_minute"
     except Exception as e:
         logger.error("OpenAI-compat 呼叫失敗：%s", e)
         return None, 0, 0, "error"
@@ -388,7 +593,11 @@ def _call_anthropic(
             return text, input_t, output_t, "success"
     except urllib.error.HTTPError as e:
         if e.code == 429:
-            return None, 0, 0, "quota_exceeded"
+            # PR-B：用 retry-after header 區分短暫 RPM/TPM vs 長期配額
+            kind, retry = _parse_anthropic_429(e)
+            status = "rate_limit_day" if kind == "day" else "rate_limit_minute"
+            logger.info("Anthropic 429 kind=%s retry_after=%ds", kind, retry)
+            return None, 0, 0, status
         logger.error("Anthropic REST 失敗 HTTP %s", e.code)
         return None, 0, 0, "error"
     except Exception as e:
