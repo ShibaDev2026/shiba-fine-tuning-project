@@ -19,6 +19,15 @@ CREATE TABLE IF NOT EXISTS teachers (
     rpm_window_start       TEXT DEFAULT NULL,       -- 當前 60s 窗口起點（ISO8601）
     rpm_count_in_window    INTEGER DEFAULT 0,       -- 窗口內已消耗請求數
     transient_backoff_until TEXT DEFAULT NULL,      -- RPM 超限短暫回退結束時間；NULL = 無回退
+    -- PR-D：token-based 配額治理（與 core/config.py:_run_token_quota_migration 對齊）
+    daily_request_limit    INTEGER DEFAULT 250,    -- 每日請求上限（替代 daily_limit，向後相容）
+    daily_token_limit      INTEGER DEFAULT NULL,   -- 每日 token 上限（NULL = 不限）
+    quota_reset_period     TEXT DEFAULT 'daily',   -- 配額重置週期；目前僅 'daily'
+    requests_today         INTEGER DEFAULT 0,      -- 今日已用請求數
+    input_tokens_today     INTEGER DEFAULT 0,      -- 今日累計輸入 token
+    output_tokens_today    INTEGER DEFAULT 0,      -- 今日累計輸出 token
+    quota_exhausted_at     TEXT DEFAULT NULL,      -- 配額耗盡時間（ISO8601）
+    quota_exhausted_type   TEXT DEFAULT NULL,      -- 'request' | 'token'
     created_at    TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -73,7 +82,10 @@ CREATE TABLE IF NOT EXISTS teacher_usage_logs (
     teacher_id    INTEGER NOT NULL REFERENCES teachers(id),
     used_at       TEXT NOT NULL DEFAULT (datetime('now')),
     sample_id     INTEGER REFERENCES training_samples(id),
-    tokens_used   INTEGER,                        -- 可選，記錄 token 消耗
+    tokens_used   INTEGER,                        -- 可選，記錄 token 消耗（input+output 合計）
+    -- PR-D：拆分輸入/輸出 token 計量（與 core/config.py:_run_token_quota_migration 對齊）
+    input_tokens  INTEGER DEFAULT 0,
+    output_tokens INTEGER DEFAULT 0,
     response_status TEXT                          -- 'success' | 'quota_exceeded' | 'error'
 );
 
