@@ -178,6 +178,8 @@ docs/
 
 ## RAGAS 評估基線（2026-05-18）
 
+> 實作位於 `ragas-evaluation` branch（`evaluation/` 目錄），預計 v1.6.0 隨此 branch merge 進 main。
+
 採用 [RAGAS](https://docs.ragas.io)（Retrieval Augmented Generation Assessment）框架對 Layer 1 RAG 管道進行系統性評估，量化召回品質並建立持續追蹤基線。
 
 ### Layer 1 召回指標（UUID 型，@k=3，n=31 queries）
@@ -195,11 +197,11 @@ docs/
 
 ## 版本歷程
 
-當前版本：**v1.5.0**（2026-05-18）
+當前版本：**v1.5.0**（2026-05-20）
 
 | 版本 | 日期 | 主要內容 |
 |------|------|---------|
-| v1.5.0 | 2026-05-18 | SQLite 競態強化（PR1: WAL→DELETE journal, PR2: stop_hook/multi_judge 4段 SAVEPOINT 原子事務）；RAGAS 評估框架（Phase A 完成：golden set 31 筆、UUID 召回基線）；Teacher RPM 速率管理（PR-A/B/C：schema migration、429 分流、排程時程修正至 PT 午夜）|
+| v1.5.0 | 2026-05-20 | 模型 yaml 化重構 Step 3-7 全部完成（Layer 0 三顆推論模型 + Layer 3 訓練 base 解硬寫 + 前端 PhaseRouter dropdown 即時切換 + online/offline kill switch）；SQLite hardening PR1+PR2 全部落地（`shiba_db.py` 統一連線 + PRAGMA 三層對齊 + APScheduler cron 錯開 + WAL→DELETE journal mode + stop_hook 4 段切分 + multi_judge 三欄共一事務） |
 | v1.4.0 | 2026-05-07 | 模型 yaml 化重構 Step 1+2：5 份 `config/models/*.yaml` + 專案根 `models_loader.py`；DB 雙表機制（`model_registry` 版本歷史 + `router_config` 選擇器、lifespan idempotent sync）；`PhaseModels.vue` 唯讀頁 4 列 grid；師父 CRUD 8 endpoints + `PhaseTeachers` UI 重構；共用 UI 元件 `Modal`/`ConfirmDialog`/`FormField`/`Toast` + `stores/toast.ts`；`ollama_status` 改走 HTTP API（docker 友善）|
 | v1.3.1 | 2026-05-06 | 文件目錄一次性整理（`docs/{design,references,archive}/`）+ `AGENTS.md` 對外規範對齊 v1.3.0 事實；純文件變更不動執行碼 |
 | v1.3.0 | 2026-05-04 | Grok 外部審視回應：A（Judge 廠牌多樣性）、C（Retention/Golden Set 防遺忘）、D（首次訓練人工把關）、B（Drift 告警 + 儀表板）；shiba_alert.py 公用告警模組；gatekeeper 第 4 條件 retention_score ≥ 0.85；trigger_policy 首次訓練 requires_manual；routes_finetune manual approve endpoint；新建 10 tests |

@@ -5,16 +5,9 @@
 
 ## [Unreleased]
 
-### Fixed
+## [1.5.0] - 2026-05-20
 
-- **SQLite Hardening PR2（事務原子化）**：
-  - **Step 5（stop_hook 4 段切分）**：`layer_1_memory/hooks/stop_hook.py` 將原本「一個 `with conn:` 包 4 個寫入區塊」改為 A=session / B=messages / C=branches / D=fts 四段獨立 try/except，任一段失敗 → re-raise → `get_connection` 統一 rollback（讀法 B：保 FK 完整性），同時 logger 標出具體失敗段別。
-  - **Step 6（multi_judge 三欄共一事務）**：`layer_2_chamber/backend/services/multi_judge.py` 將 `_update_sample_score`（寫 status/score）與 weight UPDATE 包進同一 `with conn:`；`teacher_service.py::_update_sample_score` 移除內層 `conn.commit()`，事務邊界交給 caller。徹底消除「score 寫了 weight 漏」部分狀態。quota 計數仍獨立 commit（精確化版本）。
-  - **驗證（三層）**：unit test 全綠 + dry run（檢視 transaction 邊界）+ smoke + E2E（`scripts/e2e_pr2_smoke.py` 兩案：multi_judge 三欄原子寫入、stop_hook C 段 raise 整體 rollback，docker 容器內驗證通過）。
-
-## [1.5.0] - 2026-05-09
-
-模型 yaml 化重構 Step 3-7 全部完成。Layer 0 三顆推論模型 + Layer 3 訓練 base 完全解硬寫，前端 PhaseRouter 支援 dropdown 即時切換模型與 online/offline kill switch；DB corruption 事件觸發 SQLite hardening PR1 計畫（獨立進行）。
+模型 yaml 化重構 Step 3-7 全部完成（Layer 0 三顆推論模型 + Layer 3 訓練 base 完全解硬寫，前端 PhaseRouter dropdown 即時切換 + online/offline kill switch）；SQLite hardening PR1+PR2 全部落地（PRAGMA 統一 + APScheduler cron 錯開 + WAL→DELETE journal + stop_hook 4 段切分 + multi_judge 三欄共一事務），DB corruption 事件根因排除，24h 觀察期已通過。
 
 ### Added
 
@@ -35,15 +28,19 @@
 
 - **2026-05-09 11:14 shiba-brain.db corruption**：`sqlite3.OperationalError: disk I/O error`，DB 末段 100+ pages 損壞。根因：host stop_hook + container backend uvicorn + APScheduler 6 jobs 跨進程並發 + PRAGMA 三層不一致（Layer 0 完全無設、Layer 1 busy=5s、Layer 2 busy=30s，三層皆缺 `synchronous` / `mmap_size` / `wal_autocheckpoint`）。已用 `.recover` SOP 修復（21,559 exchanges + 440 decisions 全救回，integrity_check=ok）。根因排除列入 SQLite hardening PR1 計畫（計畫檔：`docs/archive/plans/2026-05-09-sqlite-race-hardening.md`）。
 
-### SQLite Hardening（PR1 計畫中）
+### SQLite Hardening PR1+PR2 - Completed
 
-PR1 目標：PRAGMA 統一 + APScheduler 排程錯開 + WAL checkpoint，降 80%+ corruption 機率：
+PR1（PRAGMA 統一 + 排程錯開）：
 - 建 root 層 `shiba_db.py`（全專案統一連線 helper，PRAGMA: WAL / synchronous=NORMAL / busy_timeout=30s / wal_autocheckpoint=1000 / mmap_size=256MB）
 - Layer 0/1/2/3 全部 `sqlite3.connect` 替換，清除三層 PRAGMA 不一致
 - APScheduler `interval` → `cron` 錯開 minute（避免多 job 同 minute=0 觸發）
 - WAL checkpoint cron job（daily 03:30 TRUNCATE）
+- WAL→DELETE journal mode（commit `f73e489`，根治 Docker bind mount SHM 鎖定不一致）
 
-PR2（PR1 穩定一週後）：stop_hook SAVEPOINT 分段 + multi_judge 外層事務原子化。
+PR2（事務原子化，commit `e36aceb`）：
+- **Step 5（stop_hook 4 段切分）**：`layer_1_memory/hooks/stop_hook.py` 將原本「一個 `with conn:` 包 4 個寫入區塊」改為 A=session / B=messages / C=branches / D=fts 四段獨立 try/except，任一段失敗 → re-raise → `get_connection` 統一 rollback（讀法 B：保 FK 完整性），同時 logger 標出具體失敗段別。
+- **Step 6（multi_judge 三欄共一事務）**：`layer_2_chamber/backend/services/multi_judge.py` 將 `_update_sample_score`（寫 status/score）與 weight UPDATE 包進同一 `with conn:`；`teacher_service.py::_update_sample_score` 移除內層 `conn.commit()`，事務邊界交給 caller。徹底消除「score 寫了 weight 漏」部分狀態。quota 計數仍獨立 commit（精確化版本）。
+- **驗證（三層）**：unit test 全綠 + dry run（檢視 transaction 邊界）+ smoke + E2E（`scripts/e2e_pr2_smoke.py` 兩案：multi_judge 三欄原子寫入、stop_hook C 段 raise 整體 rollback，docker 容器內驗證通過）。
 
 ### Tests
 
