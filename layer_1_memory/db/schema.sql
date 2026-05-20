@@ -207,10 +207,14 @@ CREATE TABLE IF NOT EXISTS exchange_embeddings (
     commands           TEXT NOT NULL,   -- 實際執行的 bash/git 指令（果）
     embedding          BLOB NOT NULL,   -- instruction 的 JSON float array 向量
     model              TEXT NOT NULL DEFAULT 'bge-m3',
+    -- exchange_id：連結到 exchanges 表，召回時可取鄰居 ±K exchange 做上下文擴展
+    -- NULL 表示舊資料 backfill 未配對成功，召回端會 fallback 單 exchange 行為
+    exchange_id        INTEGER REFERENCES exchanges(id),
     created_at         TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE INDEX IF NOT EXISTS idx_exchange_embeddings_session ON exchange_embeddings(session_uuid);
+CREATE INDEX IF NOT EXISTS idx_exchange_embeddings_session  ON exchange_embeddings(session_uuid);
+CREATE INDEX IF NOT EXISTS idx_exchange_embeddings_exchange ON exchange_embeddings(exchange_id);
 
 -- ============================================================
 -- 跨層共享表：router_decisions / finetune_runs
