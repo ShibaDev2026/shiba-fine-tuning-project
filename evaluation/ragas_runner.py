@@ -29,7 +29,7 @@ PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from layer_1_memory.lib.db import get_connection
-from layer_1_memory.lib.rag import retrieve_for_eval
+from layer_1_memory.lib.rag import retrieve_for_eval, retrieve_for_eval_with_context
 from layer_2_chamber.backend.services.teacher_service import (
     _call_gemini_rest, _call_openai_compat, _strip_markdown, get_api_key,
 )
@@ -215,11 +215,13 @@ def run_layer1_evaluation(
     sample_size: int | None = None,
     top_n: int = 3,
     run_id: str | None = None,
+    rag_window: int = 0,
 ) -> dict:
     """
     從 retrieval_golden_set 讀 ground truth → 呼叫 retrieve_for_eval → 計算指標 → 寫入 DB。
 
     judge: 'local' | 'gemini' | 'both' | 'none'
+    rag_window: 0 走原本單 exchange 召回；≥1 走鄰居 ±K exchange 擴展上下文召回
     """
     run_id = run_id or f"layer1-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')}"
 
@@ -233,7 +235,8 @@ def run_layer1_evaluation(
             sql += f" LIMIT {sample_size}"
         rows = conn.execute(sql).fetchall()
 
-    print(f"\n[A.3 Layer1 Eval] run_id={run_id}  samples={len(rows)}  top_n={top_n}  judge={judge}\n")
+    print(f"\n[A.3 Layer1 Eval] run_id={run_id}  samples={len(rows)}  top_n={top_n}  "
+          f"judge={judge}  rag_window={rag_window}\n")
 
     all_uuid_metrics: dict[str, list[float]] = {
         "uuid_recall": [], "uuid_precision": [], "hit@1": [], "mrr": [],
@@ -246,8 +249,13 @@ def run_layer1_evaluation(
         query = row["query"]
         gt_uuids: list[str] = json.loads(row["expected_session_uuids"])
 
-        # 召回
-        ret = retrieve_for_eval(query, top_n=top_n)
+        # 召回：rag_window=0 走原本單 exchange；≥1 走鄰居擴展
+        if rag_window > 0:
+            ret = retrieve_for_eval_with_context(
+                query, top_n=top_n, window_k=rag_window,
+            )
+        else:
+            ret = retrieve_for_eval(query, top_n=top_n)
         ret_uuids = ret["retrieved_session_uuids"]
         contexts = ret["retrieved_contexts"]
         source = ret["source"]
@@ -295,6 +303,7 @@ def run_layer1_evaluation(
     summary = {
         "run_id": run_id,
         "n_samples": len(rows),
+        "rag_window": rag_window,
         "uuid_recall_avg": _avg(all_uuid_metrics["uuid_recall"]),
         "uuid_precision_avg": _avg(all_uuid_metrics["uuid_precision"]),
         "hit@1_avg": _avg(all_uuid_metrics["hit@1"]),
@@ -320,6 +329,8 @@ def main():
     p.add_argument("--sample-size", type=int, default=None, help="限制樣本數")
     p.add_argument("--top-n", type=int, default=3, help="召回數量")
     p.add_argument("--run-id", default=None, help="自訂 run_id")
+    p.add_argument("--rag-window", type=int, default=0,
+                   help="鄰居擴展視窗 K（0=不擴展走舊路徑；≥1 帶上 ±K 鄰居 exchange）")
     args = p.parse_args()
 
     if args.phase == "layer1":
@@ -328,6 +339,7 @@ def main():
             sample_size=args.sample_size,
             top_n=args.top_n,
             run_id=args.run_id,
+            rag_window=args.rag_window,
         )
 
 

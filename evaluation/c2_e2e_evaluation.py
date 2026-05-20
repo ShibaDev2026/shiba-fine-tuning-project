@@ -34,7 +34,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from clients.base import AIClientError
 from clients.ollama import OllamaClient
 from layer_1_memory.lib.db import get_connection
-from layer_1_memory.lib.rag import retrieve_for_eval
+from layer_1_memory.lib.rag import retrieve_for_eval, retrieve_for_eval_with_context
 from layer_2_chamber.backend.services.teacher_service import (
     _call_gemini_rest, _call_anthropic, get_api_key, _strip_markdown,
 )
@@ -232,8 +232,13 @@ def run(
     dry_run: bool = False,
     skip_scoring: bool = False,
     top_n: int = 3,
+    rag_window: int = 0,
 ) -> str:
-    """執行 E2E 評估，回傳 run_id。"""
+    """執行 E2E 評估，回傳 run_id。
+
+    rag_window=0 → retrieve_for_eval（單 exchange，baseline）
+    rag_window≥1 → retrieve_for_eval_with_context（±K 鄰居擴展）
+    """
     _ensure_runs_table()
 
     vendor, model_id = model_spec.split(":", 1)
@@ -265,8 +270,11 @@ def run(
             query = row["query"]
             expected = row["expected_answer"]
 
-            # RAG 召回
-            rag = retrieve_for_eval(query, top_n=top_n)
+            # RAG 召回：rag_window=0 走 baseline 單 exchange；≥1 走擴展上下文
+            if rag_window > 0:
+                rag = retrieve_for_eval_with_context(query, top_n=top_n, window_k=rag_window)
+            else:
+                rag = retrieve_for_eval(query, top_n=top_n)
             contexts = rag.get("retrieved_contexts", [])
             source = rag.get("source", "?")
             n_ctx = len(contexts)
@@ -348,7 +356,7 @@ def run(
         mean_score=mean_score,
         started_at=started_at,
         finished_at=finished_at,
-        metadata={"top_n": top_n, "aborted": aborted},
+        metadata={"top_n": top_n, "rag_window": rag_window, "aborted": aborted},
     )
 
     print(f"\n── {status_tag} {ok}/{len(rows)}  mean_score={mean_score}  run_id={run_id} ──")
@@ -423,6 +431,8 @@ def main() -> None:
                    help="模型規格，格式 vendor:model_id（ollama / claude）")
     r.add_argument("--limit", type=int, default=None)
     r.add_argument("--top-n", type=int, default=3)
+    r.add_argument("--rag-window", type=int, default=0,
+                   help="鄰居 exchange 擴展視窗 K（0=baseline 不擴展；建議 A/B 用 2）")
     r.add_argument("--dry-run", action="store_true")
     r.add_argument("--skip-scoring", action="store_true")
 
@@ -438,6 +448,7 @@ def main() -> None:
             dry_run=args.dry_run,
             skip_scoring=args.skip_scoring,
             top_n=args.top_n,
+            rag_window=args.rag_window,
         )
     else:
         compare(args.run_id_1, args.run_id_2)
