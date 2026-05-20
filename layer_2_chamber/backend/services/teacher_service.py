@@ -429,18 +429,22 @@ def _call_teacher(
         return None
 
     if "generativelanguage.googleapis.com" in teacher["api_base"]:
+        # 評分輸出僅 JSON {score, reason}，關掉 thinking 避免 max_output_tokens 被 thinking 吃光
         raw, input_t, output_t, status = _call_gemini_rest(
             api_key, teacher["model_id"], prompt,
             caller_module="teacher_service",
             teacher_id=teacher["id"], sample_id=sample_id,
+            disable_thinking=True,
         )
     elif "api.anthropic.com" in teacher["api_base"]:
         raw, input_t, output_t, status = _call_anthropic(
             api_key, teacher["api_base"], teacher["model_id"], prompt
         )
     else:
+        # 本地 qwen3 系列 thinking 也吃 num_predict 配額，需留足空間給正文
         raw, input_t, output_t, status = _call_openai_compat(
-            api_key, teacher["api_base"], teacher["model_id"], prompt
+            api_key, teacher["api_base"], teacher["model_id"], prompt,
+            max_tokens=2048,
         )
 
     # PR-B：429 分流（rate_limit_minute = 短暫回退；rate_limit_day = 整天封鎖）
@@ -485,6 +489,7 @@ def _call_gemini_rest(
     caller_module: str | None = None,
     teacher_id: int | None = None,
     sample_id: int | None = None,
+    disable_thinking: bool = False,
 ) -> tuple[str | None, int, int, str]:
     """Gemini API 呼叫（thin wrapper → clients.gemini.GeminiClient）。
 
@@ -506,6 +511,7 @@ def _call_gemini_rest(
         caller_module=caller_module,
         teacher_id=teacher_id,
         sample_id=sample_id,
+        disable_thinking=disable_thinking,
     )
 
 

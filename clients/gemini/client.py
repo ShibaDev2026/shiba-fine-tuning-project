@@ -78,6 +78,7 @@ class GeminiClient:
         caller_module: str | None = None,
         teacher_id: int | None = None,
         sample_id: int | None = None,
+        disable_thinking: bool = False,
     ) -> tuple[str | None, int, int, str]:
         """呼叫 Gemini 生成內容。回傳 (text, input_tokens, output_tokens, status)。
 
@@ -98,7 +99,7 @@ class GeminiClient:
         }
 
         try:
-            return self._invoke_once(model_id, prompt, max_tokens, force_json, log_ctx)
+            return self._invoke_once(model_id, prompt, max_tokens, force_json, log_ctx, disable_thinking)
         except _RetryableServerError as e:
             logger.warning(
                 "Gemini 5xx 暫態錯誤（將於 %ds 後重試 1 次）model=%s code=%s",
@@ -106,7 +107,7 @@ class GeminiClient:
             )
             time.sleep(_TRANSIENT_RETRY_SLEEP_SECONDS)
             try:
-                return self._invoke_once(model_id, prompt, max_tokens, force_json, log_ctx)
+                return self._invoke_once(model_id, prompt, max_tokens, force_json, log_ctx, disable_thinking)
             except _RetryableServerError as e2:
                 msg = f"5xx 重試 1 次仍失敗：{e2.message}"
                 self._raise_transient(model_id, msg, e2.code)
@@ -120,6 +121,7 @@ class GeminiClient:
         max_tokens: int,
         force_json: bool,
         log_ctx: dict,
+        disable_thinking: bool = False,
     ) -> tuple[str | None, int, int, str]:
         from google.genai import errors as genai_errors
         from google.genai import types as genai_types
@@ -130,6 +132,10 @@ class GeminiClient:
         }
         if force_json:
             config_kwargs["response_mime_type"] = "application/json"
+        # 短輸出（如 JSON 評分）關閉 thinking，避免 thinking tokens 吃光 max_output_tokens
+        # 導致回應被截斷為「Here is the JSON requested:」preamble
+        if disable_thinking:
+            config_kwargs["thinking_config"] = genai_types.ThinkingConfig(thinking_budget=0)
 
         api_base = _GEMINI_API_BASE_PATTERN.format(model_id=model_id)
         sent_at = _now_iso()
