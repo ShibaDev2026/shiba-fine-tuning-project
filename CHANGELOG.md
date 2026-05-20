@@ -5,6 +5,55 @@
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-05-21
+
+RAGAS 評估框架完整落地（Phase 0/A/B/C 全部完成）；Teacher 配額治理改寫（Gemini Paid Tier 升級 + RPM 速率管控 + 429 分流 + UTC TZ 對齊）；`clients/` 共用 AI 呼叫包誕生（vendor 分包 + 三類錯誤 + ai_api_call_logs）；中文召回核心升級（nomic-embed-text → bge-m3，1024-dim）；4 vendor client 統一 exponential backoff。
+
+### Added
+
+- **RAGAS Phase 0/A/B/C（commits `ea50cee` ~ `e9e17fc`）**：
+  - Phase 0 schema：新增 `retrieval_golden_set` / `evaluation_results` / `evaluation_runs` 三表，`evaluation/schemas.py` 含 migrate 函式
+  - Phase A.1 `layer_1_memory/lib/rag.py::retrieve_for_eval()`：UUID 型召回介面
+  - Phase A.2 `evaluation/golden_set_builder.py`：31 筆 golden query（Anthropic Sonnet medium 生成）
+  - Phase A.3 `evaluation/ragas_runner.py`：UUID 型指標 + Gemini Flash judge → Recall@3 0.744 / Precision@3 0.613 / Hit@1 0.643 / MRR 0.762
+  - Phase B `evaluation/{run_judge_votes,compute_kappa,compute_faithfulness,layer2_report}.py`：votes 持久化 + Fleiss' Kappa + Faithfulness + Layer 2 報告彙整
+  - Phase C.1 `evaluation/c1_generate_answers.py`：Flash-Lite 生成 expected_answer + 驗收（28/31 完成 + 4 flags 手審 manual-by-shiba）
+  - Phase C.2/C.3 `evaluation/c2_e2e_evaluation.py`：Qwen 5.23 + Claude 5.48 baseline；bge-m3 swap 後 5.39（+0.16）
+  - Phase C.4 `evaluation/c4_weekly_ci.py` + `com.shiba.ragas-c4.plist`：週度 CI launchd（週日 22:00 台灣時間）
+- **`clients/` 共用 AI 呼叫包（PR-A `07447c0` + PR-E `c58bfb3` + PR-H `543d102`）**：
+  - `clients/base.py`：`AIErrorCategory`（PERMANENT / TRANSIENT / QUOTA）+ `AIClientError` + 統一 `TRANSIENT_RETRY_BACKOFF_SECONDS`
+  - `clients/{gemini,anthropic,openai_compat,ollama}/client.py`：vendor 分包，每次呼叫寫 `ai_api_call_logs`（source_type='remote'|'local' 區隔）
+  - `teacher_service` 改為 thin wrapper（`_call_anthropic` / `_call_openai_compat` / `_call_ollama`），`_vendor_of` helper
+- **Teacher 配額治理 PR-A/B/C/D（commits `77ef915` ~ `9c6a302`）**：
+  - PR-A schema：`teachers` 表 +4 欄（rpm_limit / rpm_window_start / rpm_count_in_window / transient_backoff_until）+ token 配額 +8 欄
+  - PR-B `f06f0c1`：RPM slot 原子消耗 + 429 分流（`PerMinute` 短暫 backoff / `PerDay` 每日重置）
+  - PR-C `5da1f50`：scheduler 改 PT 午夜 UTC 08:05 重置（Gemini RPD 在 PT midnight 重置）
+  - PR-D `543d102`：D.1 AnthropicClient + D.2 Claude `daily_limit=999999` placeholder + D.4 OpenAICompatClient（D.3 token-based TPM 預設上限 → won't-do）
+- **Gemini Paid Tier 升級（PR-B `9c6a302`）**：Flash 500 RPM / 5000 RPD，Flash-Lite 2000 RPM / 999999 RPD（取 Paid 上限 50% buffer）；每次呼叫仍 `sleep(4)`
+- **`clients/gemini/`：google-genai SDK 路徑 + REST 路徑雙軌**（PR-A）：REST 走 `_call_gemini_rest` 給 evaluation 腳本；SDK 路徑供 teacher_service 使用
+- **Phase C.1 expected_answer pipeline（PR-C `d1e401e`）**：Flash-Lite 生成 + 驗收，4 flags 手審機制（`manual-by-shiba` notes）
+- **bge-m3 swap（PR-J `42f1556`）**：`EMBED_MODEL` nomic-embed-text → bge-m3，`EMBED_DIM` 768 → 1024；`evaluation/backfill_bge_m3.py` 一次性 backfill 2263 exchange embeddings；A.3 結果 Hit@1/MRR/Precision 均上升，Recall@3 −0.036 在雜訊範圍
+
+### Changed
+
+- **PR-G `0953f59` thinking-mode 全面關閉**：Gemini Flash `ThinkingConfig(thinking_budget=0)` + Ollama `num_predict=2048`（thinking tokens 計入 num_predict 配額，須保留正文空間）；解決 score 解析失敗（max_tokens=100 預算被 thinking 吃光）
+- **PR-I.3 `202f70d` retry-backoff 共用**：`TRANSIENT_RETRY_BACKOFF_SECONDS` 提到 `clients/base.py`，4 vendor client 統一從固定 10s × 1 次 → exponential `[2,5,10]` × 3 次
+- **PR-K.1 `6eb58ee` aggressive backoff**：`TRANSIENT_RETRY_BACKOFF_SECONDS` 從 `[2,5,10]` → **`[5,15,30,60]`**（最壞 110s），提升分鐘級 Gemini spike 容忍度
+- **PR-K.2 `6571915` C.2 韌性**：c2_e2e_evaluation judge 從 flash-lite → flash + `disable_thinking=True`（flash 配額池與 flash-lite 獨立，503 分布不同）；Ollama 永久錯誤改 skip 單筆而非整批熔斷
+- **PR-D refactor `0155a0f`**：`golden_set_builder` Anthropic 改用 teacher_service 基礎設施；ragas_runner Flash 速率保護（sleep 4s）
+
+### Fixed
+
+- **PR-I.1 `1faaaad` schema-drift**：`schema_layer2.sql` 對齊 PR-D quota migration（teachers +8 token 欄 + teacher_usage_logs +2 欄），修 `tests/layer2/test_teacher_service.py` 6 個 `OperationalError`
+- **PR-I.2 `3b6dd0b` tz-bug**：`get_today_usage` 改用 UTC `datetime.now(timezone.utc).date()` 對齊 SQLite `datetime('now')`，修 CST 跨日後 0-8 小時 `is_quota_available` 永遠回 True 的 production bug
+- **PR-A hotfix `8a4c2d3`**：Anthropic backfill 改用 `model_id` + 修正 xai 註解誤導
+
+### Operations
+
+- **C.2 bge-m3 baseline 驗證**（run_id=e2e-ollama-20260520T164503）：28/28 零熔斷，mean_score 5.39（vs nomic 5.23 +0.16），證實 bge-m3 swap 安全落地且 PR-K 韌性強化有效
+- **`evaluation/setup_c4_launchd.sh`**：C.4 launchd 安裝腳本，週日 22:00 台灣時間隨機抽 10 筆 ragas 評估，anchor=5.23 drop>0.5 觸發 alert
+- **Backup**：`data/2026-05-20_shiba-brain.db.bak`（bge-m3 swap 前快照）+ `data/2026-05-20_shiba-brain.db.bge-m3-backfill.bak`（backfill 後快照），本地保留
+
 ## [1.5.0] - 2026-05-20
 
 模型 yaml 化重構 Step 3-7 全部完成（Layer 0 三顆推論模型 + Layer 3 訓練 base 完全解硬寫，前端 PhaseRouter dropdown 即時切換 + online/offline kill switch）；SQLite hardening PR1+PR2 全部落地（PRAGMA 統一 + APScheduler cron 錯開 + WAL→DELETE journal + stop_hook 4 段切分 + multi_judge 三欄共一事務），DB corruption 事件根因排除，24h 觀察期已通過。
