@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-stop_hook.py — Claude Code Stop Hook（session 結束時觸發）
+session_stop_hook.py — Claude Code Stop Hook（session 結束時觸發）
 職責：
 1. 從 stdin 讀取 hook payload（session UUID / transcript path）
 2. 解析 .jsonl 對話檔
@@ -20,7 +20,7 @@ Phase 1 直接走 db.py，不透過 HTTP（FastAPI 尚未存在）。
         "hooks": [
           {
             "type": "command",
-            "command": "python3 /path/to/stop_hook.py"
+            "command": "python3 /path/to/session_stop_hook.py"
           }
         ]
       }
@@ -125,7 +125,7 @@ def _write_to_queue(payload: dict, config: dict) -> None:
 def sync_session(payload: dict, config: dict) -> None:
     """
     解析並寫入 session 資料到 SQLite。
-    這是 stop_hook 的主要業務邏輯。
+    這是 session_stop_hook 的主要業務邏輯。
     """
     logger = logging.getLogger(__name__)
 
@@ -162,108 +162,125 @@ def sync_session(payload: dict, config: dict) -> None:
 
     now = datetime.now(timezone.utc).isoformat()
 
+    # active_branch 在事務外（279/282 行）也會用，先在 with 外宣告以保證可見性。
+    active_branch = None
+
     with get_connection() as conn:
-        # 1. 確保 project 存在
-        project_name = Path(parsed.project_path).name or "unknown"
-        project_id = upsert_project(
-            conn,
-            name=project_name,
-            path=parsed.project_path,
-            hash_=parsed.project_hash,
-        )
+        # PR2 Step 5：4 段 try/except 拆解。
+        # 任一段失敗 → re-raise 觸發 get_connection 整體 rollback（讀法 B：原子寫入）。
+        # 各段 log 精準定位故障，便於排查。
 
-        # 2. 確保 session 存在
-        session_id = upsert_session(conn, project_id=project_id, uuid=session_uuid)
+        # A 段：projects + sessions + stats
+        try:
+            project_name = Path(parsed.project_path).name or "unknown"
+            project_id = upsert_project(
+                conn,
+                name=project_name,
+                path=parsed.project_path,
+                hash_=parsed.project_hash,
+            )
+            session_id = upsert_session(conn, project_id=project_id, uuid=session_uuid)
+            update_session_stats(
+                conn,
+                session_id=session_id,
+                exchange_count=parsed.exchange_count,
+                files_modified=parsed.files_modified,
+                commits=parsed.commits,
+                tool_counts=parsed.tool_counts,
+                event_types=event_types,
+                ended_at=now,
+            )
+        except Exception as e:
+            logger.error("session_stop_hook A 段（session）失敗，整體 rollback：%s", e)
+            raise
 
-        # 3. 更新 session 統計
-        update_session_stats(
-            conn,
-            session_id=session_id,
-            exchange_count=parsed.exchange_count,
-            files_modified=parsed.files_modified,
-            commits=parsed.commits,
-            tool_counts=parsed.tool_counts,
-            event_types=event_types,
-            ended_at=now,
-        )
-
-        # 4. 寫入所有訊息
+        # B 段：messages + tool_executions
         uuid_to_msg_id: dict[str, int] = {}
-        for msg in parsed.all_messages:
-            msg_id = insert_message(
-                conn,
-                session_id=session_id,
-                uuid=msg.uuid,
-                parent_uuid=msg.parent_uuid,
-                role=msg.role,
-                content=msg.content,
-                raw_content=msg.raw_content,
-                input_tokens=msg.input_tokens,
-                output_tokens=msg.output_tokens,
-                cache_creation_input_tokens=msg.cache_creation_input_tokens,
-                cache_read_input_tokens=msg.cache_read_input_tokens,
-                char_count=msg.char_count,
-                byte_count=msg.byte_count,
-                encoding=msg.encoding,
-                has_tool_use=msg.has_tool_use,
-                tool_names=msg.tool_names,
-                message_time=msg.timestamp,
-                model_name=msg.model_name,
-            )
-            uuid_to_msg_id[msg.uuid] = msg_id
-
-        # 4.5 寫入抽取出來的 tool_executions
-        for exec_dict in parsed.tool_executions:
-            m_id = uuid_to_msg_id.get(exec_dict["message_uuid"])
-            if m_id:
-                insert_tool_execution(
+        try:
+            for msg in parsed.all_messages:
+                msg_id = insert_message(
                     conn,
-                    message_id=m_id,
-                    tool_use_id=exec_dict["tool_use_id"],
-                    tool_name=exec_dict["tool_name"],
-                    input_cmd=exec_dict["input_cmd"],
-                    output_log=exec_dict["output_log"],
-                    is_error=exec_dict["is_error"],
+                    session_id=session_id,
+                    uuid=msg.uuid,
+                    parent_uuid=msg.parent_uuid,
+                    role=msg.role,
+                    content=msg.content,
+                    raw_content=msg.raw_content,
+                    input_tokens=msg.input_tokens,
+                    output_tokens=msg.output_tokens,
+                    cache_creation_input_tokens=msg.cache_creation_input_tokens,
+                    cache_read_input_tokens=msg.cache_read_input_tokens,
+                    char_count=msg.char_count,
+                    byte_count=msg.byte_count,
+                    encoding=msg.encoding,
+                    has_tool_use=msg.has_tool_use,
+                    tool_names=msg.tool_names,
+                    message_time=msg.timestamp,
+                    model_name=msg.model_name,
                 )
+                uuid_to_msg_id[msg.uuid] = msg_id
 
-        # 5. 寫入 branches（先將舊分支設為非活躍）
-        deactivate_old_branches(conn, session_id)
-
-        for branch in parsed.branches:
-            branch_id = upsert_branch(
-                conn,
-                session_id=session_id,
-                branch_idx=branch.branch_idx,
-                is_active=branch.is_active,
-                leaf_uuid=branch.leaf_uuid,
-                exchange_count=branch.exchange_count,
-                files_modified=len(branch.files_modified),
-                commits=branch.commits,
-            )
-            # 6. 建立 branch-message 橋接
-            for seq, msg in enumerate(branch.messages):
-                if msg.uuid in uuid_to_msg_id:
-                    insert_branch_message(
+            for exec_dict in parsed.tool_executions:
+                m_id = uuid_to_msg_id.get(exec_dict["message_uuid"])
+                if m_id:
+                    insert_tool_execution(
                         conn,
-                        branch_id=branch_id,
-                        message_id=uuid_to_msg_id[msg.uuid],
-                        seq=seq,
+                        message_id=m_id,
+                        tool_use_id=exec_dict["tool_use_id"],
+                        tool_name=exec_dict["tool_name"],
+                        input_cmd=exec_dict["input_cmd"],
+                        output_log=exec_dict["output_log"],
+                        is_error=exec_dict["is_error"],
                     )
+        except Exception as e:
+            logger.error("session_stop_hook B 段（msgs）失敗，整體 rollback：%s", e)
+            raise
 
-        # 7. 更新 FTS5 索引
+        # C 段：branches + branch_messages（先 deactivate 舊分支）
+        try:
+            deactivate_old_branches(conn, session_id)
+
+            for branch in parsed.branches:
+                branch_id = upsert_branch(
+                    conn,
+                    session_id=session_id,
+                    branch_idx=branch.branch_idx,
+                    is_active=branch.is_active,
+                    leaf_uuid=branch.leaf_uuid,
+                    exchange_count=branch.exchange_count,
+                    files_modified=len(branch.files_modified),
+                    commits=branch.commits,
+                )
+                for seq, msg in enumerate(branch.messages):
+                    if msg.uuid in uuid_to_msg_id:
+                        insert_branch_message(
+                            conn,
+                            branch_id=branch_id,
+                            message_id=uuid_to_msg_id[msg.uuid],
+                            seq=seq,
+                        )
+        except Exception as e:
+            logger.error("session_stop_hook C 段（branches）失敗，整體 rollback：%s", e)
+            raise
+
+        # D 段：FTS5 索引（active_branch 純資料計算放 try 外）
         active_branch = next((b for b in parsed.branches if b.is_active), None)
-        content_summary = _build_fts_summary(parsed, active_branch, event_types)
-        files_list = ", ".join(active_branch.files_modified) if active_branch else ""
+        try:
+            content_summary = _build_fts_summary(parsed, active_branch, event_types)
+            files_list = ", ".join(active_branch.files_modified) if active_branch else ""
 
-        upsert_sessions_fts(
-            conn,
-            session_uuid=session_uuid,
-            project_path=parsed.project_path,
-            event_types=event_types,
-            content_summary=content_summary,
-            files_list=files_list,
-            ended_at=now,
-        )
+            upsert_sessions_fts(
+                conn,
+                session_uuid=session_uuid,
+                project_path=parsed.project_path,
+                event_types=event_types,
+                content_summary=content_summary,
+                files_list=files_list,
+                ended_at=now,
+            )
+        except Exception as e:
+            logger.error("session_stop_hook D 段（fts）失敗，整體 rollback：%s", e)
+            raise
 
         # 全部寫入無誤後才 commit（與 get_connection rollback 形成完整事務）
         conn.commit()
@@ -321,10 +338,21 @@ def _write_exchange_embeddings(session_uuid: str, parsed, active_branch) -> None
         if cmd:
             exec_by_msg.setdefault(ex["message_uuid"], []).append(cmd)
 
+    # 系統保留前綴：這些訊息是 Claude Code 產生的 meta-text，不是使用者指令
+    _SYSTEM_PREFIXES = (
+        "<local-command-caveat>",
+        "<local-command-stdout>",
+        "<local-command-stderr>",
+        "[Request interrupted by user",
+    )
+
     # 收集 user message → 後續實際指令的因果對
     messages = active_branch.messages
     for i, msg in enumerate(messages):
         if msg.role != "user" or not msg.content:
+            continue
+        # 過濾系統保留訊息，避免存入 exchange_embeddings
+        if msg.content.lstrip().startswith(_SYSTEM_PREFIXES):
             continue
 
         # 收集此 user message 之後的 assistant 實際執行指令
@@ -367,9 +395,13 @@ def _write_exchange_embeddings(session_uuid: str, parsed, active_branch) -> None
     if all_cmds:
         exchange_count = sum(1 for m in messages if m.role == "user")
         if exchange_count >= 2:
-            # 找最長的 user 訊息（>15 字），作為 session 代表性 instruction
+            # 找最長的 user 訊息（>15 字，排除系統保留文字），作為 session 代表性 instruction
             best_msg = max(
-                (m for m in messages if m.role == "user" and m.content and len(m.content) > 15),
+                (
+                    m for m in messages
+                    if m.role == "user" and m.content and len(m.content) > 15
+                    and not m.content.lstrip().startswith(_SYSTEM_PREFIXES)
+                ),
                 key=lambda m: len(m.content),
                 default=None,
             )
@@ -483,11 +515,11 @@ def main() -> None:
         # 讀取 stdin payload
         raw = sys.stdin.read()
         if not raw.strip():
-            logger.debug("stop_hook: stdin 為空，略過")
+            logger.debug("session_stop_hook: stdin 為空，略過")
             return
 
         payload = json.loads(raw)
-        logger.info("stop_hook 觸發：%s", json.dumps(payload, ensure_ascii=False)[:200])
+        logger.info("session_stop_hook 觸發：%s", json.dumps(payload, ensure_ascii=False)[:200])
 
         # 初始化 DB（CREATE IF NOT EXISTS，安全重複執行）
         init_db()
@@ -499,7 +531,7 @@ def main() -> None:
         logger.error("payload JSON 解析失敗：%s", e)
         # JSON 錯誤無法建立有效 payload，無法寫 queue
     except Exception as e:  # noqa: BLE001
-        logger.error("stop_hook 未預期錯誤：%s\n%s", e, traceback.format_exc())
+        logger.error("session_stop_hook 未預期錯誤：%s\n%s", e, traceback.format_exc())
         # 寫入 fallback queue
         try:
             raw_payload = json.loads(raw) if raw.strip() else {}

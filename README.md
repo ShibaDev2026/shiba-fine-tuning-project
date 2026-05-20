@@ -19,9 +19,10 @@
 
 每次對話開始時，由 Gemma 分類決定走本地模型或 Claude：
 
-- `classifier.py`：Gemma E2B（gemma3:2b）任務分類
-- `compressor.py`：Gemma E4B（gemma3:4b）壓縮 RAG context
-- `router.py`：主協調器，local → 壓縮 → Qwen 推論 → 注入建議
+- `classifier.py`：gemma3:4b 任務分類（v1.5.0 起改讀 `model_registry.snapshot` JSON，不再 hardcode）
+- `compressor.py`：gemma3:4b 壓縮 RAG context（同上 DB-driven）
+- `router.py`：主協調器，local → 壓縮 → Qwen 推論 → 注入建議；offline kill switch 由 `router_config.ollama_status` 控制
+- `_config.py`：snapshot 載入 + `is_local_enabled` + `split_inference`（拆出 `keep_alive` / `think` 至 Ollama body 頂層）
 - `telemetry.py`：**P0-1** 採納率追蹤，寫入 `router_decisions` 表
 
 ### Layer 1 — 日常記憶層
@@ -29,8 +30,8 @@
 對話結束時自動捕捉，建立可搜尋的長期記憶：
 
 - `hooks/session_start_hook.py`：RAG 記憶注入 + Layer 0 路由整合
-- `hooks/stop_hook.py`：解析對話 → SQLite（sessions / messages / FTS5）+ 採納判定
-- `lib/rag.py`：FTS5 全文搜尋 + 向量語意搜尋（BGE-M3，cosine ≥ 0.35）
+- `hooks/session_stop_hook.py`：解析對話 → SQLite（sessions / messages / FTS5）+ 採納判定
+- `lib/rag.py`：FTS5 全文搜尋 + 向量語意搜尋（`nomic-embed-text` 768d，cosine ≥ 0.35；bge-m3 升級評估中）
 
 ### Layer 2 — 精神時光屋
 
@@ -51,38 +52,100 @@
 - `gatekeeper.py`：**P0-2** Shadow A/B Gate（bootstrap CI + latency 三條件）
 - `ollama_updater.py`：`ollama create` 部署
 
-## 自我進化閉環（v0.6.0）
+## 資料流（hook → fine-tuning → output）
 
 ```
-對話 → router_decisions（採納率）
-     → stop_hook 採納判定 → training_samples.weight 更新（P1-3）
-     → multi_judge 三方評分 → approved / soft 0.5 / rejected
-     → trigger_policy 動態觸發訓練
-     → shadow gate 把關 → ollama 部署
-     → 下次對話採納率回饋 → ...
+┌──────────────────────────────────────────────────────────────────────────┐
+│  Claude Code 對話結束（host 端觸發）                                       │
+└────────────────────────────────┬─────────────────────────────────────────┘
+                                 ▼
+┌──────────────────────────────────────────────────────────────────────────┐
+│  hooks/session_stop_hook.py   解析 ~/.claude/projects/*.jsonl             │
+│     ├─ 4 段獨立事務（PR2 原子化）寫入 SQLite                              │
+│     └─ router_decisions.user_accepted（採納判定 / Layer 0 反饋來源）       │
+└────────────────────────────────┬─────────────────────────────────────────┘
+                                 ▼
+┌──── Layer 1 日常記憶層 ──────────────────────────────────────────────────┐
+│  A: sessions / messages / branches    基礎對話結構                        │
+│  B: exchanges                         四步語意單元（req→tool→resp→final）│
+│  C: sessions_fts (FTS5)               中文 trigram 全文索引               │
+│  D: exchange_embeddings               nomic-embed-text 768d 向量（RAG）   │
+└────────────────────────────────┬─────────────────────────────────────────┘
+                                 ▼
+┌──── Layer 2 精神時光屋 ──────────────────────────────────────────────────┐
+│  extraction/pipeline.py（layer1_bridge_v2 直讀 exchanges）                │
+│     └─ training_samples（event_type 標籤 + Ebbinghaus weight）            │
+│                                                                          │
+│  APScheduler scoring（每小時 minute=3）                                   │
+│     └─ services/multi_judge.py 三方 Judge 投票（SEAL ReSTEM^EM）          │
+│         ├─ Gemini 2.5 Flash      （主審）                                 │
+│         ├─ Claude Sonnet 4.6     （副審）                                 │
+│         └─ Qwen3.6 35B Local     （本地審）                               │
+│                                                                          │
+│  狀態流轉：                                                              │
+│     · 共識 approved / soft 0.5 / rejected                                 │
+│     · user_accepted=1  →  強制 approved（覆蓋 judge）                     │
+│     · Judge 全失敗 / 配額耗盡  →  pending（下輪 scoring job 重試）        │
+└────────────────────────────────┬─────────────────────────────────────────┘
+                                 ▼
+┌──── Layer 3 Fine-tuning 管道（host launchd，MLX 走 MPS） ───────────────┐
+│  trigger_policy.py   任一條件觸發：                                       │
+│     · 各 block ≥ 30 approved 樣本                                         │
+│     · Ebbinghaus 間隔 {1, 2, 4, 7, 15, 30} 日                             │
+│     · 採納退化 / 分布偏移（drift alert）                                  │
+│            │                                                              │
+│            ▼                                                              │
+│  mlx_trainer.py      Qwen2.5-7B MLX 4bit + LoRA (rank=8, lr=1e-4)        │
+│                      訓練比例 70% 新 approved / 20% 歷史穩定 / 10% 通用集 │
+│            │                                                              │
+│            ▼                                                              │
+│  gguf_converter.py   LoRA  →  GGUF                                       │
+│            │                                                              │
+│            ▼                                                              │
+│  gatekeeper.py       Shadow A/B Gate                                     │
+│                      bootstrap CI + latency + retention ≥ 0.85           │
+│                      （首次訓練 requires_manual approval，v1.3.0）        │
+│            │                                                              │
+│            ▼ pass                                                         │
+│  ollama_updater.py   ollama create shiba-block1 / shiba-block2           │
+└────────────────────────────────┬─────────────────────────────────────────┘
+                                 ▼
+┌──── 產出 Output ─────────────────────────────────────────────────────────┐
+│  · Ollama 內部模型                                                        │
+│       shiba-block1   git_ops + terminal_ops + code_gen                   │
+│       shiba-block2   debugging + architecture + knowledge_qa + ft_ops    │
+│                                                                          │
+│  · Layer 0 router 下一輪優先走本地 Qwen + LoRA，Claude 退為 fallback      │
+│  · 採納率回饋 router_decisions  →  trigger_policy 下次觸發判斷           │
+│                                                                          │
+│  最終目標：本地模型逐步接手 Claude 的重複性任務（重複勞動 → 自動化）       │
+└──────────────────────────────────────────────────────────────────────────┘
 ```
 
 ## 模型設定
 
-| 用途 | 模型 |
-|------|------|
-| 分類（Fast） | gemma3:2b（think: false） |
-| 壓縮（Primary） | gemma3:4b（think: false） |
-| 回應（Response） | qwen3:30b-a3b → shiba-block1 |
-| Judge（初裁） | Gemini 2.5 Flash（250 req/day）|
+| 用途 | 模型 | yaml |
+|------|------|------|
+| 分類（Fast） | gemma3:4b（think: false） | `config/models/classifier-gemma3-4b.yaml` |
+| 壓縮（Primary） | gemma3:4b（think: false） | `config/models/compressor-gemma3-4b.yaml` |
+| 回應（Response） | qwen3:30b-a3b → shiba-block1 | `config/models/responder-qwen3-30b-a3b.yaml` |
+| 重型 fallback | qwen3.6:35b-a3b-nvfp4 | `config/models/responder-qwen36-35b-a3b-nvfp4.yaml` |
+| Judge（初裁） | Gemini 2.5 Flash（Paid Tier，RPM=500）| — |
 
-### Teacher 評分池（v0.8.0，priority 順序）
+> v1.5.0 起所有模型參數 yaml 化，前端 `PhaseRouter` 可即時切換；offline kill switch 由 `router_config.ollama_status` 控制。
 
-| 優先 | Teacher | 模型 | 每日上限 |
-|------|---------|------|---------|
-| 0 | Gemini 2.5 Flash | gemini-2.5-flash | 250 req |
-| 1 | Gemini 2.5 Flash-Lite | gemini-2.5-flash-lite | 1,000 req |
-| 2 | Grok 3 Mini | grok-3-mini | 25 req / 128k token |
-| 3 | GitHub GPT-4o-mini | gpt-4o-mini | 150 req / 1.2M token |
-| 4 | Mistral 7B | open-mistral-7b | 33M token |
-| 5 | Local Qwen 7B | qwen2.5:7b | 無限（最後備援）|
+### Teacher 評分池（當前 main，DB 實際狀態）
 
-> Local Qwen 7B 設為 priority=5 最後備援，避免模型自評導致的循環依賴。
+| 優先 | Teacher | model_id | RPM | 每日上限 | 狀態 |
+|------|---------|----------|-----|---------|------|
+| 0 | Gemini 2.5 Flash | gemini-2.5-flash | 500 | 250 | active |
+| 0 | Qwen3.6 35B Local | qwen3.6:35b-a3b-nvfp4 | — | 500 | active |
+| 1 | Claude Sonnet 4.6 | claude-sonnet-4-6 | 50 | 999999 | active（Anthropic 無 RPD）|
+| 20 | Gemini 2.5 Flash-Lite | gemini-2.5-flash-lite | 2000 | 1000 | active |
+
+> 2026-05-20 升 Gemini Paid Tier 後 RPM 已調整，daily_limit 規格上限為 Flash 5000 / Flash-Lite Unlimited（待 DB backfill）；切換 teacher = 改 DB `api_base + keychain_ref + priority`，零改 code。
+>
+> **歷史 / 可選 teacher**：早期版本（v0.7~v0.8）曾納入 Grok 3 Mini、GitHub GPT-4o-mini、Mistral 7B、Local Qwen 7B（最後備援）等池子；目前已從 DB 清出，未來可重新啟用。
 
 ## LoRA Adapter
 
@@ -149,16 +212,19 @@ bash scripts/db_backup.sh
 
 | 表 | 說明 |
 |----|------|
-| `sessions` | 對話 session 統計 |
-| `messages` | 所有訊息 |
-| `branches` | 對話分支（含 decay_score） |
+| `sessions` / `messages` / `branches` | 對話 session、訊息、分支（含 decay_score） |
 | `exchanges` | 四步循環語意單元（v1.1.0，has_error / has_final_text） |
 | `exchange_messages` | exchange ↔ message 橋接（role_in_exchange） |
 | `sessions_fts` | FTS5 全文索引 |
-| `exchange_embeddings` | 因果對向量（BGE-M3） |
+| `exchange_embeddings` | 因果對向量（`nomic-embed-text` 768d） |
 | `training_samples` | 訓練樣本（含 weight，source=layer1_bridge_v2） |
-| `router_decisions` | 路由決策與採納率 |
-| `finetune_runs` | 訓練執行記錄 |
+| `router_decisions` / `finetune_runs` | 路由採納率 / 訓練執行記錄 |
+| `model_registry` / `router_config` | v1.4.0 模型 yaml 化雙表（版本歷史 + 選擇器）|
+| `teachers` / `teacher_usage_logs` | Teacher 評分池 + 配額 log（v0.7~v1.5 累積，含 PR-A 的 rpm_limit/window 欄位）|
+| `ai_api_call_logs` | 跨 vendor 統一 AI 呼叫稽核（v1.5.x 後）|
+| `retrieval_golden_set` / `evaluation_results` / `evaluation_runs` | RAGAS Phase 0 schema（評估腳本在 `ragas-evaluation` branch）|
+| `questions` / `question_sets` / `judge_agreement_logs` / `golden_samples` | Layer 2 評分相關（multi_judge / question pool）|
+| `tool_executions` / `branch_messages` / `projects` / `lost_and_found` | 內部記錄表（tool 執行追蹤、孤兒資料回收等）|
 
 ## 文件結構
 
@@ -175,12 +241,33 @@ docs/
 
 `AGENTS.md` 是對外 AI agent / coding 工具的公開規範入口；`CLAUDE.md` 為專案擁有者的個人補充（不入版控）。
 
+## RAGAS 評估基線（2026-05-18）
+
+> 實作位於 `ragas-evaluation` branch（`evaluation/` 目錄），預計 v1.6.0 隨此 branch merge 進 main。
+
+採用 [RAGAS](https://docs.ragas.io)（Retrieval Augmented Generation Assessment）框架對 Layer 1 RAG 管道進行系統性評估，量化召回品質並建立持續追蹤基線。
+
+### Layer 1 召回指標（UUID 型，@k=3，n=31 queries）
+
+| 指標 | 說明 | 值 |
+|------|------|----|
+| Recall@3 | ground truth UUID 中被召回的比例（真正率） | **0.744** |
+| Precision@3 | 召回 UUID 中屬 ground truth 的比例 | **0.613** |
+| Hit@1 | top-1 是否命中任一 ground truth | **0.643** |
+| MRR | Mean Reciprocal Rank（第一個命中的排名倒數均值） | **0.762** |
+
+> ctx_relevance（LLM judge 語意相關性）待 Gemini Flash 配額恢復後補齊。
+
+---
+
 ## 版本歷程
 
-當前版本：**v1.3.1**（2026-05-06）
+當前版本：**v1.5.0**（2026-05-20）
 
 | 版本 | 日期 | 主要內容 |
 |------|------|---------|
+| v1.5.0 | 2026-05-20 | 模型 yaml 化重構 Step 3-7 全部完成（Layer 0 三顆推論模型 + Layer 3 訓練 base 解硬寫 + 前端 PhaseRouter dropdown 即時切換 + online/offline kill switch）；SQLite hardening PR1+PR2 全部落地（`shiba_db.py` 統一連線 + PRAGMA 三層對齊 + APScheduler cron 錯開 + WAL→DELETE journal mode + stop_hook 4 段切分 + multi_judge 三欄共一事務） |
+| v1.4.0 | 2026-05-07 | 模型 yaml 化重構 Step 1+2：5 份 `config/models/*.yaml` + 專案根 `models_loader.py`；DB 雙表機制（`model_registry` 版本歷史 + `router_config` 選擇器、lifespan idempotent sync）；`PhaseModels.vue` 唯讀頁 4 列 grid；師父 CRUD 8 endpoints + `PhaseTeachers` UI 重構；共用 UI 元件 `Modal`/`ConfirmDialog`/`FormField`/`Toast` + `stores/toast.ts`；`ollama_status` 改走 HTTP API（docker 友善）|
 | v1.3.1 | 2026-05-06 | 文件目錄一次性整理（`docs/{design,references,archive}/`）+ `AGENTS.md` 對外規範對齊 v1.3.0 事實；純文件變更不動執行碼 |
 | v1.3.0 | 2026-05-04 | Grok 外部審視回應：A（Judge 廠牌多樣性）、C（Retention/Golden Set 防遺忘）、D（首次訓練人工把關）、B（Drift 告警 + 儀表板）；shiba_alert.py 公用告警模組；gatekeeper 第 4 條件 retention_score ≥ 0.85；trigger_policy 首次訓練 requires_manual；routes_finetune manual approve endpoint；新建 10 tests |
 | v1.2.0 | 2026-05-01 | A/B/C 三級架構檢視一輪：A3-A5 spec/code 對齊、B1-B7 靜默失效修補（finished_at ISO、threshold 拆耦、try-except 收緊、cold-compress 條件、SAVEPOINT、集中 alert）、C1-C6 效能與正確性（multi_judge early exit、Ebbinghaus 視窗、exchange-level dedup、多維採納啟發式、排程併發保護、keychain_ref nullable）|
@@ -222,3 +309,18 @@ docs/
 | 標題 | 來源 | 用途 |
 |------|------|------|
 | [How my $600 Mac Mini Runs a 35B AI Model](https://x.com/leopardracer/status/2043631410045452360) | @leopardracer | 本地 Mac 運行 35B 模型的環境配置參考（Ollama + llama.cpp 調優） |
+
+### 外部資源
+
+** 與國立中央大學資訊工程學系 人工智慧與知識系統實驗室 黃鈺晴（Anna Huang）博士後研究員 (e-mail：anna.yuqing@gmail.com)進行平台提升討論 **
+- **2026-05-17**：討論平台改善空間，建議採用 [RAGAS](https://docs.ragas.io)（Retrieval Augmented Generation Assessment）——對 RAG 評估、測試和優化大型語言模型（LLM）中檢索增強生成（RAG）管道的開源框架，藉此降低 RAG 幻覺、提升 RAG 與 LLM 整體品質。
+
+- **2026-05-18**：調整後完成 UUID 型基線評估。指標結果如下：
+
+  | 指標 | 說明 | 值 |
+  |------|------|----|
+  | uuid_recall@k | ground truth UUID 中被召回的比例（真正率） | 0.744 |
+  | uuid_precision@k | 召回 UUID 中屬 ground truth 的比例 | 0.613 |
+  | hit@1 | top-1 是否命中任一 ground truth | 0.643 |
+  | mrr | Mean Reciprocal Rank（第一個命中的排名倒數均值） | 0.762 |
+  | ctx_relevance | LLM judge 評分：召回的文字片段對 query 的語意相關性 | 待補 |

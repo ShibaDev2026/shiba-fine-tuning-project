@@ -11,7 +11,10 @@ import DetailPanel    from '../components/shared/DetailPanel.vue'
 import Btn            from '../components/shared/Btn.vue'
 import Pagination     from '../components/shared/Pagination.vue'
 import DateFilterBar  from '../components/shared/DateFilterBar.vue'
+import Select         from '../components/shared/Select.vue'
+import ToggleSwitch   from '../components/shared/ToggleSwitch.vue'
 import RouterDonut    from '../components/RouterDonut.vue'
+import { useRouterStore } from '../stores/router'
 
 // ── 型別 ────────────────────────────────────────────────
 interface Decision {
@@ -39,11 +42,7 @@ interface Stats {
   avg_prompt_tokens: number | null
   last_decision_at: string | null
 }
-interface SysStatus {
-  ollama_online: boolean
-  classifier_model: string | null
-  local_model: string | null
-}
+// SysStatus 已移至 stores/router.ts（RouterStatus），此處僅留 Decision/Stats 型別
 interface CtxMessage {
   role: 'user' | 'assistant'
   content: string | null
@@ -78,14 +77,21 @@ const EVENT_DESC: Record<string, { color: string; label: string; desc: string }>
 const selected      = ref<Decision | null>(null)
 const decisions     = ref<Decision[]>([])
 const stats         = ref<Stats | null>(null)
-const sysStatus     = ref<SysStatus | null>(null)
 const statusLoading = ref(true)
 const loading       = ref(true)
 const error         = ref<string | null>(null)
 
-const dateMode    = ref<DateMode>('today')
-const dateFrom    = ref('')
-const dateTo      = ref('')
+// router store：集中管理 yaml 切換 / kill switch / yaml_modified 徽章
+const routerStore = useRouterStore()
+
+const dateMode    = ref<DateMode>('7d')
+// 預設帶入近 7 天範圍供 DateFilterBar 顯示
+const _now = new Date()
+const _d7  = new Date(_now); _d7.setDate(_d7.getDate() - 6)
+const _pad = (n: number) => String(n).padStart(2, '0')
+const _iso = (d: Date) => `${d.getFullYear()}-${_pad(d.getMonth() + 1)}-${_pad(d.getDate())}`
+const dateFrom    = ref(_iso(_d7))
+const dateTo      = ref(_iso(_now))
 const pageSize    = ref(10)
 const currentPage = ref(1)
 
@@ -120,9 +126,7 @@ async function fetchData(mode = dateMode.value, from = dateFrom.value, to = date
 async function fetchStatus() {
   statusLoading.value = true
   try {
-    sysStatus.value = await api.get<SysStatus>('/router/status')
-  } catch {
-    sysStatus.value = null
+    await routerStore.refresh()
   } finally {
     statusLoading.value = false
   }
@@ -130,9 +134,6 @@ async function fetchStatus() {
 onMounted(() => { fetchData(); fetchStatus() })
 
 function handleDateChange(p: { mode: DateMode; from: string; to: string }) {
-  dateMode.value = p.mode
-  dateFrom.value = p.from
-  dateTo.value   = p.to
   fetchData(p.mode, p.from, p.to)
 }
 
@@ -229,31 +230,61 @@ const selMeta = computed(() => {
     <div
       v-else
       class="flex items-center flex-wrap font-mono"
-      style="gap:12px; padding:8px 14px; margin-bottom:14px; border-radius:8px; background:#191d24; border:1px solid #21262f; font-size:11px"
+      style="gap:14px; padding:10px 14px; margin-bottom:14px; border-radius:8px; background:#191d24; border:1px solid #21262f; font-size:11px"
     >
-      <span>
-        <span :style="{ color: sysStatus?.ollama_online ? '#00e676' : '#ff5252', marginRight: '4px' }">●</span>
-        <span style="color:#8a97a8">Ollama </span>
-        <span :style="{ color: sysStatus?.ollama_online ? '#00e676' : '#ff5252' }">
-          {{ sysStatus?.ollama_online ? 'online' : 'offline' }}
+      <!-- Ollama kill switch（綁 ollama_status）-->
+      <span class="inline-flex items-center" style="gap:6px">
+        <span style="color:#505c6e">Ollama</span>
+        <ToggleSwitch
+          :model-value="routerStore.ollamaOnline"
+          :disabled="routerStore.switching === 'ollama_status'"
+          @change="routerStore.toggleOllama($event)"
+        />
+        <span
+          v-if="!routerStore.status?.ollama_online && routerStore.ollamaOnline"
+          style="color:#ff9800; font-size:10px"
+          title="設定為 online 但 Ollama 連線失敗"
+        >⚠ 連線失敗</span>
+      </span>
+
+      <span style="color:#21262f">|</span>
+
+      <!-- 三個 role 的 Select dropdown + yaml_modified 徽章 -->
+      <template v-for="role in (['classifier','compressor','responder'] as const)" :key="role">
+        <span class="inline-flex items-center" style="gap:6px">
+          <Select
+            :model-value="routerStore.status?.roles[role]?.stem ?? ''"
+            :options="routerStore.optionsByRole[role].map(o => ({
+              value: o.stem,
+              label: o.display_name,
+              disabled: o.status !== 'installed',
+              tooltip: o.status === 'not_downloaded' ? '尚未下載到 Ollama' : '',
+            }))"
+            :label="role === 'classifier' ? '分類器：' : role === 'compressor' ? '壓縮器：' : '回應器：'"
+            :disabled="routerStore.switching === role"
+            @change="routerStore.switchModel(role, $event)"
+          />
+          <span
+            v-if="routerStore.status?.roles[role]?.yaml_modified"
+            class="inline-flex items-center"
+            style="gap:4px; color:#ff9800; font-size:10px"
+            :title="`yaml mtime > snapshot_at（${routerStore.status?.roles[role]?.snapshot_at}）`"
+          >
+            ⚠ 已修改
+            <Btn variant="ghost" :loading="routerStore.switching === role" @click="routerStore.reload(role)">
+              Reload
+            </Btn>
+          </span>
         </span>
-      </span>
-      <span style="color:#21262f">|</span>
-      <span>
-        <span style="color:#505c6e">分類器：</span>
-        <span style="color:#f5c518">{{ sysStatus?.classifier_model ?? '—' }}</span>
-      </span>
-      <span style="color:#21262f">|</span>
-      <span>
-        <span style="color:#505c6e">本地：</span>
-        <span style="color:#f5c518">{{ sysStatus?.local_model ?? '—' }}</span>
-      </span>
-      <span style="color:#21262f">|</span>
+        <span style="color:#21262f">|</span>
+      </template>
+
       <span>
         <span style="color:#505c6e">模式：</span>
         <span style="color:#40c4ff">建議注入</span>
       </span>
-      <span v-if="!sysStatus?.ollama_online" style="color:#ff5252; margin-left:auto">⚠ Ollama 離線</span>
+
+      <span v-if="!routerStore.status?.ollama_online" style="color:#ff5252; margin-left:auto">⚠ Ollama 離線</span>
     </div>
 
     <div v-if="error" class="font-mono" style="color:#ff5252; font-size:12px; margin-bottom:8px">
@@ -385,6 +416,9 @@ const selMeta = computed(() => {
           :date-from="dateFrom"
           :date-to="dateTo"
           quick-bg="#f5c518"
+          @update:mode="dateMode = $event"
+          @update:date-from="dateFrom = $event"
+          @update:date-to="dateTo = $event"
           @change="handleDateChange"
         />
       </div>

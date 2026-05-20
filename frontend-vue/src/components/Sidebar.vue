@@ -3,6 +3,8 @@ import { ref, onMounted } from 'vue'
 import { api } from '../api/client'
 
 const PHASES = [
+  { to: '/models',   label: '模型設置',    sub: 'Configuration Models', color: '#7dd3fc',
+    path: 'M9 3H5a2 2 0 0 0-2 2v4m6-6h10a2 2 0 0 1 2 2v4M9 3v18m0 0h10a2 2 0 0 0 2-2V9M9 21H5a2 2 0 0 0-2-2V9m0 0h18 M12 8v4m0 4h.01' },
   { to: '/router',   label: '路由層',      sub: 'Layer 0 · Router',   color: '#f5c518',
     path: 'M9 3H5a2 2 0 0 0-2 2v4m6-6h10a2 2 0 0 1 2 2v4M9 3v18m0 0h10a2 2 0 0 0 2-2V9M9 21H5a2 2 0 0 0-2-2V9m0 0h18' },
   { to: '/memory',   label: '日常記憶層',  sub: 'Layer 1 · Memory',   color: '#40c4ff',

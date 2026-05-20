@@ -10,11 +10,11 @@ import json
 import logging
 import sqlite3
 import zlib
-from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
 from shiba_config import CONFIG
+from shiba_db import get_connection as _shiba_get_connection
 
 # 設定 logger
 logger = logging.getLogger(__name__)
@@ -27,26 +27,9 @@ def get_db_path() -> Path:
     return path
 
 
-@contextmanager
 def get_connection():
-    """
-    取得 SQLite 連線（context manager）。
-    自動啟用 WAL 模式與 foreign_keys，離開時自動關閉。
-    """
-    db_path = get_db_path()
-    conn = sqlite3.connect(str(db_path), timeout=10)
-    conn.row_factory = sqlite3.Row  # 讓查詢結果可用欄位名稱存取
-    try:
-        # WAL 模式：允許多讀一寫，防止 Hook / FastAPI 並發衝突
-        conn.execute("PRAGMA journal_mode=WAL;")
-        conn.execute("PRAGMA busy_timeout=5000;")
-        conn.execute("PRAGMA foreign_keys=ON;")
-        yield conn
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
+    """取得 SQLite 連線（context manager）；PRAGMA 統一由 shiba_db 管理。"""
+    return _shiba_get_connection("writer")
 
 
 def _column_exists(conn: sqlite3.Connection, table: str, column: str) -> bool:

@@ -1,0 +1,45 @@
+# Layer 0 classifier 專用配置
+# 一份 yaml = 一個 model × 一個 role；此檔僅服務 classifier 角色
+# 對應 router_config.classifier_model_yaml = "classifier-gemma3-4b"
+
+# ─── 識別 ───
+display_name: Gemma 3 4B (Classifier)
+role: classifier                   # 單一角色，enum：classifier | compressor | responder | training_base | embedder
+ollama_tag: gemma3:4b
+description: 規則型事件分類，極輕極快；判斷請求走 local 或 Claude
+
+# ─── 推論參數（呼叫 Ollama /api/generate 時帶入）───
+inference:
+  think: false                     # think mode 關閉（CLAUDE.md 規範：fast 層必須 false）
+  num_ctx: 4096
+  temperature: 0.0
+  top_p: 1.0
+  top_k: 40
+  repeat_penalty: 1.0
+  num_predict: 256
+  stop: []
+  keep_alive: 10m                  # 覆寫 OLLAMA_KEEP_ALIVE（per-model）
+  timeout_seconds: 30              # HTTP 呼叫 timeout（涵蓋首次 model swap）
+
+# ─── Prompt 配置 ───
+prompt:
+  system: |
+    你是嚴格的事件分類器，只回傳 JSON。
+  user_template: null              # null = 由呼叫端組裝；非 null = 用此 template
+
+# ─── 模型元資料（顯示 + 硬體適配檢查）───
+meta:
+  family: gemma                    # qwen | gemma | llama | mistral —— 影響 chat template
+  quantization: q4_K_M
+  size_gb: 3.3
+  min_ram_gb: 8
+  supports_thinking: true
+  supports_vision: false
+  supports_audio: false
+
+# ─── 維護 ───
+maintenance:
+  yaml_version: 1
+  added_at: "2026-05-07"
+  notes: |
+    與 compressor-gemma3-4b.yaml 共用同一顆 Ollama 模型，但 prompt 與 num_predict 不同。

@@ -3,6 +3,82 @@
 所有版本變更依照 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/) 格式記錄。
 版本號遵循 [Semantic Versioning](https://semver.org/lang/zh-TW/)。
 
+## [Unreleased]
+
+## [1.5.0] - 2026-05-20
+
+模型 yaml 化重構 Step 3-7 全部完成（Layer 0 三顆推論模型 + Layer 3 訓練 base 完全解硬寫，前端 PhaseRouter dropdown 即時切換 + online/offline kill switch）；SQLite hardening PR1+PR2 全部落地（PRAGMA 統一 + APScheduler cron 錯開 + WAL→DELETE journal + stop_hook 4 段切分 + multi_judge 三欄共一事務），DB corruption 事件根因排除，24h 觀察期已通過。
+
+### Added
+
+- **Step 3.1-3.3（commit `2cd6b21`）**：`layer_0_router/_config.py` 含 `load_active_snapshot` / `is_local_enabled` / `split_inference` / 50ms in-process cache；三檔（`classifier.py` / `compressor.py` / `router.py`）改讀 `router_config` + `model_registry.snapshot` JSON，徹底解硬寫；offline kill switch 由 `router_config.ollama_status` 即時生效。
+- **Step 3 範圍外順手修**（同 commit `2cd6b21`）：`layer_2_chamber/backend/api/routes_router.py:163-176`（/router/status）與 `layer_3_pipeline/gatekeeper.py:151`（_get_current_model fallback）原 import `CLASSIFIER_MODEL/LOCAL_MODEL` 已移除，改呼 `load_active_snapshot`，避免 backend 啟動失敗。
+- **Step 3.4 整合測試（commit `bc07f98`）**：real Ollama happy path（classify → compress → respond 全程）+ `router_decisions` 寫入驗證 + offline kill switch 實測；24/24 unit test 全綠。
+- **Step 4 Backend API（commit `60aaac6`）**：`routes_router.py` 新增 4 端點：`GET /router/models/installed`（yaml vs Ollama 三分類）、`GET /router/models/by-role`（dropdown 清單）、`PUT /router/config`（model 切換 + snapshot atomic 寫入）、`POST /router/config/reload`（yaml 修改後刷 snapshot）；改 `GET /router/status` 加 yaml_modified 偵測。
+- **Step 5 前端 UI（commit `bccbded`）**：新增 `Select.vue` / `api/router.ts` / `stores/router.ts`；`PhaseRouter.vue` 系統狀態列改造：3 個 role dropdown + ToggleSwitch（ollama_status kill switch）+ ⚠️ yaml 已修改徽章 + Reload 按鈕 + 切換 toast 提示。
+- **Step 6 Layer 3 yaml 化**：`_config.py::get_training_base_hf_repo(block)` 取代 `mlx_trainer.py` / `gguf_converter.py` 中的 `BASE_MODELS` hardcode dict；訓練 base 切換走 `PUT /router/config`，無需改 code。
+- **Step 7 文件**（本 commit）：新增 `config/models/README.md`（yaml schema + 新增 model 三步驟）；`CLAUDE.md` 技術選型表加 yaml 路徑欄；`CHANGELOG.md` v1.5.0 entry。
+
+### Fixed
+
+- **Ollama `think` flag 位置 bug（commit `bc07f98`）**：`split_inference` 原將 `think` 留在 options dict，但 Ollama 0.9+ 規格 `think` 是 body 頂層欄位，放錯位置 Ollama 直接忽略，導致 thinking-only 模型（Qwen3-30B）整段進 thinking 軌跡、`message.content` 全空。修法：`split_inference` 改三元組 `(options, keep_alive, think)`，三檔呼叫端把 `think` 提到 body 頂層；修復後 `tokens_response=719`（自然結束）/ `out_len=500`。
+- **README 過時模型字串**：`classifier` 描述 `gemma3:2b` → `gemma3:4b`。
+
+### Incident
+
+- **2026-05-09 11:14 shiba-brain.db corruption**：`sqlite3.OperationalError: disk I/O error`，DB 末段 100+ pages 損壞。根因：host stop_hook + container backend uvicorn + APScheduler 6 jobs 跨進程並發 + PRAGMA 三層不一致（Layer 0 完全無設、Layer 1 busy=5s、Layer 2 busy=30s，三層皆缺 `synchronous` / `mmap_size` / `wal_autocheckpoint`）。已用 `.recover` SOP 修復（21,559 exchanges + 440 decisions 全救回，integrity_check=ok）。根因排除列入 SQLite hardening PR1 計畫（計畫檔：`docs/archive/plans/2026-05-09-sqlite-race-hardening.md`）。
+
+### SQLite Hardening PR1+PR2 - Completed
+
+PR1（PRAGMA 統一 + 排程錯開）：
+- 建 root 層 `shiba_db.py`（全專案統一連線 helper，PRAGMA: WAL / synchronous=NORMAL / busy_timeout=30s / wal_autocheckpoint=1000 / mmap_size=256MB）
+- Layer 0/1/2/3 全部 `sqlite3.connect` 替換，清除三層 PRAGMA 不一致
+- APScheduler `interval` → `cron` 錯開 minute（避免多 job 同 minute=0 觸發）
+- WAL checkpoint cron job（daily 03:30 TRUNCATE）
+- WAL→DELETE journal mode（commit `f73e489`，根治 Docker bind mount SHM 鎖定不一致）
+
+PR2（事務原子化，commit `e36aceb`）：
+- **Step 5（stop_hook 4 段切分）**：`layer_1_memory/hooks/stop_hook.py` 將原本「一個 `with conn:` 包 4 個寫入區塊」改為 A=session / B=messages / C=branches / D=fts 四段獨立 try/except，任一段失敗 → re-raise → `get_connection` 統一 rollback（讀法 B：保 FK 完整性），同時 logger 標出具體失敗段別。
+- **Step 6（multi_judge 三欄共一事務）**：`layer_2_chamber/backend/services/multi_judge.py` 將 `_update_sample_score`（寫 status/score）與 weight UPDATE 包進同一 `with conn:`；`teacher_service.py::_update_sample_score` 移除內層 `conn.commit()`，事務邊界交給 caller。徹底消除「score 寫了 weight 漏」部分狀態。quota 計數仍獨立 commit（精確化版本）。
+- **驗證（三層）**：unit test 全綠 + dry run（檢視 transaction 邊界）+ smoke + E2E（`scripts/e2e_pr2_smoke.py` 兩案：multi_judge 三欄原子寫入、stop_hook C 段 raise 整體 rollback，docker 容器內驗證通過）。
+
+### Tests
+
+- `tests/layer0/`：24/24 全綠；`TestSplitInference` 三 case 驗三元組（options 7 keys / keep_alive / think）。
+
+## [1.4.0] - 2026-05-07
+
+模型 yaml 化重構 Step 1+2 完成：DB 雙表機制（`model_registry` 版本歷史 + `router_config` 選擇器）+ 師父 CRUD + 共用 UI 元件。下載新模型 → 寫 yaml → DB 切換的閉環打通至前端唯讀展示為止；前端可切 dropdown 與 Layer 0 解硬寫排在 v1.5.0（Step 3-7）。
+
+### Added
+
+- **Step 1 — model yaml schema + loader（commit `7a4a2ec`）**：5 份 yaml（`config/models/{classifier,compressor,responder,training_base}*.yaml`）+ 專案根 `models_loader.py`（frozen dataclass module-level singleton，與 `shiba_config.CONFIG` 並列），`from models_loader import MODELS` 即可拿到所有 yaml 解析結果與 `stems_by_role(role)` 查詢 helper。實作中追加第 5 份 `responder-qwen36-35b-a3b-nvfp4.yaml`（既有機台 nvfp4 模型 smoke test 通過）。
+- **Step 2 — DB 雙表機制（commit `b706e78`）**：
+  - `model_registry`（schema in `config/db/schema_model_registry.sql`）：版本歷史 + 完整 yaml snapshot JSON，含 `is_current=1` partial unique index、`change_kind` enum（`created`/`modified`/`restored`/`removed`）、`UNIQUE(model_name, content_hash)` 防止 restore 時 hash 重複；`models_db.py::sync_model_registry` 啟動時 idempotent 同步 yaml ↔ DB，覆蓋 6 種變動情境（created/modified/restored/removed/hash-switch/unchanged）。
+  - `router_config`（migration in `core/config.py::_run_router_config_migration`）：純選擇器表 `key/value/updated_at`，seed 時依 `MODELS.stems_by_role(role)` 字典序取第一個 stem 當預設；含 `ollama_status='online'` 維護 flag。
+  - `main.py` lifespan：`init_model_registry → sync_model_registry`，失敗只 log 不擋 API 啟動（degrade-friendly）。
+  - 新 endpoints：`routes_models`（list/by-role）、`routes_router_config`（GET/PUT 選擇）。
+  - 前端 `PhaseModels.vue` 4 列 grid 唯讀頁（`align-items:start` 頂部對齊、`min-width:0` 防內容溢出 grid item、STANDBY 卡 normal flow 排在 ACTIVE 卡下方），Sidebar 加「模型設置」入口。
+- **師父 CRUD + 共用 UI 元件（commit `2bd6c28`）**：
+  - `routes_teachers.py` 補 8 endpoints（list/get/create/update/delete/test/enable/disable）+ connectivity smoke test endpoint。
+  - `PhaseTeachers.vue`：卡片可點開詳情面板、停用反灰、CRUD 表單。
+  - 4 個 `frontend-vue/src/components/shared/` 共用元件：`Modal`（dialog 容器）、`ConfirmDialog`（破壞性操作確認）、`FormField`（label + input + error）、`Toast`（全域訊息匯流）。
+  - `stores/toast.ts`：Toast 訊息佇列 pinia store，`App.vue` 統一 mount 一次。
+- **plan 檔歸檔**：`docs/archive/plans/2026-05-07-yaml-schema-1-yaml-2-4-glimmering-candy.md` 含完整 7-step 計畫 + 執行偏離記錄（snapshot 改放 model_registry、`local_enabled`→`ollama_status`、`_config.py` 移到 Step 3）。
+
+### Changed
+
+- **`routes_finetune.ollama_status`（commit `ceb9ed0`）**：從 `subprocess.run(["ollama", "ps"/"list"])` 改為 `httpx` 打 `/api/ps`、`/api/tags`，container 內無 ollama CLI 也能回狀態，符合 docker-compose 部署語境。
+- **前端 polish（commit `ceb9ed0`）**：`DateFilterBar` 加捷徑按鈕 + 自訂文字輸入 + 換行容錯；`Pagination`/`DataTable`/`Btn` 樣式統一與小幅修補；`PhaseRouter`/`PhaseMemory` 日期與顯示細節調整；`api/dateFilter.ts` 工具強化。
+
+### Fixed
+
+- **Hook 繁中過濾硬化（commit `ceb9ed0`）**：`stop_hook.py` 與 `services/paraphrase_service.py` 強化簡中變體偵測，避免 RAG 資料被簡體中文污染（延續 v1.3.x 的 exchange_embeddings 清理脈絡）。
+
+### Tests
+
+本版未新增測試（v1.4.0 範圍以架構與 UI 為主）；Step 3 將強制走 `superpowers:test-driven-development` 補齊 Layer 0 三檔解硬寫測試。
+
 ## [1.3.1] - 2026-05-06
 
 文件目錄一次性整理 + 對外 agent 規範書（`AGENTS.md`）對齊最新事實。純文件變更，不動執行碼。

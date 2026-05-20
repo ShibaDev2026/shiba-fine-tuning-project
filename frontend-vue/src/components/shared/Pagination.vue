@@ -67,9 +67,17 @@ function setSize(s: number) {
     class="flex items-center flex-wrap"
     style="padding:10px 16px; border-top:1px solid #21262f; justify-content:space-between; gap:12px"
   >
-    <span class="font-mono shrink-0" style="font-size:11px; color:#505c6e">
-      共 {{ total }} 筆 · 顯示第 {{ start }}–{{ end }} 筆
-    </span>
+    <div class="flex items-center shrink-0" style="gap:6px">
+      <span class="font-mono" style="font-size:11px; color:#505c6e">每頁顯示：</span>
+      <select
+        :value="pageSize"
+        @change="(e) => setSize(Number((e.target as HTMLSelectElement).value))"
+        class="font-mono cursor-pointer border-0"
+        style="background:#21262f; border-radius:6px; padding:3px 8px; font-size:11px; color:#8a97a8; color-scheme:dark"
+      >
+        <option v-for="n in [10, 30, 50]" :key="n" :value="n">{{ n }} 筆</option>
+      </select>
+    </div>
 
     <div class="flex items-center flex-wrap" style="gap:4px">
       <button :style="btnStyle(false, current === 1)" :disabled="current === 1" @click="goto(current - 1)">‹</button>
@@ -80,13 +88,8 @@ function setSize(s: number) {
       <button :style="btnStyle(false, current === totalPages)" :disabled="current === totalPages" @click="goto(current + 1)">›</button>
     </div>
 
-    <select
-      :value="pageSize"
-      @change="(e) => setSize(Number((e.target as HTMLSelectElement).value))"
-      class="font-mono cursor-pointer border-0"
-      style="background:#21262f; border-radius:6px; padding:3px 8px; font-size:11px; color:#8a97a8; color-scheme:dark"
-    >
-      <option v-for="n in [10, 30, 50]" :key="n" :value="n">{{ n }} 筆</option>
-    </select>
+    <span class="font-mono shrink-0" style="font-size:11px; color:#505c6e">
+      共 {{ total }} 筆 · 顯示第 {{ start }}–{{ end }} 筆
+    </span>
   </div>
 </template>

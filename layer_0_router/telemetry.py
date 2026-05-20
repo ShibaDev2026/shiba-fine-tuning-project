@@ -3,15 +3,11 @@
 
 import hashlib
 import logging
-import sqlite3
 from dataclasses import dataclass
-from pathlib import Path
 
-from shiba_config import CONFIG
+from shiba_db import open_connection
 
 logger = logging.getLogger(__name__)
-
-DB_PATH = CONFIG.paths.db
 
 # C4：採納啟發式由「無否定即採納」改為多維結構。
 # 否定關鍵字 → accepted=False / rewrote=False（明確拒絕）
@@ -45,10 +41,8 @@ class AcceptanceSignal:
     matched_keyword: str | None  # 命中的關鍵字（debug / audit）
 
 
-def _conn() -> sqlite3.Connection:
-    c = sqlite3.connect(DB_PATH)
-    c.row_factory = sqlite3.Row
-    return c
+def _conn():
+    return open_connection("writer")
 
 
 def prompt_hash(prompt: str) -> str:
@@ -131,7 +125,7 @@ def infer_acceptance_from_text(next_user_message: str) -> AcceptanceSignal:
 
 def update_pending_decisions(session_id: str, next_user_message: str) -> int:
     """
-    在 stop_hook 或下次 session_start_hook 呼叫：
+    在 session_stop_hook 或下次 session_start_hook 呼叫：
     對同一 session 內 user_accepted=NULL 的 local 決策，
     以多維啟發式自動更新。回傳實際更新筆數（模糊訊號不寫入時為 0）。
     """

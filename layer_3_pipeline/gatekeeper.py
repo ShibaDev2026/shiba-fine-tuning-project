@@ -148,8 +148,8 @@ def _get_current_model(conn: sqlite3.Connection, adapter_block: int) -> str:
     ).fetchone()
     if row and row[0]:
         return row[0]
-    from layer_0_router.router import LOCAL_MODEL
-    return LOCAL_MODEL
+    from layer_0_router._config import load_active_snapshot
+    return load_active_snapshot("responder")["ollama_tag"]
 
 
 def _push_shadow(gguf_path: Path, adapter_block: int) -> str:

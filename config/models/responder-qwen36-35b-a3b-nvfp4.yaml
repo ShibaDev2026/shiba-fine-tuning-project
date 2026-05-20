@@ -1,0 +1,48 @@
+# Layer 0 responder 配置（Qwen 3.6 35B-A3B nvfp4 量化）
+# 新增於 2026-05-07，對應已下載模型 qwen3.6:35b-a3b-nvfp4（21GB）
+# 與 responder-qwen3-30b-a3b.yaml 並存，前端 dropdown 可二選一
+# 動機：leopardracer 路線實測 + 評估 nvfp4 量化在 Apple Silicon 上的速度增益
+
+# ─── 識別 ───
+display_name: Qwen 3.6 35B-A3B (nvfp4)
+role: responder
+ollama_tag: qwen3.6:35b-a3b-nvfp4
+description: Qwen 3.6 35B MoE + nvfp4 量化，比 q4_K_M 在 Apple Silicon 上更快（M5 系列吃 GPU Neural Accelerator 加速）
+
+# ─── 推論參數 ───
+inference:
+  think: false
+  num_ctx: 8192
+  temperature: 0.7
+  top_p: 0.9
+  top_k: 40
+  repeat_penalty: 1.05
+  num_predict: 1024
+  stop: []
+  keep_alive: 10m
+  timeout_seconds: 60
+
+# ─── Prompt 配置 ───
+prompt:
+  system: |
+    你是 Shiba 的本地助理。請以繁體中文簡潔回答，直接給結論再補理由。
+  user_template: null
+
+# ─── 模型元資料 ───
+meta:
+  family: qwen
+  quantization: nvfp4              # MLX 友善的新量化格式
+  size_gb: 21
+  min_ram_gb: 32
+  supports_thinking: true
+  supports_vision: false
+  supports_audio: false
+
+# ─── 維護 ───
+maintenance:
+  yaml_version: 1
+  added_at: "2026-05-07"
+  notes: |
+    nvfp4 模型對 Ollama 0.19+ 與 MLX dylib 有依賴；升 Ollama 後若 500 錯誤，
+    需重做 MLX dylib symlink（見 MEMORY: project_ollama_mlx_fix.md）。
+    smoke test：2026-05-07 在 Ollama 0.21.0 上回應正常。

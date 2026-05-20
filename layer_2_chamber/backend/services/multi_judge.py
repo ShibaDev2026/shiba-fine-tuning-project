@@ -7,7 +7,7 @@ P1-2 多 Judge 投票（SEAL ReSTEM^EM 精神）。
   2/3 approved → status='approved', weight=0.5（soft label）
   ≤1/3 approved → status='rejected'
   Shiba 採納（router_decisions.user_accepted=1）→ 無論 judge 結果，強制 status='approved'
-  （weight 由 stop_hook 的 P1-3 sync_sample_weights 另行設定）
+  （weight 由 session_stop_hook 的 P1-3 sync_sample_weights 另行設定）
 
 Judge approved 判定：score ≥ 8.0
 """
@@ -75,14 +75,16 @@ def multi_judge_score(
         reason = f"不足票數（{approved_votes}/{len(votes)} approved）"
         logger.debug("sample %d rejected：votes=%s", sample_id, votes)
 
-    _update_sample_score(conn, sample_id, avg_score, reason, status)
-    if status == "approved":
-        # 寫入 weight（soft label 或 1.0）
-        conn.execute(
-            "UPDATE training_samples SET weight=? WHERE id=?",
-            (weight, sample_id),
-        )
-        conn.commit()
+    # PR2 Step 6：同一筆 sample 的 status/score/weight 共一事務，
+    # 避免「score 寫了但 weight 漏」的部分狀態。quota 計數仍獨立 commit。
+    with conn:
+        _update_sample_score(conn, sample_id, avg_score, reason, status)
+        if status == "approved":
+            # 寫入 weight（soft label 或 1.0）
+            conn.execute(
+                "UPDATE training_samples SET weight=? WHERE id=?",
+                (weight, sample_id),
+            )
 
     # B.1：非同步記錄 judge 一致性（失敗不影響主流程）
     _log_judge_agreement(conn, sample_id, votes)

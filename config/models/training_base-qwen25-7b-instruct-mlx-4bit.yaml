@@ -1,0 +1,40 @@
+# Layer 3 訓練 base 配置
+# 對應 layer_3_pipeline/mlx_trainer.py:17-20 與 gguf_converter.py:10-13 的 BASE_MODELS
+# 對應 router_config.training_base_block{1,2}_yaml = "training_base-qwen25-7b-instruct-mlx-4bit"
+
+# ─── 識別 ───
+display_name: Qwen2.5 7B Instruct (MLX 4bit)
+role: training_base
+hf_repo: mlx-community/Qwen2.5-7B-Instruct-4bit   # Layer 3 用 hf_repo（取代 ollama_tag）
+description: Layer 3 LoRA 訓練 base，block1（bash/tools）與 block2（中文回應）共用
+
+# ─── 訓練參數（取代 mlx_trainer.py 內的 _LORA_CONFIG）───
+training:
+  blocks: [1, 2]                   # 此 base 適用 block1 + block2
+  num_layers: 16
+  learning_rate: 1.0e-4
+  batch_size: 4
+  iters: 600
+  lora_rank_cold: 8                # approved < 50（F2 冷啟動保護防過擬合）
+  lora_rank_warm: 16               # approved >= 50
+  chat_template: qwen2_5           # 訓練時應用的 chat template 識別
+
+# ─── 元資料 ───
+meta:
+  family: qwen
+  parameters_b: 7
+  quantization: 4bit
+  format: mlx                      # mlx | gguf | hf —— 影響訓練腳本選用
+  size_gb: 4.5
+  min_ram_gb: 16
+  supports_thinking: false
+  supports_vision: false
+  supports_audio: false
+
+# ─── 維護 ───
+maintenance:
+  yaml_version: 1
+  added_at: "2026-05-07"
+  notes: |
+    7B 滿足需求後升 Qwen2.5-32B；屆時新增另一份 yaml 並切換 router_config。
+    block1/block2 共用同 base 是合理設計（兩個 LoRA adapter 套同 base）。

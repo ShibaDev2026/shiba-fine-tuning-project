@@ -26,7 +26,7 @@ def test_route_local_returns_qwen_response():
          patch("layer_0_router.router._call_qwen") as mock_qwen:
         mock_cls.return_value = {"decision": "local", "reason": "git 操作"}
         mock_compress.return_value = "壓縮後的 context"
-        mock_qwen.return_value = "git commit -m 'feat: xxx'"
+        mock_qwen.return_value = ("git commit -m 'feat: xxx'", 100, 50)
 
         result = route(prompt="幫我 git commit", rag_context="過去做過 git commit")
 
