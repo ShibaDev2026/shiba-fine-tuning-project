@@ -1,4 +1,8 @@
-"""embedder.py — Ollama embedding API 封裝（nomic-embed-text）"""
+"""embedder.py — Ollama embedding API 封裝（bge-m3）
+
+bge-m3：BAAI 多語言 embedding，dim=1024、ctx=8192；中文召回優於 nomic-embed-text。
+切換日：2026-05-20；舊 nomic 向量需 backfill（exchange_embeddings 全量重 embed）。
+"""
 
 import json
 import math
@@ -7,8 +11,8 @@ import urllib.error
 
 from shiba_config import CONFIG
 
-EMBED_MODEL = "nomic-embed-text"
-EMBED_DIM   = 768
+EMBED_MODEL = "bge-m3"
+EMBED_DIM   = 1024
 
 
 def get_embedding(text: str, base_url: str | None = None) -> list[float] | None:

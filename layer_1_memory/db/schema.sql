@@ -213,7 +213,7 @@ CREATE TABLE IF NOT EXISTS exchange_embeddings (
     source_instruction TEXT,            -- NULL=原始；非 NULL=paraphrase 來源，防止二次展開
     commands           TEXT NOT NULL,   -- 實際執行的 bash/git 指令（果）
     embedding          BLOB NOT NULL,   -- instruction 的 JSON float array 向量
-    model              TEXT NOT NULL DEFAULT 'nomic-embed-text',
+    model              TEXT NOT NULL DEFAULT 'bge-m3',
     created_at         TEXT NOT NULL DEFAULT (datetime('now'))
 );
 

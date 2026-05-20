@@ -214,7 +214,7 @@ def upsert_exchange_embedding(
     instruction: str,
     commands: str,
     embedding: list[float],
-    model: str = "nomic-embed-text",
+    model: str = "bge-m3",
     source_instruction: str | None = None,
 ) -> None:
     """寫入因果對 embedding。source_instruction=None 表示原始，否則為 paraphrase。"""
