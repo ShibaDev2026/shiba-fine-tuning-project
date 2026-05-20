@@ -41,6 +41,10 @@ from layer_2_chamber.backend.services.teacher_service import (
 
 _SCORE_THRESHOLD = 7.0
 
+# Judge 模型：改用 flash 主力（避開 flash-lite 在 PT 尖峰時段的 503 spike）
+# 配額 500 RPM / 5000 RPD 對 28 筆批次綽綽有餘
+_JUDGE_MODEL = "gemini-2.5-flash"
+
 # RAG 注入後生成用 prompt
 _RAG_PROMPT = """你是 Shiba 開發助理，根據以下歷史記錄回答問題。
 
@@ -207,8 +211,9 @@ def _judge_answer(query: str, expected: str, generated: str) -> tuple[float | No
         generated=generated.strip(),
     )
     text, _, _, status = _call_gemini_rest(
-        api_key, "gemini-2.5-flash-lite", prompt, max_tokens=100,
+        api_key, _JUDGE_MODEL, prompt, max_tokens=100,
         caller_module="c2_e2e_evaluation.judge",
+        disable_thinking=True,  # flash 預設啟用 thinking，會吃光 max_tokens=100 預算
     )
     if status != "success" or not text:
         return None, f"Gemini 呼叫失敗（{status}）"
@@ -272,8 +277,15 @@ def run(
                 print(f"  context[0]: {ctx_preview}...")
                 continue
 
-            # 生成答案
-            generated = _generate_answer(model_spec, query, contexts, sample_id=qid)
+            # 本地 Ollama 永久錯誤（thinking token 耗盡、空回應）僅 skip 此筆，
+            # 不熔斷整批；外部 vendor（Gemini / Anthropic）429/5xx 仍維持熔斷以保護配額。
+            try:
+                generated = _generate_answer(model_spec, query, contexts, sample_id=qid)
+            except AIClientError as e:
+                if e.vendor == "ollama" and e.category.value == "permanent":
+                    print(f"  ⚠ Ollama 永久錯誤 skip：{e.message[:80]}", file=sys.stderr)
+                    continue
+                raise
             if vendor == "ollama":
                 pass  # Ollama 本地無需 sleep
             else:
@@ -303,7 +315,7 @@ def run(
                     run_id=run_id,
                     metric_name="answer_quality",
                     metric_value=score,
-                    evaluator_model="gemini-2.5-flash-lite",
+                    evaluator_model=_JUDGE_MODEL,
                     sample_id=qid,
                     metadata={
                         "model_spec": model_spec,
