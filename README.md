@@ -30,7 +30,7 @@
 對話結束時自動捕捉，建立可搜尋的長期記憶：
 
 - `hooks/session_start_hook.py`：RAG 記憶注入 + Layer 0 路由整合
-- `hooks/stop_hook.py`：解析對話 → SQLite（sessions / messages / FTS5）+ 採納判定
+- `hooks/session_stop_hook.py`：解析對話 → SQLite（sessions / messages / FTS5）+ 採納判定
 - `lib/rag.py`：FTS5 全文搜尋 + 向量語意搜尋（`nomic-embed-text` 768d，cosine ≥ 0.35；bge-m3 升級評估中）
 
 ### Layer 2 — 精神時光屋
@@ -60,7 +60,7 @@
 └────────────────────────────────┬─────────────────────────────────────────┘
                                  ▼
 ┌──────────────────────────────────────────────────────────────────────────┐
-│  hooks/stop_hook.py    解析 ~/.claude/projects/*.jsonl                    │
+│  hooks/session_stop_hook.py   解析 ~/.claude/projects/*.jsonl             │
 │     ├─ 4 段獨立事務（PR2 原子化）寫入 SQLite                              │
 │     └─ router_decisions.user_accepted（採納判定 / Layer 0 反饋來源）       │
 └────────────────────────────────┬─────────────────────────────────────────┘

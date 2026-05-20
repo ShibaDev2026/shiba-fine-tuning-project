@@ -382,7 +382,7 @@ def rebuild_exchanges_for_session_standalone(
     session_uuid: str,
 ) -> dict[str, int]:
     """
-    自開連線版本（給 stop_hook / backfill 用）。
+    自開連線版本（給 session_stop_hook / backfill 用）。
     自管 transaction：成功 commit、失敗 rollback。
     若 session 不存在（uuid 找不到）回傳空統計。
     """

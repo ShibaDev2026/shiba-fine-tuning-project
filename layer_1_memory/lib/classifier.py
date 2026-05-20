@@ -118,7 +118,7 @@ def classify_session(session: "ParsedSession") -> list[str]:
 
 def classify_text(text: str) -> list[str]:
     """
-    直接對文字字串進行分類（供 stop_hook 快速測試用）。
+    直接對文字字串進行分類（供 session_stop_hook 快速測試用）。
     回傳 event_type 清單。
     """
     detected: list[str] = []

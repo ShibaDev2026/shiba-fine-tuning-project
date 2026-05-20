@@ -7,7 +7,7 @@ P1-2 多 Judge 投票（SEAL ReSTEM^EM 精神）。
   2/3 approved → status='approved', weight=0.5（soft label）
   ≤1/3 approved → status='rejected'
   Shiba 採納（router_decisions.user_accepted=1）→ 無論 judge 結果，強制 status='approved'
-  （weight 由 stop_hook 的 P1-3 sync_sample_weights 另行設定）
+  （weight 由 session_stop_hook 的 P1-3 sync_sample_weights 另行設定）
 
 Judge approved 判定：score ≥ 8.0
 """

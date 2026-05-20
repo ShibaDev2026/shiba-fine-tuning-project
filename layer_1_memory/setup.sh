@@ -42,7 +42,7 @@ if settings_path.exists():
         pass
 
 # 定義目標 hooks（以絕對路徑指向本專案）
-stop_cmd = "$VENV_DIR/bin/python3 $SCRIPT_DIR/hooks/stop_hook.py"
+stop_cmd = "$VENV_DIR/bin/python3 $SCRIPT_DIR/hooks/session_stop_hook.py"
 start_cmd = "$VENV_DIR/bin/python3 $SCRIPT_DIR/hooks/session_start_hook.py"
 
 new_hooks = {

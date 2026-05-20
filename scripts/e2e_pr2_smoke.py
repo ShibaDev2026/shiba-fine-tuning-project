@@ -7,7 +7,7 @@
 涵蓋：
     E2E-1 (Step 6 happy path)：mock 兩 judge 全 approve →
         驗證 training_samples 的 status/score/weight 三欄在同一事務內原子寫入。
-    E2E-2 (Step 5 failure path)：stop_hook C 段模擬 raise →
+    E2E-2 (Step 5 failure path)：session_stop_hook C 段模擬 raise →
         驗證 A+B 段（sessions/messages）也被整體 rollback（讀法 B）。
 
 本腳本用 /tmp/e2e_pr2.db 臨時 DB，不污染 production data/shiba-brain.db。
@@ -85,8 +85,8 @@ print("   ✅ E2E-1 通過：三欄原子寫入（status/score/weight）")
 conn.close()
 
 
-# ============ E2E-2: stop_hook C 段 raise → 整體 rollback（Step 5 failure path）============
-print("\n=== E2E-2: stop_hook C 段 raise → 整體 rollback ===")
+# ============ E2E-2: session_stop_hook C 段 raise → 整體 rollback（Step 5 failure path）============
+print("\n=== E2E-2: session_stop_hook C 段 raise → 整體 rollback ===")
 from layer_1_memory.lib.db import (
     upsert_project, upsert_session, update_session_stats,
     insert_message, deactivate_old_branches,
@@ -97,7 +97,7 @@ pre_s = probe.execute("SELECT COUNT(*) FROM sessions").fetchone()[0]
 pre_m = probe.execute("SELECT COUNT(*) FROM messages").fetchone()[0]
 probe.close()
 
-# 重現 stop_hook PR2 後的 4 段結構，C 段故意 raise
+# 重現 session_stop_hook PR2 後的 4 段結構，C 段故意 raise
 try:
     with shiba_db.get_connection() as c:
         # A 段

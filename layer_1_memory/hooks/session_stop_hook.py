@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-stop_hook.py — Claude Code Stop Hook（session 結束時觸發）
+session_stop_hook.py — Claude Code Stop Hook（session 結束時觸發）
 職責：
 1. 從 stdin 讀取 hook payload（session UUID / transcript path）
 2. 解析 .jsonl 對話檔
@@ -20,7 +20,7 @@ Phase 1 直接走 db.py，不透過 HTTP（FastAPI 尚未存在）。
         "hooks": [
           {
             "type": "command",
-            "command": "python3 /path/to/stop_hook.py"
+            "command": "python3 /path/to/session_stop_hook.py"
           }
         ]
       }
@@ -125,7 +125,7 @@ def _write_to_queue(payload: dict, config: dict) -> None:
 def sync_session(payload: dict, config: dict) -> None:
     """
     解析並寫入 session 資料到 SQLite。
-    這是 stop_hook 的主要業務邏輯。
+    這是 session_stop_hook 的主要業務邏輯。
     """
     logger = logging.getLogger(__name__)
 
@@ -191,7 +191,7 @@ def sync_session(payload: dict, config: dict) -> None:
                 ended_at=now,
             )
         except Exception as e:
-            logger.error("stop_hook A 段（session）失敗，整體 rollback：%s", e)
+            logger.error("session_stop_hook A 段（session）失敗，整體 rollback：%s", e)
             raise
 
         # B 段：messages + tool_executions
@@ -233,7 +233,7 @@ def sync_session(payload: dict, config: dict) -> None:
                         is_error=exec_dict["is_error"],
                     )
         except Exception as e:
-            logger.error("stop_hook B 段（msgs）失敗，整體 rollback：%s", e)
+            logger.error("session_stop_hook B 段（msgs）失敗，整體 rollback：%s", e)
             raise
 
         # C 段：branches + branch_messages（先 deactivate 舊分支）
@@ -260,7 +260,7 @@ def sync_session(payload: dict, config: dict) -> None:
                             seq=seq,
                         )
         except Exception as e:
-            logger.error("stop_hook C 段（branches）失敗，整體 rollback：%s", e)
+            logger.error("session_stop_hook C 段（branches）失敗，整體 rollback：%s", e)
             raise
 
         # D 段：FTS5 索引（active_branch 純資料計算放 try 外）
@@ -279,7 +279,7 @@ def sync_session(payload: dict, config: dict) -> None:
                 ended_at=now,
             )
         except Exception as e:
-            logger.error("stop_hook D 段（fts）失敗，整體 rollback：%s", e)
+            logger.error("session_stop_hook D 段（fts）失敗，整體 rollback：%s", e)
             raise
 
         # 全部寫入無誤後才 commit（與 get_connection rollback 形成完整事務）
@@ -515,11 +515,11 @@ def main() -> None:
         # 讀取 stdin payload
         raw = sys.stdin.read()
         if not raw.strip():
-            logger.debug("stop_hook: stdin 為空，略過")
+            logger.debug("session_stop_hook: stdin 為空，略過")
             return
 
         payload = json.loads(raw)
-        logger.info("stop_hook 觸發：%s", json.dumps(payload, ensure_ascii=False)[:200])
+        logger.info("session_stop_hook 觸發：%s", json.dumps(payload, ensure_ascii=False)[:200])
 
         # 初始化 DB（CREATE IF NOT EXISTS，安全重複執行）
         init_db()
@@ -531,7 +531,7 @@ def main() -> None:
         logger.error("payload JSON 解析失敗：%s", e)
         # JSON 錯誤無法建立有效 payload，無法寫 queue
     except Exception as e:  # noqa: BLE001
-        logger.error("stop_hook 未預期錯誤：%s\n%s", e, traceback.format_exc())
+        logger.error("session_stop_hook 未預期錯誤：%s\n%s", e, traceback.format_exc())
         # 寫入 fallback queue
         try:
             raw_payload = json.loads(raw) if raw.strip() else {}

@@ -143,7 +143,7 @@ def main() -> None:
         payload = json.loads(raw)
         logger.info("session_start_hook 觸發：session=%s", payload.get("session_id", ""))
 
-        # 確保 DB 已初始化（session_start 可能先於 stop_hook 完成）
+        # 確保 DB 已初始化（session_start 可能先於 session_stop_hook 完成）
         try:
             init_db()
         except Exception as e:  # noqa: BLE001

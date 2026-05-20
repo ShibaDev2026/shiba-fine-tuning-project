@@ -181,7 +181,7 @@ def _run_extraction_job(conn_factory) -> None:
             )
 
         # W5 回饋補齊：extraction 完成後對新樣本補一次 weight 同步
-        # （stop_hook 執行時樣本尚未寫入，採納回饋在此時才能正確套用）
+        # （session_stop_hook 執行時樣本尚未寫入，採納回饋在此時才能正確套用）
         try:
             from layer_0_router.telemetry import sync_sample_weights
             new_sessions = [

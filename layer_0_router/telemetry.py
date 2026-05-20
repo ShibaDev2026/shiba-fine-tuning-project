@@ -125,7 +125,7 @@ def infer_acceptance_from_text(next_user_message: str) -> AcceptanceSignal:
 
 def update_pending_decisions(session_id: str, next_user_message: str) -> int:
     """
-    在 stop_hook 或下次 session_start_hook 呼叫：
+    在 session_stop_hook 或下次 session_start_hook 呼叫：
     對同一 session 內 user_accepted=NULL 的 local 決策，
     以多維啟發式自動更新。回傳實際更新筆數（模糊訊號不寫入時為 0）。
     """
