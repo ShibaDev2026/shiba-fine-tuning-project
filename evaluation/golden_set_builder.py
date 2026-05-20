@@ -154,21 +154,40 @@ def build_annotation_prompt(query: str, candidates: list[dict]) -> str:
     )
 
 
-def annotate_with_claude(query: str, candidates: list[dict], model: str = "claude-sonnet-4-6") -> dict:
+def annotate_with_claude(
+    query: str,
+    candidates: list[dict],
+    model: str = "claude-sonnet-4-6",
+    keychain_ref: str = "anthropic-api-key",
+    api_base: str = "https://api.anthropic.com/v1",
+    effort: str = "medium",
+) -> dict:
     """
-    呼叫 Claude API 標註。回傳 dict 包含 relevant_session_uuids / confidence / reasoning。
-    依賴：langchain-anthropic + ANTHROPIC_API_KEY 環境變數。
+    呼叫 Anthropic Messages API 標註，複用 teacher_service 既有基礎設施。
+    回傳 dict 包含 relevant_session_uuids / confidence / reasoning。
+    Key 來源：Keychain（keychain_ref）→ env fallback，與 teacher 同條路徑。
     """
-    try:
-        from langchain_anthropic import ChatAnthropic
-    except ImportError:
-        raise RuntimeError("需安裝 langchain-anthropic：pip install langchain-anthropic")
+    from layer_2_chamber.backend.services.teacher_service import (
+        get_api_key, _call_anthropic, _strip_markdown,
+    )
+
+    api_key = get_api_key(keychain_ref)
+    if not api_key:
+        raise RuntimeError(f"找不到 API key：Keychain ref={keychain_ref}")
 
     prompt = build_annotation_prompt(query, candidates)
-    llm = ChatAnthropic(model=model, temperature=0, max_tokens=1024)
-    resp = llm.invoke(prompt)
-    text = resp.content if isinstance(resp.content, str) else str(resp.content)
-    return json.loads(text.strip())
+    text, _in, _out, status = _call_anthropic(
+        api_key=api_key,
+        api_base=api_base,
+        model_id=model,
+        prompt=prompt,
+        max_tokens=1024,
+        effort=effort,
+    )
+    if status != "success" or not text:
+        raise RuntimeError(f"Anthropic 呼叫失敗：status={status}")
+
+    return json.loads(_strip_markdown(text))
 
 
 def write_to_golden_set(

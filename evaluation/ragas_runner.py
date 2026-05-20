@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 import uuid as _uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -272,9 +273,10 @@ def run_layer1_evaluation(
                                    {"judge": "local", "n_contexts": len(contexts)})
                 judge_str += f" | local_cr={cr_local}"
 
-        # LLM judge — gemini
+        # LLM judge — gemini（Flash 5 RPM → sleep 12s）
         if judge in ("gemini", "both"):
             cr_gemini = _judge_gemini(query, contexts)
+            time.sleep(12)  # Flash 5 RPM 速率保護
             if cr_gemini is not None:
                 ctx_relevance_gemini.append(cr_gemini)
                 _write_eval_result(run_id, "layer1", "ctx_relevance", cr_gemini,
