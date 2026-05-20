@@ -429,7 +429,11 @@ def _call_teacher(
         return None
 
     if "generativelanguage.googleapis.com" in teacher["api_base"]:
-        raw, input_t, output_t, status = _call_gemini_rest(api_key, teacher["model_id"], prompt)
+        raw, input_t, output_t, status = _call_gemini_rest(
+            api_key, teacher["model_id"], prompt,
+            caller_module="teacher_service",
+            teacher_id=teacher["id"], sample_id=sample_id,
+        )
     elif "api.anthropic.com" in teacher["api_base"]:
         raw, input_t, output_t, status = _call_anthropic(
             api_key, teacher["api_base"], teacher["model_id"], prompt
@@ -477,45 +481,32 @@ def _call_gemini_rest(
     prompt: str,
     force_json: bool = True,
     max_tokens: int = 150,
+    *,
+    caller_module: str | None = None,
+    teacher_id: int | None = None,
+    sample_id: int | None = None,
 ) -> tuple[str | None, int, int, str]:
-    """Gemini 原生 REST API 呼叫，回傳 (text, input_tokens, output_tokens, status)"""
-    import urllib.request
-    import urllib.error
+    """Gemini API 呼叫（thin wrapper → clients.gemini.GeminiClient）。
 
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_id}:generateContent?key={api_key}"
-    gen_config: dict = {"maxOutputTokens": max_tokens, "temperature": 0.1}
-    if force_json:
-        gen_config["responseMimeType"] = "application/json"
-    body = json.dumps({
-        "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": gen_config,
-    }).encode()
+    回傳 (text, input_tokens, output_tokens, status)；介面與原 REST 版相容。
 
-    req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"})
-    try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            data = json.loads(resp.read())
-            text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
-            usage = data.get("usageMetadata", {})
-            input_t = usage.get("promptTokenCount", 0)
-            output_t = usage.get("candidatesTokenCount", 0)
-            return text, input_t, output_t, "success"
-    except urllib.error.HTTPError as e:
-        if e.code == 429:
-            # PR-B：解析 body 區分 RPM 短暫超限 vs 每日配額耗盡
-            try:
-                body = e.read()
-            except Exception:
-                body = b""
-            kind, retry = _parse_google_429(body)
-            status = "rate_limit_day" if kind == "day" else "rate_limit_minute"
-            logger.info("Gemini 429 kind=%s retry_after=%ds", kind, retry)
-            return None, 0, 0, status
-        logger.error("Gemini REST 失敗 HTTP %s", e.code)
-        return None, 0, 0, "error"
-    except Exception as e:
-        logger.error("Gemini REST 呼叫失敗：%s", e)
-        return None, 0, 0, "error"
+    例外不吞，讓 AIPermanentError / AITransientError 往上冒，達成整批熔斷
+    （呼叫端 multi_judge / score_pending_samples / c1 須各自決定 try/except 範圍）。
+
+    caller_module / teacher_id / sample_id 會寫入 ai_api_call_logs，便於追溯來源。
+    """
+    # 延遲 import，避免循環依賴與啟動成本
+    from clients.gemini import GeminiClient
+
+    return GeminiClient(api_key).generate(
+        model_id=model_id,
+        prompt=prompt,
+        max_tokens=max_tokens,
+        force_json=force_json,
+        caller_module=caller_module,
+        teacher_id=teacher_id,
+        sample_id=sample_id,
+    )
 
 
 def _call_openai_compat(
@@ -706,7 +697,10 @@ def call_teacher_for_test(
         api_key = "none"
 
     if "generativelanguage.googleapis.com" in teacher["api_base"]:
-        return _call_gemini_rest(api_key, teacher["model_id"], prompt, force_json=False, max_tokens=200)
+        return _call_gemini_rest(
+            api_key, teacher["model_id"], prompt, force_json=False, max_tokens=200,
+            caller_module="teacher_service.call_teacher_for_test", teacher_id=teacher["id"],
+        )
     elif "api.anthropic.com" in teacher["api_base"]:
         return _call_anthropic(api_key, teacher["api_base"], teacher["model_id"], prompt, max_tokens=200)
     else:

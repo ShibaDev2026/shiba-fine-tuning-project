@@ -1,3 +1,4 @@
 
 ragas==0.4.3
 langchain-anthropic
+google-genai>=2.4.0
