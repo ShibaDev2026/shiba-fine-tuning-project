@@ -422,9 +422,11 @@ def _run_rpm_migration(conn: sqlite3.Connection) -> None:
         "UPDATE teachers SET rpm_limit = 2000, daily_request_limit = 999999 "
         "WHERE model_id = 'gemini-2.5-flash-lite'",
     )
-    # Anthropic Tier 1（conservative；針對 Sonnet 4.6，未來新增 Haiku 等需另設）
+    # Anthropic Tier 1（針對 Sonnet 4.6）：RPM 50；無 RPD 概念（token-based monthly quota），
+    # daily_limit / daily_request_limit 統一設極大值表示不適用，等同 Flash-Lite 處理方式。
     conn.execute(
-        "UPDATE teachers SET rpm_limit = 50 WHERE model_id = 'claude-sonnet-4-6'",
+        "UPDATE teachers SET rpm_limit = 50, daily_limit = 999999, daily_request_limit = 999999 "
+        "WHERE model_id = 'claude-sonnet-4-6'",
     )
     # local：rpm_limit 保留 NULL（不限）
     # xai：smoke_test_teacher 為 dummy；未來新增實際 Grok teacher 時需補正確值

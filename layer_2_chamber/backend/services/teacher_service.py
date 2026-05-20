@@ -91,6 +91,15 @@ Output: {output}
 
 # ── Teacher CRUD ─────────────────────────────────────────────────────────
 
+def _vendor_of(teacher: sqlite3.Row) -> str | None:
+    """安全取廠牌：欄位不存在或為 NULL 時回 None（讓下游用 client 預設）。"""
+    try:
+        v = teacher["vendor"]
+    except (KeyError, IndexError):
+        return None
+    return v or None
+
+
 def get_active_teachers(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     """取得所有啟用中的 Teacher，依 priority 排序"""
     return conn.execute(
@@ -331,26 +340,6 @@ def _parse_google_429(body_bytes: bytes) -> tuple[str, int]:
     return kind, retry
 
 
-def _parse_anthropic_429(http_error) -> tuple[str, int]:
-    """
-    解析 Anthropic 429 回應，回傳 (kind, retry_after_seconds)。
-
-    Anthropic 用 HTTP header 傳遞速率資訊：
-      retry-after：建議等待秒數
-      anthropic-ratelimit-requests-reset / -tokens-reset：UTC 重置時間
-    retry < 300s 視為短暫（RPM）；否則視為長期（保守當 day）。
-    """
-    retry = 60
-    try:
-        ra = http_error.headers.get("retry-after")
-        if ra and ra.isdigit():
-            retry = int(ra)
-    except (AttributeError, ValueError):
-        pass
-    kind = "day" if retry >= 300 else "minute"
-    return kind, retry
-
-
 # ── Keychain ─────────────────────────────────────────────────────────────
 
 def _env_key_name(keychain_ref: str) -> str:
@@ -438,13 +427,19 @@ def _call_teacher(
         )
     elif "api.anthropic.com" in teacher["api_base"]:
         raw, input_t, output_t, status = _call_anthropic(
-            api_key, teacher["api_base"], teacher["model_id"], prompt
+            api_key, teacher["api_base"], teacher["model_id"], prompt,
+            caller_module="teacher_service",
+            teacher_id=teacher["id"], sample_id=sample_id,
         )
     else:
         # 本地 qwen3 系列 thinking 也吃 num_predict 配額，需留足空間給正文
+        # vendor 由 teacher row 帶入（DB 存 'local' / 'mistral' / 'openai'），未設則 fallback
         raw, input_t, output_t, status = _call_openai_compat(
             api_key, teacher["api_base"], teacher["model_id"], prompt,
             max_tokens=2048,
+            vendor=_vendor_of(teacher),
+            caller_module="teacher_service",
+            teacher_id=teacher["id"], sample_id=sample_id,
         )
 
     # PR-B：429 分流（rate_limit_minute = 短暫回退；rate_limit_day = 整天封鎖）
@@ -521,29 +516,27 @@ def _call_openai_compat(
     model_id: str,
     prompt: str,
     max_tokens: int = 150,
+    *,
+    vendor: str | None = None,
+    caller_module: str | None = None,
+    teacher_id: int | None = None,
+    sample_id: int | None = None,
 ) -> tuple[str | None, int, int, str]:
-    """OpenAI-compatible 端點呼叫（Ollama / Mistral 等），回傳 (text, input_tokens, output_tokens, status)"""
-    from openai import OpenAI, RateLimitError
-    client = OpenAI(api_key=api_key, base_url=api_base)
-    try:
-        resp = client.chat.completions.create(
-            model=model_id,
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=max_tokens,
-            temperature=0.1,
-        )
-        content = resp.choices[0].message.content.strip()
-        input_t = resp.usage.prompt_tokens if resp.usage else 0
-        output_t = resp.usage.completion_tokens if resp.usage else 0
-        return content, input_t, output_t, "success"
-    except RateLimitError:
-        # PR-B：OpenAI-compat 端點（Ollama / Mistral / OpenAI）的 429 多為短暫，
-        # 預設視為 RPM 等級；若實際是 daily，下次重試仍會再次 429，最終透過
-        # daily_request_limit 上限觸發 daily 標記。
-        return None, 0, 0, "rate_limit_minute"
-    except Exception as e:
-        logger.error("OpenAI-compat 呼叫失敗：%s", e)
-        return None, 0, 0, "error"
+    """OpenAI-compatible 端點呼叫（thin wrapper → clients.openai_compat.OpenAICompatClient）。
+
+    source_type 由 client 依 api_base 自動判定（localhost / *.local → local，其餘 remote）。
+    vendor 由呼叫端依 teacher 欄位帶入（'local' / 'mistral' / 'openai' ...）。
+    """
+    from clients.openai_compat import OpenAICompatClient
+
+    return OpenAICompatClient(api_key, api_base, vendor=vendor).generate(
+        model_id=model_id,
+        prompt=prompt,
+        max_tokens=max_tokens,
+        caller_module=caller_module,
+        teacher_id=teacher_id,
+        sample_id=sample_id,
+    )
 
 
 def _call_anthropic(
@@ -553,53 +546,27 @@ def _call_anthropic(
     prompt: str,
     max_tokens: int = 150,
     effort: str = "medium",
+    *,
+    caller_module: str | None = None,
+    teacher_id: int | None = None,
+    sample_id: int | None = None,
 ) -> tuple[str | None, int, int, str]:
-    """
-    Anthropic Messages API 原生呼叫，回傳 (text, input_tokens, output_tokens, status)。
-    api_base 預期為 'https://api.anthropic.com/v1'；endpoint 自動補 /messages。
+    """Anthropic Messages API 呼叫（thin wrapper → clients.anthropic.AnthropicClient）。
+
     effort 預設 medium（Sonnet 4.6 官方推薦的成本/品質平衡點，API 預設為 high）。
+    例外（AIPermanentError / AITransientError）不吞，讓呼叫端決定整批熔斷範圍。
     """
-    import urllib.request
-    import urllib.error
+    from clients.anthropic import AnthropicClient
 
-    url = f"{api_base.rstrip('/')}/messages"
-    body = json.dumps({
-        "model": model_id,
-        "max_tokens": max_tokens,
-        "messages": [{"role": "user", "content": prompt}],
-        "temperature": 0.1,
-        "output_config": {"effort": effort},
-    }).encode()
-
-    req = urllib.request.Request(
-        url,
-        data=body,
-        headers={
-            "Content-Type": "application/json",
-            "x-api-key": api_key,
-            "anthropic-version": "2023-06-01",
-        },
+    return AnthropicClient(api_key, api_base).generate(
+        model_id=model_id,
+        prompt=prompt,
+        max_tokens=max_tokens,
+        effort=effort,
+        caller_module=caller_module,
+        teacher_id=teacher_id,
+        sample_id=sample_id,
     )
-    try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            data = json.loads(resp.read())
-            text = data["content"][0]["text"].strip()
-            usage = data.get("usage", {})
-            input_t = usage.get("input_tokens", 0)
-            output_t = usage.get("output_tokens", 0)
-            return text, input_t, output_t, "success"
-    except urllib.error.HTTPError as e:
-        if e.code == 429:
-            # PR-B：用 retry-after header 區分短暫 RPM/TPM vs 長期配額
-            kind, retry = _parse_anthropic_429(e)
-            status = "rate_limit_day" if kind == "day" else "rate_limit_minute"
-            logger.info("Anthropic 429 kind=%s retry_after=%ds", kind, retry)
-            return None, 0, 0, status
-        logger.error("Anthropic REST 失敗 HTTP %s", e.code)
-        return None, 0, 0, "error"
-    except Exception as e:
-        logger.error("Anthropic REST 呼叫失敗：%s", e)
-        return None, 0, 0, "error"
 
 
 def _strip_markdown(text: str) -> str:
@@ -708,6 +675,13 @@ def call_teacher_for_test(
             caller_module="teacher_service.call_teacher_for_test", teacher_id=teacher["id"],
         )
     elif "api.anthropic.com" in teacher["api_base"]:
-        return _call_anthropic(api_key, teacher["api_base"], teacher["model_id"], prompt, max_tokens=200)
+        return _call_anthropic(
+            api_key, teacher["api_base"], teacher["model_id"], prompt, max_tokens=200,
+            caller_module="teacher_service.call_teacher_for_test", teacher_id=teacher["id"],
+        )
     else:
-        return _call_openai_compat(api_key, teacher["api_base"], teacher["model_id"], prompt, max_tokens=200)
+        return _call_openai_compat(
+            api_key, teacher["api_base"], teacher["model_id"], prompt, max_tokens=200,
+            vendor=_vendor_of(teacher),
+            caller_module="teacher_service.call_teacher_for_test", teacher_id=teacher["id"],
+        )
