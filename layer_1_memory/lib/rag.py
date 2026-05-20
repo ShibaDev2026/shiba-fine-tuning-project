@@ -161,6 +161,144 @@ def get_rag_context(
     return build_rag_output(sessions, token_budget=token_budget)
 
 
+def retrieve_for_eval_with_context(
+    query: str,
+    project_path: str | None = None,
+    top_n: int = 3,
+    window_k: int = 2,
+    preview_chars: int = 200,
+) -> dict:
+    """
+    評估專用召回 API（擴展版）：每個 hit 額外帶 ±window_k 個鄰居 exchange 上下文。
+
+    與 retrieve_for_eval 的差異：
+    - 命中向量召回後，用 exchange_id 反查 (branch_id, exchange_idx)
+    - 拉出同一 branch 內 [idx-K, idx+K] 範圍的鄰居 exchange
+    - 每筆呈現「Q: user_text_preview / A: final_text_preview」，命中那筆標 ★
+    - 若 hit 沒有 exchange_id（舊資料 backfill 失敗）→ 退回單 exchange 行為
+
+    回傳結構與 retrieve_for_eval 相容；額外加 `expanded`（True 表示有任何 hit 真的擴展）。
+    """
+    vector_results = _vector_search(query, top_n=top_n)
+    if vector_results:
+        contexts: list[str] = []
+        any_expanded = False
+        seen_uuids: list[str] = []
+        for hit in vector_results:
+            if hit["session_uuid"] not in seen_uuids:
+                seen_uuids.append(hit["session_uuid"])
+
+            block, expanded = _build_context_block(hit, window_k, preview_chars)
+            contexts.append(block)
+            if expanded:
+                any_expanded = True
+
+        return {
+            "query": query,
+            "source": "vector",
+            "retrieved_contexts": contexts,
+            "retrieved_session_uuids": seen_uuids,
+            "expanded": any_expanded,
+            "window_k": window_k,
+        }
+
+    # Fallback：FTS5（與 retrieve_for_eval 同行為，不擴展）
+    sessions = retrieve_relevant_sessions(query=query, project_path=project_path, top_n=top_n)
+    if not sessions:
+        return {
+            "query": query, "source": "fts5", "retrieved_contexts": [],
+            "retrieved_session_uuids": [], "expanded": False, "window_k": window_k,
+        }
+    return {
+        "query": query,
+        "source": "fts5",
+        "retrieved_contexts": [
+            "session: {}\n{}".format(s.get("session_uuid", ""), s.get("snippet", ""))
+            for s in sessions
+        ],
+        "retrieved_session_uuids": [s.get("session_uuid", "") for s in sessions],
+        "expanded": False,
+        "window_k": window_k,
+    }
+
+
+def _build_context_block(
+    hit: dict,
+    window_k: int,
+    preview_chars: int,
+) -> tuple[str, bool]:
+    """
+    對單一 hit 構建 context 字串。
+    回傳 (block, expanded)：expanded=True 表示成功取到鄰居並擴展。
+    """
+    exchange_id = hit.get("exchange_id")
+    instruction = hit["instruction"].strip()
+    commands = hit["commands"].strip()
+
+    # 無 exchange_id 或 window_k=0 → 退回單 exchange 行為
+    if not exchange_id or window_k <= 0:
+        return ("問題：{}\n指令：{}".format(instruction, commands), False)
+
+    neighbors = _fetch_neighbor_exchanges(exchange_id, window_k)
+    if not neighbors:
+        # 找不到鄰居（可能 hit exchange 已被刪除），fallback
+        return ("問題：{}\n指令：{}".format(instruction, commands), False)
+
+    # 找出 hit 在 neighbors 裡的位置，標 ★
+    hit_idx = next(
+        (n["exchange_idx"] for n in neighbors if n["id"] == exchange_id),
+        None,
+    )
+
+    lines = [
+        f"### 對話片段（session={hit['session_uuid'][:8]}, exchange {neighbors[0]['exchange_idx']}-{neighbors[-1]['exchange_idx']}）"
+    ]
+    for n in neighbors:
+        marker = " ★" if n["exchange_idx"] == hit_idx else ""
+        user_p = (n["user_text_preview"] or "").strip()[:preview_chars]
+        final_p = (n["final_text_preview"] or "").strip()[:preview_chars]
+        lines.append(f"[i={n['exchange_idx']}]{marker}")
+        if user_p:
+            lines.append(f"  Q: {user_p}")
+        if final_p:
+            lines.append(f"  A: {final_p}")
+    return ("\n".join(lines), True)
+
+
+def _fetch_neighbor_exchanges(exchange_id: int, window_k: int) -> list[dict]:
+    """
+    取 hit exchange 周圍 ±window_k 個鄰居（含 hit 本身），按 exchange_idx 升序回傳。
+    失敗時回傳空 list（呼叫端會 fallback 單 exchange 行為）。
+    """
+    try:
+        with get_connection() as conn:
+            rows = conn.execute(
+                """
+                WITH hit AS (
+                    SELECT branch_id, exchange_idx FROM exchanges WHERE id = ?
+                )
+                SELECT e.id, e.exchange_idx, e.user_text_preview, e.final_text_preview
+                FROM exchanges e
+                JOIN hit ON e.branch_id = hit.branch_id
+                WHERE e.exchange_idx BETWEEN hit.exchange_idx - ? AND hit.exchange_idx + ?
+                ORDER BY e.exchange_idx
+                """,
+                (exchange_id, window_k, window_k),
+            ).fetchall()
+    except sqlite3.OperationalError:
+        return []
+
+    return [
+        {
+            "id": r["id"],
+            "exchange_idx": r["exchange_idx"],
+            "user_text_preview": r["user_text_preview"],
+            "final_text_preview": r["final_text_preview"],
+        }
+        for r in rows
+    ]
+
+
 def retrieve_for_eval(
     query: str,
     project_path: str | None = None,
@@ -215,7 +353,7 @@ def _vector_search(query: str, top_n: int = 3) -> list[dict]:
             # 召回這類結果反而會引入雜訊，故自動排除。
             # 閾值 3 = 允許一句話對應最多 2 種合理變體（如 git add + git commit）
             rows = conn.execute("""
-                SELECT session_uuid, instruction, commands, embedding
+                SELECT session_uuid, instruction, commands, embedding, exchange_id
                 FROM exchange_embeddings
                 WHERE instruction IN (
                     SELECT instruction
@@ -240,6 +378,7 @@ def _vector_search(query: str, top_n: int = 3) -> list[dict]:
                 "instruction": row["instruction"],
                 "commands": row["commands"],
                 "score": score,
+                "exchange_id": row["exchange_id"],
             })
         except Exception:
             continue
