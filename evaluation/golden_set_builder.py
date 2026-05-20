@@ -267,6 +267,7 @@ def _action_review() -> None:
             """SELECT id, query, expected_session_uuids, annotator, notes
                FROM retrieval_golden_set
                WHERE annotator LIKE 'auto-by-%'
+                 AND is_active = 1
                ORDER BY id"""
         ).fetchall()
     for r in rows:

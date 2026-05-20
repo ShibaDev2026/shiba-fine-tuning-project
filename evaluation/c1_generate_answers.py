@@ -160,6 +160,7 @@ def run(
             FROM retrieval_golden_set
             WHERE expected_session_uuids != '[]'
               AND expected_answer IS NULL
+              AND is_active = 1
             ORDER BY id
         """
         if limit:

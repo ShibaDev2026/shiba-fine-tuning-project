@@ -227,6 +227,7 @@ def run_layer1_evaluation(
         sql = """SELECT id, query, expected_session_uuids
                  FROM retrieval_golden_set
                  WHERE expected_session_uuids != '[]'
+                   AND is_active = 1
                  ORDER BY id"""
         if sample_size:
             sql += f" LIMIT {sample_size}"

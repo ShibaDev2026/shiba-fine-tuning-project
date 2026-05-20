@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS retrieval_golden_set (
     expected_exchange_ids   TEXT,               -- JSON array
     expected_answer         TEXT,               -- Phase C 擴充用
     annotator               TEXT,               -- 'shiba' | 'auto-by-claude'
+    is_active               INTEGER NOT NULL DEFAULT 1,  -- 0=deprecated（低分/無解題汰換留審計）
     created_at              TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     notes                   TEXT
 );

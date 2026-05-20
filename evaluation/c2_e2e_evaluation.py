@@ -246,6 +246,7 @@ def run(
             SELECT id, query, expected_answer
             FROM retrieval_golden_set
             WHERE expected_answer IS NOT NULL
+              AND is_active = 1
             ORDER BY id
         """
         if limit:
