@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- launchd plist：Shiba C.4 週度 E2E 品質 CI 採樣 -->
+<!-- 排程：每週日 22:00（台灣時間，launchd 使用本機 timezone）-->
+<!-- 安裝：bash setup_c4_launchd.sh -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.shiba.ragas-c4</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>PROJECT_ROOT_PLACEHOLDER/.venv/bin/python</string>
+    <string>-m</string>
+    <string>evaluation.c4_weekly_ci</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>PROJECT_ROOT_PLACEHOLDER</string>
+
+  <!-- 每週日 22:00（本機 timezone = Asia/Taipei）-->
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Weekday</key>
+    <integer>0</integer>
+    <key>Hour</key>
+    <integer>22</integer>
+    <key>Minute</key>
+    <integer>0</integer>
+  </dict>
+
+  <key>StandardOutPath</key>
+  <string>PROJECT_ROOT_PLACEHOLDER/data/logs/c4_ci_stdout.log</string>
+  <key>StandardErrorPath</key>
+  <string>PROJECT_ROOT_PLACEHOLDER/data/logs/c4_ci_stderr.log</string>
+
+  <!-- 不常駐，跑完即結束 -->
+  <key>RunAtLoad</key>
+  <false/>
+</dict>
+</plist>
