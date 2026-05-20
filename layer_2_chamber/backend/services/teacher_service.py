@@ -159,8 +159,9 @@ def upsert_teacher(
 
 
 def get_today_usage(conn: sqlite3.Connection, teacher_id: int) -> int:
-    """取得今日已使用次數"""
-    today = date.today().isoformat()
+    """取得今日已使用次數（UTC 對齊：與 SQLite datetime('now') 一致，
+    避免 CST 跨日後本機日期與 UTC 不同造成 COUNT 失準 0-8 小時）"""
+    today = datetime.now(timezone.utc).date().isoformat()
     row = conn.execute(
         """SELECT COUNT(*) as cnt FROM teacher_usage_logs
            WHERE teacher_id = ? AND used_at >= ?""",
