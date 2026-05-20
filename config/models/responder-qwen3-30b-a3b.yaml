@@ -1,0 +1,45 @@
+# Layer 0 responder 配置（現役主力）
+# 對應 layer_0_router/router.py:17 LOCAL_MODEL = "qwen3:30b-a3b"
+# 對應 router_config.responder_model_yaml = "responder-qwen3-30b-a3b"
+
+# ─── 識別 ───
+display_name: Qwen 3 30B-A3B
+role: responder
+ollama_tag: qwen3:30b-a3b
+description: Layer 0 本地回答主力（MoE，30B 總參、~3B 激活）；將來由 shiba-block1/block2 取代
+
+# ─── 推論參數 ───
+inference:
+  think: false                     # 中文回應 think 關閉（避免冗長 CoT）
+  num_ctx: 8192
+  temperature: 0.7
+  top_p: 0.9
+  top_k: 40
+  repeat_penalty: 1.05
+  num_predict: 1024
+  stop: []
+  keep_alive: 10m
+  timeout_seconds: 60              # 30B 首次載入較慢，預留時間
+
+# ─── Prompt 配置 ───
+prompt:
+  system: |
+    你是 Shiba 的本地助理。請以繁體中文簡潔回答，直接給結論再補理由。
+  user_template: null
+
+# ─── 模型元資料 ───
+meta:
+  family: qwen
+  quantization: q4_K_M
+  size_gb: 18
+  min_ram_gb: 24
+  supports_thinking: true
+  supports_vision: false
+  supports_audio: false
+
+# ─── 維護 ───
+maintenance:
+  yaml_version: 1
+  added_at: "2026-05-07"
+  notes: |
+    Qwen3-30B-A3B（MoE）。將來 Layer 3 訓練出 shiba-block1/block2:YYYYMMDD 後可切換。

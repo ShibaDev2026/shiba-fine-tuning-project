@@ -30,8 +30,8 @@ def _call_qwen_paraphrase(instruction: str) -> list[str]:
     import urllib.request, urllib.error
 
     prompt = (
-        f"給你一個操作描述，生成 {PARAPHRASE_VARIANT} 種不同的中文說法，"
-        f"語意完全相同，只是用詞不同。不要加編號或解釋，只回傳 JSON array。\n"
+        f"給你一個操作描述，生成 {PARAPHRASE_VARIANT} 種不同的繁體中文說法，"
+        f"語意完全相同，只是用詞不同。必須使用繁體中文，不要加編號或解釋，只回傳 JSON array。\n"
         f"原始：「{instruction}」\n"
         f"回傳格式：[\"說法1\", \"說法2\", ...]"
     )

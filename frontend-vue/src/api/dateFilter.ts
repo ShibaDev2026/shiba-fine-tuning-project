@@ -27,7 +27,12 @@ export function buildDateQS(mode: DateMode, from: string, to: string): string {
 }
 
 // 統一時間格式（Router + Memory 共用）
+// DB 存 UTC，加 'Z' 後讓 Date 解析為 UTC 再轉本地時區顯示
 export function fmtDT(v: string | null | undefined): string {
   if (!v) return '—'
-  return v.replace('T', ' ').replace('Z', '').slice(0, 19).replace(/-/g, '/')
+  const normalized = v.includes('Z') || v.includes('+') ? v : v.replace(' ', 'T') + 'Z'
+  const d = new Date(normalized)
+  if (isNaN(d.getTime())) return v.slice(0, 19).replace(/-/g, '/')
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}/${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
 }

@@ -358,13 +358,14 @@ def _update_sample_score(
     reason: str,
     status: str,
 ) -> None:
+    # PR2 Step 6：不在此 commit，由 caller（multi_judge_score）的 with conn 統一收尾，
+    # 與 weight 寫入共一事務。
     conn.execute(
         """UPDATE training_samples
            SET score=?, score_reason=?, status=?, reviewed_at=datetime('now')
            WHERE id=?""",
         (score, reason, status, sample_id),
     )
-    conn.commit()
 
 
 def _mark_daily_limit_reached(conn: sqlite3.Connection, teacher_id: int) -> None:

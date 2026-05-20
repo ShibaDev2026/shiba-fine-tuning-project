@@ -5,6 +5,8 @@ import subprocess
 import logging
 from pathlib import Path
 
+from layer_0_router._config import get_training_base_hf_repo
+
 logger = logging.getLogger(__name__)
 
 _LORA_CONFIG = {
@@ -14,10 +16,8 @@ _LORA_CONFIG = {
     "batch_size": 4,
 }
 
-BASE_MODELS = {
-    1: "mlx-community/Qwen2.5-7B-Instruct-4bit",
-    2: "mlx-community/Qwen2.5-7B-Instruct-4bit",
-}
+# base model 改從 router_config + model_registry snapshot 取得（yaml 化後唯一真相來源）；
+# 切換 base 走 PUT /router/config（key=training_base_block{N}_yaml），無需動 code。
 
 
 def train_lora(
@@ -38,7 +38,7 @@ def train_lora(
     # 動態 rank：樣本少時降低以避免過擬合
     lora_rank = 8 if approved_count < 50 else 16
 
-    model = BASE_MODELS[adapter_block]
+    model = get_training_base_hf_repo(adapter_block)
     cmd = [
         "python", "-m", "mlx_lm.lora",
         "--model", model,

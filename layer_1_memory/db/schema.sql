@@ -1,14 +1,7 @@
 -- ============================================================
 -- shiba-brain.db — Layer 1 記憶層完整 Schema
--- 採用 WAL 模式防止 Hook / FastAPI 並發衝突
+-- PRAGMA 設定統一由 shiba_db.open_connection 管理，不在 schema 層設置
 -- ============================================================
-
--- WAL 模式（Write-Ahead Logging，允許多讀一寫並發）
-PRAGMA journal_mode=WAL;
--- 衝突時最多重試 5 秒，避免 SQLITE_BUSY 錯誤
-PRAGMA busy_timeout=5000;
--- 外鍵約束啟用
-PRAGMA foreign_keys=ON;
 
 -- ============================================================
 -- Layer 1：四層記憶結構

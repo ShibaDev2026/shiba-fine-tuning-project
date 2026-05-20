@@ -74,14 +74,16 @@ def multi_judge_score(
         reason = f"不足票數（{approved_votes}/{len(votes)} approved）"
         logger.debug("sample %d rejected：votes=%s", sample_id, votes)
 
-    _update_sample_score(conn, sample_id, avg_score, reason, status)
-    if status == "approved":
-        # 寫入 weight（soft label 或 1.0）
-        conn.execute(
-            "UPDATE training_samples SET weight=? WHERE id=?",
-            (weight, sample_id),
-        )
-        conn.commit()
+    # PR2 Step 6：同一筆 sample 的 status/score/weight 共一事務，
+    # 避免「score 寫了但 weight 漏」的部分狀態。quota 計數仍獨立 commit。
+    with conn:
+        _update_sample_score(conn, sample_id, avg_score, reason, status)
+        if status == "approved":
+            # 寫入 weight（soft label 或 1.0）
+            conn.execute(
+                "UPDATE training_samples SET weight=? WHERE id=?",
+                (weight, sample_id),
+            )
 
     return {
         "status": status,

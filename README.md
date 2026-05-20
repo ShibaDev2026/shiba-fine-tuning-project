@@ -19,9 +19,10 @@
 
 每次對話開始時，由 Gemma 分類決定走本地模型或 Claude：
 
-- `classifier.py`：Gemma E2B（gemma3:2b）任務分類
-- `compressor.py`：Gemma E4B（gemma3:4b）壓縮 RAG context
-- `router.py`：主協調器，local → 壓縮 → Qwen 推論 → 注入建議
+- `classifier.py`：gemma3:4b 任務分類（v1.5.0 起改讀 `model_registry.snapshot` JSON，不再 hardcode）
+- `compressor.py`：gemma3:4b 壓縮 RAG context（同上 DB-driven）
+- `router.py`：主協調器，local → 壓縮 → Qwen 推論 → 注入建議；offline kill switch 由 `router_config.ollama_status` 控制
+- `_config.py`：snapshot 載入 + `is_local_enabled` + `split_inference`（拆出 `keep_alive` / `think` 至 Ollama body 頂層）
 - `telemetry.py`：**P0-1** 採納率追蹤，寫入 `router_decisions` 表
 
 ### Layer 1 — 日常記憶層
@@ -66,7 +67,7 @@
 
 | 用途 | 模型 |
 |------|------|
-| 分類（Fast） | gemma3:2b（think: false） |
+| 分類（Fast） | gemma3:4b（think: false） |
 | 壓縮（Primary） | gemma3:4b（think: false） |
 | 回應（Response） | qwen3:30b-a3b → shiba-block1 |
 | Judge（初裁） | Gemini 2.5 Flash（250 req/day）|
@@ -199,6 +200,7 @@ docs/
 | 版本 | 日期 | 主要內容 |
 |------|------|---------|
 | v1.5.0 | 2026-05-18 | SQLite 競態強化（PR1: WAL→DELETE journal, PR2: stop_hook/multi_judge 4段 SAVEPOINT 原子事務）；RAGAS 評估框架（Phase A 完成：golden set 31 筆、UUID 召回基線）；Teacher RPM 速率管理（PR-A/B/C：schema migration、429 分流、排程時程修正至 PT 午夜）|
+| v1.4.0 | 2026-05-07 | 模型 yaml 化重構 Step 1+2：5 份 `config/models/*.yaml` + 專案根 `models_loader.py`；DB 雙表機制（`model_registry` 版本歷史 + `router_config` 選擇器、lifespan idempotent sync）；`PhaseModels.vue` 唯讀頁 4 列 grid；師父 CRUD 8 endpoints + `PhaseTeachers` UI 重構；共用 UI 元件 `Modal`/`ConfirmDialog`/`FormField`/`Toast` + `stores/toast.ts`；`ollama_status` 改走 HTTP API（docker 友善）|
 | v1.3.1 | 2026-05-06 | 文件目錄一次性整理（`docs/{design,references,archive}/`）+ `AGENTS.md` 對外規範對齊 v1.3.0 事實；純文件變更不動執行碼 |
 | v1.3.0 | 2026-05-04 | Grok 外部審視回應：A（Judge 廠牌多樣性）、C（Retention/Golden Set 防遺忘）、D（首次訓練人工把關）、B（Drift 告警 + 儀表板）；shiba_alert.py 公用告警模組；gatekeeper 第 4 條件 retention_score ≥ 0.85；trigger_policy 首次訓練 requires_manual；routes_finetune manual approve endpoint；新建 10 tests |
 | v1.2.0 | 2026-05-01 | A/B/C 三級架構檢視一輪：A3-A5 spec/code 對齊、B1-B7 靜默失效修補（finished_at ISO、threshold 拆耦、try-except 收緊、cold-compress 條件、SAVEPOINT、集中 alert）、C1-C6 效能與正確性（multi_judge early exit、Ebbinghaus 視窗、exchange-level dedup、多維採納啟發式、排程併發保護、keychain_ref nullable）|

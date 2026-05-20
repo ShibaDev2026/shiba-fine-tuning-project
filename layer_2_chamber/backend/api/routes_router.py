@@ -5,10 +5,18 @@ import json
 import sqlite3
 import urllib.request
 import urllib.error
-from fastapi import APIRouter, Depends, Query
+from datetime import datetime
+from pathlib import Path
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from ..core.config import get_db
 from shiba_config import CONFIG
+
+# yaml 目錄（相對專案根）
+_MODELS_DIR: Path = Path(__file__).resolve().parent.parent.parent.parent / "config" / "models"
+
+# 推論型 role 清單（供 /status 遍歷）
+_INFERENCE_ROLES = ["classifier", "compressor", "responder"]
 
 router = APIRouter(prefix="/api/v1/router", tags=["router"])
 
@@ -152,27 +160,75 @@ def decision_context(decision_id: int, conn: sqlite3.Connection = Depends(get_db
 
 # ── B-5：系統狀態 ────────────────────────────────────────────────────────────
 @router.get("/status")
-def router_status():
-    """檢查 Ollama 是否在線，回傳路由器設定"""
+def router_status(conn: sqlite3.Connection = Depends(get_db)):
+    """檢查 Ollama 是否在線，回傳路由器設定 + 各 role yaml 狀態（Step 4 擴充）"""
     try:
         urllib.request.urlopen(CONFIG.services.ollama_base_url, timeout=2)
         ollama_online = True
     except Exception:
         ollama_online = False
 
-    # 從 layer_0_router 讀取實際設定值，避免與 classifier.py 脫節
+    # 從 router_config + model_registry snapshot 讀當前模型（yaml 化後唯一真相來源）
     try:
-        from layer_0_router.classifier import CLASSIFIER_MODEL
-        from layer_0_router.router import LOCAL_MODEL
+        from layer_0_router._config import load_active_snapshot
+        classifier_model = load_active_snapshot("classifier")["ollama_tag"]
+        local_model = load_active_snapshot("responder")["ollama_tag"]
     except Exception:
-        CLASSIFIER_MODEL = "unknown"
-        LOCAL_MODEL = "unknown"
+        classifier_model = "unknown"
+        local_model = "unknown"
+
+    # ollama_status kill switch（前端 ToggleSwitch 用）
+    status_row = conn.execute(
+        "SELECT value FROM router_config WHERE key='ollama_status'"
+    ).fetchone()
+    ollama_status = status_row["value"] if status_row else "offline"
+
+    # 各推論 role 詳細狀態（供前端「yaml 已修改」徽章）
+    roles: dict = {}
+    for role in _INFERENCE_ROLES:
+        try:
+            cfg_row = conn.execute(
+                "SELECT value, updated_at FROM router_config WHERE key=?",
+                (f"{role}_model_yaml",),
+            ).fetchone()
+            if cfg_row is None:
+                continue
+            stem = cfg_row["value"]
+            reg_row = conn.execute(
+                "SELECT display_name, recorded_at FROM model_registry "
+                "WHERE model_name=? AND is_current=1",
+                (stem,),
+            ).fetchone()
+            if reg_row is None:
+                continue
+
+            yaml_path = _MODELS_DIR / f"{stem}.yaml"
+            yaml_exists = yaml_path.exists()
+            yaml_modified = False
+            if yaml_exists and reg_row["recorded_at"]:
+                try:
+                    recorded_ts = datetime.fromisoformat(reg_row["recorded_at"]).timestamp()
+                    yaml_modified = yaml_path.stat().st_mtime > recorded_ts
+                except Exception:
+                    pass
+
+            roles[role] = {
+                "stem": stem,
+                "display_name": reg_row["display_name"],
+                "snapshot_at": reg_row["recorded_at"],
+                "yaml_exists": yaml_exists,
+                "yaml_modified": yaml_modified,
+            }
+        except Exception:
+            pass
 
     return {
         "ollama_online": ollama_online,
-        "classifier_model": CLASSIFIER_MODEL,
-        "local_model": LOCAL_MODEL,
+        "ollama_status": ollama_status,
+        "classifier_model": classifier_model,
+        "local_model": local_model,
         "router_enabled": True,
+        "roles": roles,
     }
 
 
@@ -298,3 +354,197 @@ def get_drift_stats(conn: sqlite3.Connection = Depends(get_db)):
         "threshold": _DRIFT_THRESHOLD,
         "status": "ok",
     }
+
+
+# ── Step 4：模型清單與設定切換 ────────────────────────────────────────────────
+
+def _fetch_ollama_tags() -> tuple[bool, set[str]]:
+    """Proxy Ollama /api/tags；回 (reachable, installed_tag_set)。"""
+    try:
+        req = urllib.request.Request(f"{CONFIG.services.ollama_base_url}/api/tags")
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            data = json.loads(resp.read())
+        return True, {m["name"] for m in data.get("models", [])}
+    except Exception:
+        return False, set()
+
+
+@router.get("/models/installed")
+def models_installed():
+    """比對 yaml 清單 vs Ollama 已安裝，分三類回傳。
+
+    - yaml_configured：yaml 有且 Ollama 已下載（可用）
+    - yaml_orphan：yaml 有但 Ollama 未下載（dropdown 灰選）
+    - installed_no_yaml：Ollama 有但無 yaml（dropdown 灰選，需補寫 yaml）
+    """
+    from models_loader import MODELS
+
+    reachable, installed_tags = _fetch_ollama_tags()
+
+    yaml_configured = []
+    yaml_orphan = []
+    yaml_tag_set: set[str] = set()
+
+    for cfg in MODELS.list_all():
+        if cfg.ollama_tag is None:  # training_base 無 ollama_tag，跳過
+            continue
+        yaml_tag_set.add(cfg.ollama_tag)
+        entry = {
+            "stem": cfg.stem,
+            "display_name": cfg.display_name,
+            "ollama_tag": cfg.ollama_tag,
+            "role": cfg.role,
+        }
+        if cfg.ollama_tag in installed_tags:
+            yaml_configured.append(entry)
+        else:
+            yaml_orphan.append(entry)
+
+    installed_no_yaml = [
+        {"ollama_tag": tag}
+        for tag in sorted(installed_tags)
+        if tag not in yaml_tag_set
+    ]
+
+    return {
+        "ollama_reachable": reachable,
+        "yaml_configured": yaml_configured,
+        "yaml_orphan": yaml_orphan,
+        "installed_no_yaml": installed_no_yaml,
+    }
+
+
+@router.get("/models/by-role")
+def models_by_role(role: str = Query(..., description="classifier | compressor | responder | training_base")):
+    """回該 role 所有 yaml 清單，每筆含 status（installed / not_downloaded）。"""
+    from models_loader import MODELS
+
+    _VALID = {"classifier", "compressor", "responder", "embedder", "training_base"}
+    if role not in _VALID:
+        raise HTTPException(status_code=400, detail=f"role={role!r} 不合法，可選：{sorted(_VALID)}")
+
+    _, installed_tags = _fetch_ollama_tags()
+
+    result = []
+    for cfg in MODELS.by_role(role):
+        status = (
+            "installed" if cfg.ollama_tag and cfg.ollama_tag in installed_tags
+            else "not_downloaded" if cfg.ollama_tag
+            else "no_ollama_tag"  # training_base
+        )
+        result.append({
+            "stem": cfg.stem,
+            "display_name": cfg.display_name,
+            "ollama_tag": cfg.ollama_tag,
+            "status": status,
+        })
+
+    return result
+
+
+class RouterConfigBody(BaseModel):
+    key: str    # e.g. classifier_model_yaml
+    value: str  # new stem，e.g. classifier-gemma3-4b
+
+
+@router.put("/config")
+def put_router_config(
+    body: RouterConfigBody,
+    conn: sqlite3.Connection = Depends(get_db),
+):
+    """更新 router_config（支援 model 切換 + ollama_status kill switch）。
+
+    分支驗證：
+    - `*_model_yaml`：驗 stem yaml 存在 + model_registry has is_current=1（不在則先 sync）
+    - `ollama_status`：驗 value ∈ {online, offline}
+    其他 key：拒絕（避免誤寫）
+
+    流程：原子更新 router_config.value + updated_at → invalidate snapshot cache
+    """
+    from models_loader import MODELS
+    from models_db import sync_model_registry
+    from layer_0_router._config import invalidate_cache
+
+    # 驗 router_config key 存在
+    cfg_row = conn.execute(
+        "SELECT value FROM router_config WHERE key=?", (body.key,)
+    ).fetchone()
+    if cfg_row is None:
+        raise HTTPException(status_code=404, detail=f"router_config key={body.key!r} 不存在")
+
+    # 分支驗證
+    if body.key.endswith("_yaml"):
+        # model 切換路徑（推論型 *_model_yaml + 訓練型 training_base_block{N}_yaml）
+        try:
+            MODELS.get_by_stem(body.value)
+        except KeyError as e:
+            raise HTTPException(status_code=404, detail=str(e))
+
+        reg = conn.execute(
+            "SELECT id FROM model_registry WHERE model_name=? AND is_current=1",
+            (body.value,),
+        ).fetchone()
+        if reg is None:
+            sync_model_registry(conn)
+            reg = conn.execute(
+                "SELECT id FROM model_registry WHERE model_name=? AND is_current=1",
+                (body.value,),
+            ).fetchone()
+            if reg is None:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"sync 後仍找不到 model_name={body.value!r}；請確認 yaml 檔名與 role 一致",
+                )
+
+    elif body.key == "ollama_status":
+        # kill switch 路徑
+        if body.value not in ("online", "offline"):
+            raise HTTPException(
+                status_code=400,
+                detail=f"ollama_status 僅可為 'online'/'offline'，收到：{body.value!r}",
+            )
+
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail=f"key={body.key!r} 不支援更新（允許：*_yaml、ollama_status）",
+        )
+
+    # 原子更新
+    conn.execute(
+        "UPDATE router_config SET value=?, updated_at=datetime('now') WHERE key=?",
+        (body.value, body.key),
+    )
+    conn.commit()
+    invalidate_cache()
+
+    return {"ok": True, "key": body.key, "value": body.value}
+
+
+class ReloadBody(BaseModel):
+    key: str  # e.g. classifier_model_yaml
+
+
+@router.post("/config/reload")
+def reload_router_config(
+    body: ReloadBody,
+    conn: sqlite3.Connection = Depends(get_db),
+):
+    """重新讀 yaml → 更新 model_registry snapshot（不換 stem）。
+
+    用於「改完 yaml 想立即生效」，等同手動觸發 lifespan sync（冪等）。
+    """
+    from models_db import sync_model_registry
+    from layer_0_router._config import invalidate_cache
+
+    # 驗 key 存在並取 current stem
+    cfg_row = conn.execute(
+        "SELECT value FROM router_config WHERE key=?", (body.key,)
+    ).fetchone()
+    if cfg_row is None:
+        raise HTTPException(status_code=404, detail=f"router_config key={body.key!r} 不存在")
+
+    stats = sync_model_registry(conn)
+    invalidate_cache()
+
+    return {"ok": True, "key": body.key, "stem": cfg_row["value"], "sync_stats": stats}

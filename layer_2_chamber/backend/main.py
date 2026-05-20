@@ -20,16 +20,23 @@ main.py — Layer 2 精神時光屋 FastAPI 入口
 
 from contextlib import asynccontextmanager
 import logging
-import sqlite3
+import sys
+from pathlib import Path
+
+# 將專案根加入 sys.path，讓 models_loader / models_db 可被匯入（與 paraphrase_service 同 pattern）
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from models_db import init_model_registry, sync_model_registry
 from .api.routes_dashboard import router as dashboard_router
 from .api.routes_dataset import router as dataset_router
 from .api.routes_mcp import router as mcp_router
 from .api.routes_finetune import router as finetune_router
 from .api.routes_teachers import router as teachers_router, html_router as teacher_html_router
+from .api.routes_models import router as models_router
+from .api.routes_router_config import router as router_config_router
 from .api.routes_router import router as router_router
 from .api.routes_memory import router as memory_router
 from .core.background import setup_scheduler
@@ -39,19 +46,27 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 logger = logging.getLogger(__name__)
 
 
-def _conn_factory() -> sqlite3.Connection:
+def _conn_factory():
     """給背景排程使用的 connection factory"""
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys=ON")
-    conn.execute("PRAGMA journal_mode=WAL")
-    return conn
+    from shiba_db import open_connection
+    return open_connection("writer")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # 啟動：確保 DB schema、啟動排程
     init_layer2_db()
+
+    # model_registry：建表 + sync config/models/*.yaml 變動
+    # 失敗不阻擋 API 啟動（registry 為新模組，初期允許 degrade）
+    try:
+        with _conn_factory() as registry_conn:
+            init_model_registry(registry_conn)
+            stats = sync_model_registry(registry_conn)
+        logger.info("model_registry sync 完成：%s", stats)
+    except Exception as e:
+        logger.exception("model_registry sync 失敗，跳過：%s", e)
+
     scheduler = setup_scheduler(app, _conn_factory)
     if scheduler:
         scheduler.start()
@@ -80,6 +95,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(models_router)
+app.include_router(router_config_router)
 app.include_router(router_router)
 app.include_router(memory_router)
 app.include_router(dashboard_router)

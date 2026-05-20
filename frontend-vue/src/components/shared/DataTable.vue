@@ -53,7 +53,7 @@ function isSelected(row: T): boolean {
           <td
             v-for="c in columns"
             :key="c.key"
-            class="px-3 whitespace-nowrap"
+            class="px-3"
             :style="{
               padding: '9px 12px',
               borderBottom: '1px solid #191d24',

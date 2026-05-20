@@ -5,13 +5,11 @@ import subprocess
 import logging
 from pathlib import Path
 
+from layer_0_router._config import get_training_base_hf_repo
+
 logger = logging.getLogger(__name__)
 
-BASE_MODELS = {
-    1: "mlx-community/Qwen2.5-7B-Instruct-4bit",
-    2: "mlx-community/Qwen2.5-7B-Instruct-4bit",
-}
-
+# base model 改從 router_config + model_registry snapshot 取得（yaml 化後唯一真相來源）。
 _LLAMA_CPP_CONVERT = Path.home() / "llama.cpp" / "convert_hf_to_gguf.py"
 
 
@@ -27,7 +25,7 @@ def convert_to_gguf(adapter_dir: Path, output_dir: Path, adapter_block: int) -> 
 
     fuse_cmd = [
         "python", "-m", "mlx_lm.fuse",
-        "--model", BASE_MODELS[adapter_block],
+        "--model", get_training_base_hf_repo(adapter_block),
         "--adapter-path", str(adapter_dir),
         "--save-path", str(fused_dir),
         "--de-quantize",
