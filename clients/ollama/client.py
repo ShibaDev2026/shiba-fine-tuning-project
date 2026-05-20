@@ -31,12 +31,13 @@ if str(_ROOT) not in sys.path:
 from shiba_alert import send_alert  # noqa: E402
 
 from clients.api_log import log_api_call  # noqa: E402
-from clients.base import AIPermanentError, AITransientError  # noqa: E402
+from clients.base import (  # noqa: E402
+    TRANSIENT_RETRY_BACKOFF_SECONDS,
+    AIPermanentError,
+    AITransientError,
+)
 
 logger = logging.getLogger(__name__)
-
-# 連線拒絕 → service_unavailable，重試前固定 sleep 10s
-_TRANSIENT_RETRY_SLEEP_SECONDS = 10
 
 # Ollama 預設本地端點
 _DEFAULT_HOST = "http://localhost:11434"
@@ -100,17 +101,23 @@ class OllamaClient:
         try:
             return self._invoke_once(model_id, prompt, max_tokens, temperature, log_ctx)
         except _RetryableConnectionError as e:
+            last_error = e
+
+        for attempt_idx, delay in enumerate(TRANSIENT_RETRY_BACKOFF_SECONDS, start=1):
             logger.warning(
-                "Ollama 連線拒絕（將於 %ds 後重試 1 次）host=%s model=%s",
-                _TRANSIENT_RETRY_SLEEP_SECONDS, self._host, model_id,
+                "Ollama 連線拒絕（第 %d/%d 次重試前等 %ds）host=%s model=%s",
+                attempt_idx, len(TRANSIENT_RETRY_BACKOFF_SECONDS),
+                delay, self._host, model_id,
             )
-            time.sleep(_TRANSIENT_RETRY_SLEEP_SECONDS)
+            time.sleep(delay)
             try:
                 return self._invoke_once(model_id, prompt, max_tokens, temperature, log_ctx)
-            except _RetryableConnectionError as e2:
-                msg = f"重試 1 次仍連線拒絕：{e2.message}"
-                self._raise_transient(model_id, msg, code=None)
-            raise AssertionError("unreachable")
+            except _RetryableConnectionError as e:
+                last_error = e
+
+        msg = f"重試 {len(TRANSIENT_RETRY_BACKOFF_SECONDS)} 次仍連線拒絕：{last_error.message}"
+        self._raise_transient(model_id, msg, code=None)
+        raise AssertionError("unreachable")
 
     # ── 內部：一次嘗試 ──────────────────────────────────────────────────
     def _invoke_once(

@@ -29,11 +29,13 @@ if str(_ROOT) not in sys.path:
 from shiba_alert import send_alert  # noqa: E402
 
 from clients.api_log import log_api_call  # noqa: E402
-from clients.base import AIPermanentError, AITransientError  # noqa: E402
+from clients.base import (  # noqa: E402
+    TRANSIENT_RETRY_BACKOFF_SECONDS,
+    AIPermanentError,
+    AITransientError,
+)
 
 logger = logging.getLogger(__name__)
-
-_TRANSIENT_RETRY_SLEEP_SECONDS = 10
 
 # 判定 source_type='local' 的 host pattern：localhost / 127.0.0.1 / host.docker.internal / *.local
 _LOCAL_HOST_RE = re.compile(
@@ -108,17 +110,23 @@ class OpenAICompatClient:
         try:
             return self._invoke_once(model_id, prompt, max_tokens, temperature, log_ctx)
         except _RetryableServerError as e:
+            last_error = e
+
+        for attempt_idx, delay in enumerate(TRANSIENT_RETRY_BACKOFF_SECONDS, start=1):
             logger.warning(
-                "OpenAI-compat 暫態錯誤（將於 %ds 後重試 1 次）vendor=%s model=%s code=%s",
-                _TRANSIENT_RETRY_SLEEP_SECONDS, self._vendor, model_id, e.code,
+                "OpenAI-compat 暫態錯誤（第 %d/%d 次重試前等 %ds）vendor=%s model=%s code=%s",
+                attempt_idx, len(TRANSIENT_RETRY_BACKOFF_SECONDS),
+                delay, self._vendor, model_id, last_error.code,
             )
-            time.sleep(_TRANSIENT_RETRY_SLEEP_SECONDS)
+            time.sleep(delay)
             try:
                 return self._invoke_once(model_id, prompt, max_tokens, temperature, log_ctx)
-            except _RetryableServerError as e2:
-                msg = f"重試 1 次仍失敗：{e2.message}"
-                self._raise_transient(model_id, msg, e2.code)
-            raise AssertionError("unreachable")
+            except _RetryableServerError as e:
+                last_error = e
+
+        msg = f"重試 {len(TRANSIENT_RETRY_BACKOFF_SECONDS)} 次仍失敗：{last_error.message}"
+        self._raise_transient(model_id, msg, last_error.code)
+        raise AssertionError("unreachable")
 
     # ── 內部：一次嘗試 ──────────────────────────────────────────────────
     def _invoke_once(

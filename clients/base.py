@@ -75,3 +75,11 @@ class AIQuotaError(AIClientError):
         super().__init__(AIErrorCategory.QUOTA, vendor, model_id, message, status_code)
         self.kind = kind  # 'minute' | 'day'
         self.retry_after_seconds = retry_after_seconds
+
+
+# ── 共用 retry 策略 ────────────────────────────────────────────────────────
+# 5xx 暫態錯誤 exponential backoff：每次重試前 sleep 秒數
+# 失敗 case 最壞情況多耗 2+5+10=17s（vs 原本固定 10s × 1 次）；
+# 觀測 Google 503 集中於 PT 上班時段尖峰，spike 通常分鐘級恢復，3 次重試足夠覆蓋多數情境。
+# 各 vendor client 共用此常數，確保暫態處理策略一致。
+TRANSIENT_RETRY_BACKOFF_SECONDS = [2, 5, 10]
