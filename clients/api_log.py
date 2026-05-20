@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS ai_api_call_logs (
 
     -- 廠商與路由
     vendor                TEXT NOT NULL,
+    source_type           TEXT NOT NULL DEFAULT 'remote',  -- 'remote' (cloud API) / 'local' (Ollama)
     api_base              TEXT NOT NULL,
     model_id              TEXT NOT NULL,
 
@@ -65,6 +66,7 @@ CREATE TABLE IF NOT EXISTS ai_api_call_logs (
 
 _INDEXES_SQL = [
     "CREATE INDEX IF NOT EXISTS idx_ai_logs_vendor_model ON ai_api_call_logs(vendor, model_id)",
+    "CREATE INDEX IF NOT EXISTS idx_ai_logs_source_type  ON ai_api_call_logs(source_type)",
     "CREATE INDEX IF NOT EXISTS idx_ai_logs_created_at   ON ai_api_call_logs(created_at)",
     "CREATE INDEX IF NOT EXISTS idx_ai_logs_status       ON ai_api_call_logs(status)",
     "CREATE INDEX IF NOT EXISTS idx_ai_logs_caller       ON ai_api_call_logs(caller_module)",
@@ -73,12 +75,22 @@ _INDEXES_SQL = [
 _schema_ready = False
 
 
+def _column_exists(conn: sqlite3.Connection, table: str, column: str) -> bool:
+    rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+    return any(r[1] == column for r in rows)
+
+
 def _ensure_schema(conn: sqlite3.Connection) -> None:
-    """確保表與索引存在（process 內只跑一次）"""
+    """確保表與索引存在（process 內只跑一次）；對已存在的舊表執行欄位 migration。"""
     global _schema_ready
     if _schema_ready:
         return
     conn.executescript(_SCHEMA_SQL)
+    # 既有 DB 的 schema migration：source_type 為後加欄位
+    if not _column_exists(conn, "ai_api_call_logs", "source_type"):
+        conn.execute(
+            "ALTER TABLE ai_api_call_logs ADD COLUMN source_type TEXT NOT NULL DEFAULT 'remote'"
+        )
     for sql in _INDEXES_SQL:
         conn.execute(sql)
     conn.commit()
@@ -104,8 +116,12 @@ def log_api_call(
     caller_module: str | None = None,
     teacher_id: int | None = None,
     sample_id: int | None = None,
+    source_type: str = "remote",
 ) -> int | None:
     """寫入一筆 AI API 呼叫歷程。
+
+    source_type: 'remote'（雲端 API：Gemini/Anthropic/OpenAI）或 'local'（Ollama 等本地服務）。
+    本地呼叫無配額/HTTP error code 機制差異，靠此欄位區隔後續分析。
 
     失敗時僅 log warning，不拋例外（避免 log 寫失敗影響主流程）。
     回傳新增列的 id（失敗 None）。
@@ -119,16 +135,16 @@ def log_api_call(
             cursor = conn.execute(
                 """
                 INSERT INTO ai_api_call_logs (
-                    vendor, api_base, model_id,
+                    vendor, source_type, api_base, model_id,
                     request_text, response_text, request_char_len, response_char_len,
                     input_tokens, output_tokens,
                     http_status, status, error_category, error_message,
                     request_sent_at, response_received_at, latency_ms,
                     caller_module, teacher_id, sample_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    vendor, api_base, model_id,
+                    vendor, source_type, api_base, model_id,
                     request_text, response_text, request_char_len, response_char_len,
                     input_tokens, output_tokens,
                     http_status, status, error_category, error_message,

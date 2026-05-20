@@ -59,6 +59,7 @@ class GeminiClient:
     """
 
     VENDOR = "gemini"
+    SOURCE_TYPE = "remote"
 
     def __init__(self, api_key: str) -> None:
         # 延遲 import，避免未安裝 SDK 的環境匯入 clients package 就炸
@@ -227,6 +228,7 @@ class GeminiClient:
     ) -> None:
         log_api_call(
             vendor=self.VENDOR,
+            source_type=self.SOURCE_TYPE,
             api_base=api_base, model_id=model_id,
             request_text=prompt, response_text=response_text,
             input_tokens=input_tokens, output_tokens=output_tokens,
