@@ -79,7 +79,11 @@ class AIQuotaError(AIClientError):
 
 # ── 共用 retry 策略 ────────────────────────────────────────────────────────
 # 5xx 暫態錯誤 exponential backoff：每次重試前 sleep 秒數
-# 失敗 case 最壞情況多耗 2+5+10=17s（vs 原本固定 10s × 1 次）；
-# 觀測 Google 503 集中於 PT 上班時段尖峰，spike 通常分鐘級恢復，3 次重試足夠覆蓋多數情境。
+# 失敗 case 最壞情況多耗 5+15+30+60=110s。
+# 觀測 Google 503 spike 有兩種型態：
+#   - 秒級 spike：[2,5,10] 即可吸收（C.2 smoke 實測 2s 恢復）
+#   - 分鐘級 spike：PT 上班時段 17s backoff 仍會撐不過（C.2 全量第 10 筆觸發）
+# 加大到 [5,15,30,60] 提高長 spike 容忍度；首次重試 5s 換掉 2s，
+# 對短 spike 多 3s 延遲是可接受成本，換取長 spike 不再頻繁整批熔斷。
 # 各 vendor client 共用此常數，確保暫態處理策略一致。
-TRANSIENT_RETRY_BACKOFF_SECONDS = [2, 5, 10]
+TRANSIENT_RETRY_BACKOFF_SECONDS = [5, 15, 30, 60]
