@@ -397,8 +397,8 @@ def _run_rpm_migration(conn: sqlite3.Connection) -> None:
       rpm_count_in_window  — 窗口內已用請求數
       transient_backoff_until — RPM 超限後短暫回退結束時間（NULL = 無回退中）
 
-    backfill：依各廠牌 Free Tier 文件設定 rpm_limit；
-    同步修正 Gemini Flash-Lite daily_request_limit 250 → 1000（原 placeholder 值）。
+    backfill：依各廠牌 Paid Tier 上限取 50% buffer 設定 rpm_limit / daily_request_limit。
+    （2026-05-20 升級為 Paid Tier；舊 DB 已透過 _run_paid_tier_upgrade_migration 手動 UPDATE）
     """
     if _column_exists(conn, "teachers", "rpm_limit"):
         return  # 已 migration 過
@@ -411,12 +411,15 @@ def _run_rpm_migration(conn: sqlite3.Connection) -> None:
     ]:
         conn.execute(sql)
 
-    # Gemini Free Tier（Dec 2025 規格）
+    # Gemini Paid Tier 50% buffer：
+    #   Flash      上限 1000 RPM / 10000 RPD → 設 500 / 5000
+    #   Flash-Lite 上限 4000 RPM / Unlimited  → 設 2000 / 999999（Unlimited 用大值表示）
     conn.execute(
-        "UPDATE teachers SET rpm_limit = 10 WHERE model_id = 'gemini-2.5-flash'",
+        "UPDATE teachers SET rpm_limit = 500, daily_request_limit = 5000 "
+        "WHERE model_id = 'gemini-2.5-flash'",
     )
     conn.execute(
-        "UPDATE teachers SET rpm_limit = 15, daily_request_limit = 1000 "
+        "UPDATE teachers SET rpm_limit = 2000, daily_request_limit = 999999 "
         "WHERE model_id = 'gemini-2.5-flash-lite'",
     )
     # Anthropic Tier 1（conservative；針對 Sonnet 4.6，未來新增 Haiku 等需另設）
