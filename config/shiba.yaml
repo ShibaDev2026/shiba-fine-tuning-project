@@ -43,11 +43,30 @@ runtime:
 # 任一 flag 翻為 true 時，由 core.feature_registry.apply_features 套用
 # 對應 modules/<topic>/db/<topic>.sql 並執行 init_fn
 # ----------------------------------------------------------------
+# Feature flags（PR-O 系列拆出）
+#
+# 開關位置：core.feature_registry.apply_features 啟動時讀；
+# 各 flag 對應 modules/<name>/__init__.py 註冊的 FeatureSpec.flag。
+# 所有 flag 預設 false → 核心 4-layer 路徑為唯一可行路線；任一 flag on 才掛 hook/建表。
+#
+# 依賴鏈（registry 強制 fail-fast，違反即拋 ValueError）：
+#   shadow_gatekeeper   →  golden_retention      （shadow_gatekeeper 子能力）
+#   ragas_eval          →  multi_judge_v2        （ragas Layer 2 報告讀 agreement_logs）
+#
+# 細節：
+#   - shadow_gatekeeper：modules/gatekeeper；建 gatekeeper_golden_samples；註冊 "gate" hook
+#   - ebbinghaus_trigger：modules/ebbinghaus_trigger；註冊 "trigger" hook（off=固定 approved≥30）
+#   - ragas_eval：modules/ragas；建 ragas_evaluation_results / ragas_retrieval_golden_set
+#   - multi_judge_v2：modules/multi_judge_v2；建 multi_judge_v2_agreement_logs；註冊 "judge_score" hook
+#   - paraphrase_service：modules/paraphrase；註冊 "paraphrase" hook（off=排程 tick noop）
+#   - advanced_compressor：modules/advanced_compressor；註冊 "compress_context" hook（off=截斷）
+#   - golden_retention：modules/gatekeeper 子能力；不獨立載入，僅作為依賴閘
+# ----------------------------------------------------------------
 features:
   shadow_gatekeeper:   false   # Layer 3 A/B 守門；必須與 golden_retention 同時 true
   ebbinghaus_trigger:  false   # Layer 3 動態觸發；false=固定 approved≥30
-  ragas_eval:          false   # 整套 RAGAS 評估框架（含 weekly CI launchd）
+  ragas_eval:          false   # 整套 RAGAS 評估框架（含 weekly CI launchd）；依賴 multi_judge_v2
   multi_judge_v2:      false   # false=三方多數投票無 log；true=vendor 強制+Fleiss+log
-  paraphrase_service:  false   # false=不建 paraphrase_variant_sources
+  paraphrase_service:  false   # false=background paraphrase 排程 tick noop
   advanced_compressor: false   # false=Layer 0 直接 truncate，不走 Gemma 壓縮
   golden_retention:    false   # shadow_gatekeeper 子能力；registry 強制檢核共開

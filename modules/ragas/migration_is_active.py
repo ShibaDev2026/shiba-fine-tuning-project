@@ -1,4 +1,4 @@
-"""幂等 migration：retrieval_golden_set 新增 is_active 欄位 + 標記低分題目為 deprecated。
+"""幂等 migration：ragas_retrieval_golden_set 新增 is_active 欄位 + 標記低分題目為 deprecated。
 
 12 筆汰換清單（雙模型 mean ≤ 4.5）：
   id=11 你有閱讀過那四份論文嗎              (Qwen 0 / Claude 0) — 主語不明
@@ -37,18 +37,18 @@ def _column_exists(conn: sqlite3.Connection, table: str, column: str) -> bool:
 def run() -> None:
     conn = open_connection("writer")
     try:
-        if not _column_exists(conn, "retrieval_golden_set", "is_active"):
+        if not _column_exists(conn, "ragas_retrieval_golden_set", "is_active"):
             conn.execute(
-                "ALTER TABLE retrieval_golden_set "
+                "ALTER TABLE ragas_retrieval_golden_set "
                 "ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1"
             )
-            print("[migration] retrieval_golden_set.is_active 欄位已新增")
+            print("[migration] ragas_retrieval_golden_set.is_active 欄位已新增")
         else:
-            print("[migration] retrieval_golden_set.is_active 欄位已存在")
+            print("[migration] ragas_retrieval_golden_set.is_active 欄位已存在")
 
         placeholders = ",".join("?" for _ in DEPRECATED_IDS)
         cursor = conn.execute(
-            f"UPDATE retrieval_golden_set "
+            f"UPDATE ragas_retrieval_golden_set "
             f"SET is_active = 0, "
             f"    notes = COALESCE(notes || ' | ', '') || "
             f"            'deprecated-low-score-2026-05-21' "
@@ -59,7 +59,7 @@ def run() -> None:
         print(f"[migration] 已標記 {cursor.rowcount} 筆為 deprecated（is_active=0）")
 
         active = conn.execute(
-            "SELECT COUNT(*) FROM retrieval_golden_set WHERE is_active = 1"
+            "SELECT COUNT(*) FROM ragas_retrieval_golden_set WHERE is_active = 1"
         ).fetchone()[0]
         print(f"[verify] 剩餘 active 樣本：{active} 筆")
     finally:

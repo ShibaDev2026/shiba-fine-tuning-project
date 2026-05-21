@@ -226,6 +226,52 @@ bash scripts/db_backup.sh
 | `questions` / `question_sets` / `judge_agreement_logs` / `golden_samples` | Layer 2 評分相關（multi_judge / question pool）|
 | `tool_executions` / `branch_messages` / `projects` / `lost_and_found` | 內部記錄表（tool 執行追蹤、孤兒資料回收等）|
 
+## Feature Flags（PR-O 模組化開關）
+
+PR-O 系列重構（2026-05-21~22）將「核心 4-layer 路徑」與「進階／實驗性能力」徹底解耦：
+核心路徑（`layer_0_router/` / `layer_1_memory/` / `layer_2_chamber/` / `layer_3_pipeline/` + `config/db/schema_core.sql`）永遠可用且不掛任何 feature；進階能力一律收進 `modules/<name>/`，由 `config/shiba.yaml` 的 `features:` 區塊獨立開關，**全關時系統行為 = 純核心**。
+
+### 啟用機制
+
+1. **註冊**：每個模組在 `modules/<name>/__init__.py` 呼叫 `core.feature_registry.register(FeatureSpec(...))`，宣告 `flag` / `schema_files` / `depends_on` / `init_fn`。
+2. **載入**：應用啟動時 `apply_features(conn, enabled_flags=CONFIG.features, ...)` 依拓樸序套用：
+   - 跑 schema_files（idempotent `CREATE TABLE IF NOT EXISTS`，加模組前綴避免污染核心）
+   - 跑 init_fn（一次性搬舊資料 + `register_hook(name, fn)` 註冊抽象介面）
+3. **取用**：核心層只透過 `get_hook("gate" / "trigger" / "judge_score" / "paraphrase" / "compress_context")` 取 callable；hook 為 `None` 即走核心 fallback（無分支爆炸、無 `if CONFIG.features.x` 散落）。
+4. **依賴**：`depends_on` 由 registry 強制 fail-fast（如 `ragas_eval` 必須與 `multi_judge_v2` 同開），違反即 `ValueError` 不靜默 skip。
+
+### 7 個 feature 模組
+
+| flag | 模組路徑 | off 行為（核心 fallback） | on 行為（feature on） |
+|------|----------|--------------------------|----------------------|
+| `shadow_gatekeeper` | `modules/gatekeeper/` | Layer 3 訓練前不做 A/B 守門 | 建 `gatekeeper_golden_samples` + 註冊 `gate` hook，4 條件守門（含 retention_score ≥ 0.85）|
+| `golden_retention` | （同上，子能力）| — | `shadow_gatekeeper` 的依賴閘；registry 強制共開 |
+| `ebbinghaus_trigger` | `modules/ebbinghaus_trigger/` | 固定 approved ≥ 30 即觸發訓練 | 註冊 `trigger` hook，疊加 Ebbinghaus 時間衰減 + drift signal A/B/C |
+| `multi_judge_v2` | `modules/multi_judge_v2/` | v1 三方多數投票（不寫 log）| 建 `multi_judge_v2_agreement_logs` + 註冊 `judge_score` hook，強制 vendor 多樣性 ≥ 2 + 寫 Fleiss κ 紀錄 |
+| `ragas_eval` | `modules/ragas/` | 不建 ragas_* 表、不跑 weekly CI | 建 `ragas_evaluation_results` / `ragas_retrieval_golden_set` + 啟用 launchd weekly CI；**depends_on=`multi_judge_v2`** |
+| `paraphrase_service` | `modules/paraphrase/` | background `paraphrase` 排程 tick noop | 註冊 `paraphrase` hook，每 15 分鐘為變體不足的 instruction 補同義說法 |
+| `advanced_compressor` | `modules/advanced_compressor/` | Layer 0 RAG context 直接截斷（前 300 字 + `...`）| 註冊 `compress_context` hook，呼叫 Gemma snapshot 壓 100 字摘要 |
+
+### 兩段式驗收（每模組強制）
+
+- **Stage A**（all-off）：`modules/<name>/tests/verify_isolation.py` 確認 schema_core 無 feature 表、hook 未註冊、核心路徑不變
+- **Stage B**（only-this-on）：feature 表/hook 到位、依賴鏈正確
+- **組合矩陣**：`tests/test_pr_o_10_combinatorial.py` 涵蓋 all-off / single-on×4 / dep-pair×2 / dep-violation×2 / all-on 共 10 case
+
+### 開關範例
+
+```yaml
+# config/shiba.yaml
+features:
+  shadow_gatekeeper:   true    # 啟用 Layer 3 A/B 守門
+  golden_retention:    true    # ↑ 必須同時開
+  ebbinghaus_trigger:  false
+  multi_judge_v2:      true    # ragas_eval 的前置
+  ragas_eval:          true    # 啟用 RAGAS 評估（+ launchd weekly CI）
+  paraphrase_service:  false
+  advanced_compressor: false
+```
+
 ## 文件結構
 
 ```
@@ -262,10 +308,12 @@ docs/
 
 ## 版本歷程
 
-當前版本：**v1.5.0**（2026-05-20）
+當前版本：**v1.7.0**（2026-05-22）
 
 | 版本 | 日期 | 主要內容 |
 |------|------|---------|
+| v1.7.0 | 2026-05-22 | PR-O 系列核心瘦身 + 功能模組化重構（PR-O-1~10）：建 `core/feature_registry.py` + `register_hook/get_hook` 機制；7 個 feature 拆出至 `modules/{gatekeeper, ebbinghaus_trigger, multi_judge_v2, ragas, paraphrase, advanced_compressor}/`；feature 表全加模組前綴（`gatekeeper_*` / `multi_judge_v2_*` / `ragas_*`）；`config/shiba.yaml::features` 區塊統一開關；6 模組 Stage A/B 隔離驗證 + 10 case 組合矩陣全綠；全關 = 純核心 4-layer |
+| v1.6.0 | 2026-05-20 | PR-I~N 系列：bge-m3 升級 + 2263 embedding backfill；OllamaClient + source_type；RAGAS Phase A/C 完成（Recall 0.744 / Precision 0.613，Claude 5.48）；PR-N golden set 16→65 + judge noise 治理（temperature=0、n_runs flag）|
 | v1.5.0 | 2026-05-20 | 模型 yaml 化重構 Step 3-7 全部完成（Layer 0 三顆推論模型 + Layer 3 訓練 base 解硬寫 + 前端 PhaseRouter dropdown 即時切換 + online/offline kill switch）；SQLite hardening PR1+PR2 全部落地（`shiba_db.py` 統一連線 + PRAGMA 三層對齊 + APScheduler cron 錯開 + WAL→DELETE journal mode + stop_hook 4 段切分 + multi_judge 三欄共一事務） |
 | v1.4.0 | 2026-05-07 | 模型 yaml 化重構 Step 1+2：5 份 `config/models/*.yaml` + 專案根 `models_loader.py`；DB 雙表機制（`model_registry` 版本歷史 + `router_config` 選擇器、lifespan idempotent sync）；`PhaseModels.vue` 唯讀頁 4 列 grid；師父 CRUD 8 endpoints + `PhaseTeachers` UI 重構；共用 UI 元件 `Modal`/`ConfirmDialog`/`FormField`/`Toast` + `stores/toast.ts`；`ollama_status` 改走 HTTP API（docker 友善）|
 | v1.3.1 | 2026-05-06 | 文件目錄一次性整理（`docs/{design,references,archive}/`）+ `AGENTS.md` 對外規範對齊 v1.3.0 事實；純文件變更不動執行碼 |

@@ -328,7 +328,7 @@ def _evaluate_retention(
     conn: sqlite3.Connection,
 ) -> tuple[float | None, int]:
     """
-    C：以 golden_samples 為固定回歸集，評估新模型是否保留舊知識（防災難性遺忘）。
+    C：以 gatekeeper_golden_samples 為固定回歸集，評估新模型是否保留舊知識（防災難性遺忘）。
 
     流程：對每筆 golden 同時跑 old_model 與 shadow_tag 取得回應，
     用 judge_model（同 _judge_pair）做 pairwise 裁定。
@@ -342,13 +342,13 @@ def _evaluate_retention(
     判斷 retention 時 self-preference bias 倒向 old_model，門檻偏嚴 = 對 deploy 較保守，符合防遺忘初衷。
     """
     rows = conn.execute(
-        "SELECT instruction, input FROM golden_samples WHERE is_active=1"
+        "SELECT instruction, input FROM gatekeeper_golden_samples WHERE is_active=1"
     ).fetchall()
     n_active = len(rows)
 
     if n_active < RETENTION_MIN_N:
         logger.info(
-            "Retention 略過：active golden_samples 不足（%d < %d）",
+            "Retention 略過：active gatekeeper_golden_samples 不足（%d < %d）",
             n_active, RETENTION_MIN_N,
         )
         return None, n_active

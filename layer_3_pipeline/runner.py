@@ -11,8 +11,8 @@ from .db import create_run, update_run, get_last_run_id
 from .mlx_trainer import train_lora
 from .gguf_converter import convert_to_gguf
 from .ollama_updater import push_to_ollama
-from .gatekeeper import run_gate
-from .trigger_policy import should_trigger
+from .trigger_policy_basic import should_trigger_basic
+from core.feature_registry import get_hook
 from layer_2_chamber.backend.extraction.dataset_formatter import export_dataset
 
 logger = logging.getLogger(__name__)
@@ -35,7 +35,9 @@ def run_finetune_if_ready(
 
     觸發門檻由 trigger_policy.should_trigger 內部決定，不再由外部 threshold 注入。
     """
-    decision = should_trigger(conn, adapter_block)
+    # ebbinghaus_trigger feature 啟用時走 v2 三信號策略；否則 fallback 基本策略（approved≥30）
+    trigger_fn = get_hook("trigger") or should_trigger_basic
+    decision = trigger_fn(conn, adapter_block)
     if not decision.should_train:
         logger.info("block%d 未觸發：%s", adapter_block, decision.reason)
         return None
@@ -90,21 +92,26 @@ def run_finetune_if_ready(
         )
         update_run(conn, run_id, gguf_path=str(gguf_path))
 
-        # P0-2 Shadow Gate：統計顯著勝出才 deploy
-        gate = run_gate(gguf_path=gguf_path, adapter_block=adapter_block, conn=conn)
-        update_run(conn, run_id,
-                   error_msg=f"gate: {gate.reason} (win_rate={gate.win_rate:.3f})",
-                   status="gate_eval")
-
-        if not gate.passed:
+        # P0-2 Shadow Gate：經 feature_registry 注入 "gate" hook；
+        # shadow_gatekeeper feature 未啟用時 hook 為 None → 直接放行（最小核心路徑）
+        run_gate = get_hook("gate")
+        if run_gate is not None:
+            gate = run_gate(gguf_path=gguf_path, adapter_block=adapter_block, conn=conn)
             update_run(conn, run_id,
-                       status="gate_rejected",
-                       finished_at=datetime.now(timezone.utc).isoformat())
-            logger.warning(
-                "Shadow gate 拒絕 block%d：%s",
-                adapter_block, gate.reason,
-            )
-            return {"status": "gate_rejected", "run_id": run_id, "gate": vars(gate)}
+                       error_msg=f"gate: {gate.reason} (win_rate={gate.win_rate:.3f})",
+                       status="gate_eval")
+
+            if not gate.passed:
+                update_run(conn, run_id,
+                           status="gate_rejected",
+                           finished_at=datetime.now(timezone.utc).isoformat())
+                logger.warning(
+                    "Shadow gate 拒絕 block%d：%s",
+                    adapter_block, gate.reason,
+                )
+                return {"status": "gate_rejected", "run_id": run_id, "gate": vars(gate)}
+        else:
+            logger.info("shadow_gatekeeper feature off：略過 gate，直接 deploy")
 
         model_tag = push_to_ollama(gguf_path=gguf_path, adapter_block=adapter_block)
 

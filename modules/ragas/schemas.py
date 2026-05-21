@@ -13,7 +13,7 @@ class RetrievalSample:
 
 @dataclass
 class EvalResult:
-    """單筆評估結果（對應 evaluation_results 表）"""
+    """單筆評估結果（對應 ragas_evaluation_results 表）"""
     run_id: str
     phase: str          # 'layer1' | 'layer2' | 'e2e'
     metric_name: str

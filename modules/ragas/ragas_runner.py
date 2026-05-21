@@ -200,7 +200,7 @@ def _write_eval_result(
     meta_json = json.dumps(metadata, ensure_ascii=False) if metadata else None
     with get_connection() as conn:
         conn.execute(
-            """INSERT INTO evaluation_results
+            """INSERT INTO ragas_evaluation_results
                (run_id, phase, metric_name, metric_value, evaluator_model, sample_id, metadata)
                VALUES (?, ?, ?, ?, ?, ?, ?)""",
             (run_id, phase, metric_name, metric_value, evaluator_model, sample_id, meta_json),
@@ -218,7 +218,7 @@ def run_layer1_evaluation(
     rag_window: int = 0,
 ) -> dict:
     """
-    從 retrieval_golden_set 讀 ground truth → 呼叫 retrieve_for_eval → 計算指標 → 寫入 DB。
+    從 ragas_retrieval_golden_set 讀 ground truth → 呼叫 retrieve_for_eval → 計算指標 → 寫入 DB。
 
     judge: 'local' | 'gemini' | 'both' | 'none'
     rag_window: 0 走原本單 exchange 召回；≥1 走鄰居 ±K exchange 擴展上下文召回
@@ -227,7 +227,7 @@ def run_layer1_evaluation(
 
     with get_connection() as conn:
         sql = """SELECT id, query, expected_session_uuids
-                 FROM retrieval_golden_set
+                 FROM ragas_retrieval_golden_set
                  WHERE expected_session_uuids != '[]'
                    AND is_active = 1
                  ORDER BY id"""

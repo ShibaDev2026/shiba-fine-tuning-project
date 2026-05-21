@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-scripts/freeze_golden_set.py — 一次性執行：凍結歷史高分樣本為 golden_samples。
+scripts/freeze_golden_set.py — 一次性執行：凍結歷史高分樣本為 gatekeeper_golden_samples。
 
 挑選條件：
   - status='approved' AND score >= 9.0
@@ -34,9 +34,9 @@ def main(dry_run: bool = False):
     conn = sqlite3.connect(str(CONFIG.paths.db))
     conn.row_factory = sqlite3.Row
 
-    # 確保 golden_samples 表存在（初次執行 migration 可能不會跑到）
+    # 確保 gatekeeper_golden_samples 表存在（初次執行 migration 可能不會跑到）
     conn.execute("""
-        CREATE TABLE IF NOT EXISTS golden_samples (
+        CREATE TABLE IF NOT EXISTS gatekeeper_golden_samples (
             id               INTEGER PRIMARY KEY AUTOINCREMENT,
             source_sample_id INTEGER NOT NULL REFERENCES training_samples(id),
             instruction      TEXT NOT NULL,
@@ -49,13 +49,13 @@ def main(dry_run: bool = False):
         )
     """)
     conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_golden_event ON golden_samples(event_type, is_active)"
+        "CREATE INDEX IF NOT EXISTS idx_gatekeeper_golden_event ON gatekeeper_golden_samples(event_type, is_active)"
     )
     conn.commit()
 
     # 已凍結的 source_sample_id（避免重複）
     existing_ids = {
-        r[0] for r in conn.execute("SELECT source_sample_id FROM golden_samples").fetchall()
+        r[0] for r in conn.execute("SELECT source_sample_id FROM gatekeeper_golden_samples").fetchall()
     }
 
     total_inserted = 0
@@ -81,7 +81,7 @@ def main(dry_run: bool = False):
                 continue
             if not dry_run:
                 conn.execute(
-                    """INSERT INTO golden_samples
+                    """INSERT INTO gatekeeper_golden_samples
                        (source_sample_id, instruction, input, expected_output, event_type, score)
                        VALUES (?, ?, ?, ?, ?, ?)""",
                     (
@@ -113,7 +113,7 @@ def main(dry_run: bool = False):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="凍結 golden_samples")
+    parser = argparse.ArgumentParser(description="凍結 gatekeeper_golden_samples")
     parser.add_argument("--dry-run", action="store_true", help="只顯示統計，不寫入")
     args = parser.parse_args()
     main(dry_run=args.dry_run)

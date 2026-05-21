@@ -12,8 +12,9 @@ sys.path.insert(0, str(_ROOT))
 
 _LAYER1_SCHEMA = _ROOT / "layer_1_memory" / "db" / "schema.sql"
 _LAYER2_SCHEMA = _ROOT / "layer_2_chamber" / "backend" / "db" / "schema_layer2.sql"
+_GATEKEEPER_SCHEMA = _ROOT / "modules" / "gatekeeper" / "db" / "gatekeeper.sql"
 
-from layer_3_pipeline.gatekeeper import (
+from modules.gatekeeper.service import (
     RETENTION_MIN_N,
     RETENTION_THRESHOLD,
     _check_conditions,
@@ -27,6 +28,7 @@ def _make_db(tmp_path: Path) -> sqlite3.Connection:
     conn.execute("PRAGMA foreign_keys=ON")
     conn.executescript(_LAYER1_SCHEMA.read_text())
     conn.executescript(_LAYER2_SCHEMA.read_text())
+    conn.executescript(_GATEKEEPER_SCHEMA.read_text())
     conn.commit()
     return conn
 
@@ -46,7 +48,7 @@ def _insert_golden(conn: sqlite3.Connection, n: int) -> None:
             (f"instruction {i}",),
         )
         conn.execute(
-            """INSERT INTO golden_samples
+            """INSERT INTO gatekeeper_golden_samples
                (source_sample_id, instruction, input, expected_output, event_type, score)
                VALUES (?, ?, '', 'expected', 'git_ops', 9.5)""",
             (cur2.lastrowid, f"instruction {i}"),
@@ -63,8 +65,8 @@ class TestRetentionBelowThreshold:
         # new 輸（False）5 次，new 贏（True）5 次 → score = 0.5
         judge_results = [False, True] * 5
 
-        with patch("layer_3_pipeline.gatekeeper._call_ollama", return_value=("resp", 100.0)), \
-             patch("layer_3_pipeline.gatekeeper._judge_pair", side_effect=judge_results):
+        with patch("modules.gatekeeper.service._call_ollama", return_value=("resp", 100.0)), \
+             patch("modules.gatekeeper.service._judge_pair", side_effect=judge_results):
             score, n = _evaluate_retention("shadow:tag", "old:tag", "old:tag", conn)
 
         assert score is not None
@@ -86,8 +88,8 @@ class TestRetentionAboveThreshold:
         # 9 次 True（new 勝），1 次 False（new 輸）→ score = 0.9
         judge_results = [True] * 9 + [False]
 
-        with patch("layer_3_pipeline.gatekeeper._call_ollama", return_value=("resp", 100.0)), \
-             patch("layer_3_pipeline.gatekeeper._judge_pair", side_effect=judge_results):
+        with patch("modules.gatekeeper.service._call_ollama", return_value=("resp", 100.0)), \
+             patch("modules.gatekeeper.service._judge_pair", side_effect=judge_results):
             score, n = _evaluate_retention("shadow:tag", "old:tag", "old:tag", conn)
 
         assert score == pytest.approx(0.9)
@@ -105,8 +107,8 @@ class TestRetentionSkipsWhenSmall:
         conn = _make_db(tmp_path)
         _insert_golden(conn, RETENTION_MIN_N - 1)
 
-        with patch("layer_3_pipeline.gatekeeper._call_ollama", return_value=("resp", 100.0)), \
-             patch("layer_3_pipeline.gatekeeper._judge_pair", return_value=False):
+        with patch("modules.gatekeeper.service._call_ollama", return_value=("resp", 100.0)), \
+             patch("modules.gatekeeper.service._judge_pair", return_value=False):
             score, n = _evaluate_retention("shadow:tag", "old:tag", "old:tag", conn)
 
         assert score is None

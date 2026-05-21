@@ -73,6 +73,36 @@ def reset_registry() -> None:
     _REGISTRY.clear()
 
 
+# ── Hook 機制（核心透過抽象介面取得 feature 實作）─────────────────
+# 核心 layer (layer_0~3 / core) 不得 import modules.*；
+# 改透過 register_hook / get_hook 取得 feature 提供的可呼叫物件。
+# DIP 落地：核心依賴抽象 hook 名稱，不依賴具體 module 路徑。
+_HOOKS: dict[str, Callable] = {}
+
+
+def register_hook(name: str, fn: Callable, *, allow_override: bool = False) -> None:
+    """註冊一個跨模組擴展點 hook。
+
+    name 為 hook 的抽象介面名（"gate" / "multi_judge_strategy" / ...）；
+    allow_override=False 時重複註冊直接拋錯，避免靜默覆寫。
+    """
+    if not allow_override and name in _HOOKS:
+        raise ValueError(
+            f"hook {name!r} 已註冊，禁止重複（設 allow_override=True 顯式覆寫）"
+        )
+    _HOOKS[name] = fn
+
+
+def get_hook(name: str) -> Optional[Callable]:
+    """取得 hook；未註冊回 None。呼叫端負責 fallback 行為（通常代表該 feature off）。"""
+    return _HOOKS.get(name)
+
+
+def reset_hooks() -> None:
+    """測試用；清空 hook registry。"""
+    _HOOKS.clear()
+
+
 # ── 拓撲排序與套用 ──────────────────────────────────────────────
 def _topo_sort(specs: list[FeatureSpec]) -> list[FeatureSpec]:
     """以 depends_on 為邊做拓撲排序；偵測循環依賴 fail fast。

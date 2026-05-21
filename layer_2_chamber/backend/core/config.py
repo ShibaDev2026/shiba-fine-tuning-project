@@ -361,30 +361,8 @@ def _run_finetune_manual_migration(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
-def _run_golden_samples_migration(conn: sqlite3.Connection) -> None:
-    """
-    C 幂等 migration：建立 golden_samples 表（凍結歷史高分樣本，shadow gate retention 用）。
-    schema_layer2.sql 已含 CREATE TABLE IF NOT EXISTS，但既有 DB 不會自動重跑 schema，
-    這裡在 init 時保證該表與索引存在。
-    """
-    if _table_exists(conn, "golden_samples"):
-        return
-
-    conn.executescript("""
-        CREATE TABLE IF NOT EXISTS golden_samples (
-            id               INTEGER PRIMARY KEY AUTOINCREMENT,
-            source_sample_id INTEGER NOT NULL REFERENCES training_samples(id),
-            instruction      TEXT NOT NULL,
-            input            TEXT NOT NULL DEFAULT '',
-            expected_output  TEXT NOT NULL,
-            event_type       TEXT NOT NULL,
-            score            REAL NOT NULL,
-            frozen_at        TEXT NOT NULL DEFAULT (datetime('now')),
-            is_active        INTEGER NOT NULL DEFAULT 1
-        );
-        CREATE INDEX IF NOT EXISTS idx_golden_event ON golden_samples(event_type, is_active);
-    """)
-    conn.commit()
+# PR-O-3：原 _run_golden_samples_migration 已移至 modules/gatekeeper/migrations.py
+# 由 core.feature_registry 在 shadow_gatekeeper feature 啟用時觸發。
 
 
 def _run_rpm_migration(conn: sqlite3.Connection) -> None:
@@ -521,8 +499,7 @@ def init_layer2_db() -> sqlite3.Connection:
     _run_exchange_ids_migration(conn)
     # A：teachers.vendor 欄位（廠牌異質性，C1 早停判定用）
     _run_teachers_vendor_migration(conn)
-    # C：golden_samples 表（retention 評估，gatekeeper 第 4 條件用）
-    _run_golden_samples_migration(conn)
+    # C：golden_samples 已搬至 modules/gatekeeper（PR-O-3），由 feature_registry 啟用時套用
     # D：finetune_runs 首次訓練人工把關欄位 + status CHECK 修正
     _run_finetune_manual_migration(conn)
     # E：teachers RPM 速率欄位 + backfill（區分 RPM 超限 vs 每日配額）

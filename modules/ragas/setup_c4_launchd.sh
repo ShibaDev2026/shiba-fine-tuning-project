@@ -4,8 +4,8 @@
 
 set -euo pipefail
 
-PROJECT_ROOT="$(cd "$(dirname "$0")" && pwd)"
-PLIST_SRC="$PROJECT_ROOT/com.shiba.ragas-c4.plist"
+PROJECT_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+PLIST_SRC="$PROJECT_ROOT/modules/ragas/com.shiba.ragas-c4.plist"
 PLIST_DEST="$HOME/Library/LaunchAgents/com.shiba.ragas-c4.plist"
 
 # PROJECT_ROOT_PLACEHOLDER 替換成實際路徑

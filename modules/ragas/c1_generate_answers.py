@@ -2,11 +2,11 @@
 c1_generate_answers.py — Phase C.1 Golden Q&A 標準答案生成
 
 流程：
-  1. 從 retrieval_golden_set 讀取尚無 expected_answer 的 query
+  1. 從 ragas_retrieval_golden_set 讀取尚無 expected_answer 的 query
   2. 從 exchange_embeddings 取 relevant session 的 instruction+commands 作為 context
   3. qwen3:30b-a3b（本地）生成標準答案
   4. Gemini Flash 批次驗收評分（0-10），< 7 flag 給 Shiba 複核
-  5. 寫回 retrieval_golden_set.expected_answer
+  5. 寫回 ragas_retrieval_golden_set.expected_answer
 
 執行：
   python -m evaluation.c1_generate_answers
@@ -157,7 +157,7 @@ def run(
     with get_connection() as conn:
         sql = """
             SELECT id, query, expected_session_uuids
-            FROM retrieval_golden_set
+            FROM ragas_retrieval_golden_set
             WHERE expected_session_uuids != '[]'
               AND expected_answer IS NULL
               AND is_active = 1
@@ -212,7 +212,7 @@ def run(
             # 寫回 DB
             with get_connection() as conn:
                 conn.execute(
-                    "UPDATE retrieval_golden_set SET expected_answer=?, notes=? WHERE id=?",
+                    "UPDATE ragas_retrieval_golden_set SET expected_answer=?, notes=? WHERE id=?",
                     (
                         answer,
                         f"auto-by-qwen3 score={score_str} | {reason[:80]}" if score is not None

@@ -1,7 +1,10 @@
-"""paraphrase_service.py — 同義說法生成服務
+"""modules/paraphrase/service.py — 同義說法生成服務（PR-O-7 拆出）
 
 對 exchange_embeddings 中變體不足的 instruction 生成同義說法，
 擴充向量空間密度，提升語意召回覆蓋率。
+
+註：feature off 時 background 排程不註冊 paraphrase hook → 整段路徑 noop；
+不另建專屬表（source_instruction 已在 exchange_embeddings 核心欄位）。
 """
 
 import json
@@ -9,11 +12,16 @@ import logging
 
 import sys
 from pathlib import Path
-sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from layer_1_memory.lib.embedder import get_embedding
 from layer_1_memory.lib.db import upsert_exchange_embedding
-from ..core.config import OLLAMA_BASE_URL, REFINER_MODEL, REFINER_TIMEOUT, REFINER_OPTIONS
+from layer_2_chamber.backend.core.config import (
+    OLLAMA_BASE_URL,
+    REFINER_MODEL,
+    REFINER_TIMEOUT,
+    REFINER_OPTIONS,
+)
 
 logger = logging.getLogger(__name__)
 

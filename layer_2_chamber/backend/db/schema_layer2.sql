@@ -89,24 +89,11 @@ CREATE TABLE IF NOT EXISTS teacher_usage_logs (
     response_status TEXT                          -- 'success' | 'quota_exceeded' | 'error'
 );
 
--- ── 黃金樣本集（C：retention/防遺忘）─────────────────────────────────
--- 凍結歷史高分樣本（score≥9 的 approved），shadow A/B 時以此集合驗證新模型
--- 是否在舊知識上維持水準（≥85% 不退化才放行），對抗災難性遺忘。
-CREATE TABLE IF NOT EXISTS golden_samples (
-    id               INTEGER PRIMARY KEY AUTOINCREMENT,
-    source_sample_id INTEGER NOT NULL REFERENCES training_samples(id),
-    instruction      TEXT NOT NULL,
-    input            TEXT NOT NULL DEFAULT '',
-    expected_output  TEXT NOT NULL,
-    event_type       TEXT NOT NULL,
-    score            REAL NOT NULL,
-    frozen_at        TEXT NOT NULL DEFAULT (datetime('now')),
-    is_active        INTEGER NOT NULL DEFAULT 1
-);
+-- PR-O-3：golden_samples 已搬至 modules/gatekeeper/db/gatekeeper.sql
+-- 改名為 gatekeeper_golden_samples，由 feature_registry 在 shadow_gatekeeper 啟用時套用。
 
 -- ── 索引 ─────────────────────────────────────────────────────────────
 CREATE INDEX IF NOT EXISTS idx_training_samples_status     ON training_samples(status);
 CREATE INDEX IF NOT EXISTS idx_training_samples_event_type ON training_samples(event_type);
 CREATE INDEX IF NOT EXISTS idx_training_samples_adapter    ON training_samples(adapter_block);
 CREATE INDEX IF NOT EXISTS idx_teacher_usage_date          ON teacher_usage_logs(teacher_id, used_at);
-CREATE INDEX IF NOT EXISTS idx_golden_event                ON golden_samples(event_type, is_active);

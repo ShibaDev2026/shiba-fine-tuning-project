@@ -12,7 +12,7 @@ _ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(_ROOT))
 sys.path.insert(0, str(_ROOT / "layer_1_memory"))
 
-from layer_3_pipeline.trigger_policy import _signal_distribution_drift  # noqa: E402
+from modules.ebbinghaus_trigger.service import _signal_distribution_drift  # noqa: E402
 from lib import db as memory_db  # noqa: E402
 
 _SCHEMA_SQL = _ROOT / "layer_1_memory" / "db" / "schema.sql"
@@ -75,7 +75,7 @@ def test_signal_c_round_trip_embedding_format(tmp_path):
 
 # ── C2：Ebbinghaus 視窗模擬測試 ──────────────────────────────────────────
 
-from layer_3_pipeline.trigger_policy import EBBINGHAUS_DAYS, EBBINGHAUS_WINDOW
+from modules.ebbinghaus_trigger.service import EBBINGHAUS_DAYS, EBBINGHAUS_WINDOW
 
 
 def test_ebbinghaus_windows_covered_by_6h_scheduler():

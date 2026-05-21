@@ -3,7 +3,7 @@ c4_weekly_ci.py — C.4 週度 E2E 品質 CI 採樣
 
 排程：每週日 22:00 台灣時間，隨機抽 10 筆 golden set query
 流程：
-  1. 從 retrieval_golden_set 隨機抽 SAMPLE_N 筆（expected_answer 非空）
+  1. 從 ragas_retrieval_golden_set 隨機抽 SAMPLE_N 筆（expected_answer 非空）
   2. 每筆走 RAG → qwen3:30b-a3b 生成 → Gemini Flash-Lite judge 評分
   3. 取得本次 mean_score，與 anchor baseline 比對
   4. 若 mean_score < baseline - DROP_THRESHOLD → shiba_alert
@@ -25,7 +25,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from shiba_alert import send_alert
 from layer_1_memory.lib.db import get_connection
-from evaluation.c2_e2e_evaluation import (
+from modules.ragas.c2_e2e_evaluation import (
     _ensure_runs_table, _write_run_summary,
     _generate_answer, _judge_answer, _write_eval_result,
 )
@@ -52,11 +52,11 @@ def _load_anchor_baseline() -> float | None:
 
 
 def _random_sample(n: int) -> list:
-    """從 retrieval_golden_set 隨機抽 n 筆有 expected_answer 的 query。"""
+    """從 ragas_retrieval_golden_set 隨機抽 n 筆有 expected_answer 的 query。"""
     with get_connection() as conn:
         rows = conn.execute(
             """SELECT id, query, expected_answer
-               FROM retrieval_golden_set
+               FROM ragas_retrieval_golden_set
                WHERE expected_answer IS NOT NULL
                  AND is_active = 1
                ORDER BY RANDOM()

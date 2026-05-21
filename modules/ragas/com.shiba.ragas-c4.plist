@@ -13,7 +13,7 @@
   <array>
     <string>PROJECT_ROOT_PLACEHOLDER/.venv/bin/python</string>
     <string>-m</string>
-    <string>evaluation.c4_weekly_ci</string>
+    <string>modules.ragas.c4_weekly_ci</string>
   </array>
 
   <key>WorkingDirectory</key>

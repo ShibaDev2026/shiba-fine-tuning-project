@@ -164,8 +164,10 @@ CREATE VIRTUAL TABLE IF NOT EXISTS sessions_fts USING fts5(
 
 -- ============================================================
 -- Embedding 表（語意向量召回，核心能力）
--- 註：source_instruction 欄位將在 PR-O-7 拆出至 modules/paraphrase/，
---     本檔暫保留以維持 PR-O-1 雙寫並存階段的向後相容
+-- 註（PR-O-7）：source_instruction 欄位留在核心 exchange_embeddings —
+--   原始 embedding 寫入時也用此欄位（NULL=原始；非 NULL=paraphrase 變體），
+--   feature 拆出的是「生成 paraphrase 的服務」而非欄位本身。
+--   feature off 時 background 排程不註冊 paraphrase hook → tick noop。
 -- ============================================================
 
 CREATE TABLE IF NOT EXISTS exchange_embeddings (

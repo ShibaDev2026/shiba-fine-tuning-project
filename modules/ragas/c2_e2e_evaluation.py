@@ -2,11 +2,11 @@
 c2_e2e_evaluation.py — Phase C.2/C.3 E2E RAG 品質評估
 
 流程：
-  1. 從 retrieval_golden_set 讀取有 expected_answer 的 query
+  1. 從 ragas_retrieval_golden_set 讀取有 expected_answer 的 query
   2. retrieve_for_eval(query, k=3) 取得 RAG context
   3. 以 context + query 呼叫生成模型
   4. Gemini Flash-Lite judge：比對 generated vs expected_answer，評分 0-10
-  5. 寫入 evaluation_results（phase="e2e"），run summary 寫 evaluation_runs
+  5. 寫入 ragas_evaluation_results（phase="e2e"），run summary 寫 evaluation_runs
 
 執行：
   python -m evaluation.c2_e2e_evaluation run                    # 預設 qwen3:30b-a3b
@@ -137,7 +137,7 @@ def _write_eval_result(
     meta_json = json.dumps(metadata, ensure_ascii=False) if metadata else None
     with get_connection() as conn:
         conn.execute(
-            """INSERT INTO evaluation_results
+            """INSERT INTO ragas_evaluation_results
                (run_id, phase, metric_name, metric_value, evaluator_model, sample_id, metadata)
                VALUES (?, 'e2e', ?, ?, ?, ?, ?)""",
             (run_id, metric_name, metric_value, evaluator_model, sample_id, meta_json),
@@ -260,7 +260,7 @@ def run(
     with get_connection() as conn:
         sql = """
             SELECT id, query, expected_answer
-            FROM retrieval_golden_set
+            FROM ragas_retrieval_golden_set
             WHERE expected_answer IS NOT NULL
               AND is_active = 1
             ORDER BY id
@@ -349,7 +349,7 @@ def run(
             extra = f" (K={n_runs} std={_std(raw_scores):.2f})" if n_runs > 1 and raw_scores else ""
             print(f"  score={score_str}{extra} {'⚠' if flag else '✓'} {reason[:60]}")
 
-            # 寫 evaluation_results
+            # 寫 ragas_evaluation_results
             if score is not None:
                 scores.append(score)
                 meta = {
@@ -407,8 +407,8 @@ def compare(run_id_1: str, run_id_2: str) -> None:
             ).fetchone()
             rows = conn.execute(
                 """SELECT er.sample_id, er.metric_value, er.metadata, rgs.query
-                   FROM evaluation_results er
-                   JOIN retrieval_golden_set rgs ON rgs.id = er.sample_id
+                   FROM ragas_evaluation_results er
+                   JOIN ragas_retrieval_golden_set rgs ON rgs.id = er.sample_id
                    WHERE er.run_id=? AND er.metric_name='answer_quality'
                    ORDER BY er.sample_id""",
                 (rid,),

@@ -7,6 +7,22 @@
 
 ### Added
 
+- **PR-O 系列：核心瘦身 + 功能模組化重構（2026-05-21~22，refactor 分支）**
+  - PR-O-1 `ab37835`：`core/feature_registry.py` 基礎設施（`FeatureSpec` dataclass + topological sort + `register_hook`/`get_hook`/`reset_*` API）；`config/db/schema_core.sql` 雙寫並存 — 核心 schema 不再含任何 feature 表
+  - PR-O-2 `0584c57`：解 V6 `finetune_runs` 雙重 DDL — server.py 啟動改 sanity check（schema_core 為唯一來源）
+  - PR-O-3 gatekeeper 拆出：`modules/gatekeeper/{__init__,service,migrations,db/gatekeeper.sql}` + Stage A/B/dep-violation 隔離驗證；表名加前綴 `gatekeeper_golden_samples`；`layer_3_pipeline/runner.py` 改 `get_hook("gate")`
+  - PR-O-4 ebbinghaus_trigger 拆出：`layer_3_pipeline/trigger_policy_basic.py`（核心 fallback：approved≥30 即觸發）+ `modules/ebbinghaus_trigger/service.py`（feature on 走 Ebbinghaus + drift signals）；runner 改 `get_hook("trigger") or should_trigger_basic`
+  - PR-O-5 multi_judge_v2 拆出：`core/judge_strategy.py` Protocol；`modules/multi_judge_v2/{service,migrations,db/multi_judge_v2.sql}` 強制 vendor 多樣性 ≥ 2 + 寫 `multi_judge_v2_agreement_logs`（含 vendor_diversity 欄位）；`background.py::score_pending_samples` 改 `get_hook("judge_score") or multi_judge_score`
+  - PR-O-6 ragas 拆出：`evaluation/` → `modules/ragas/`（含 launchd plist + setup.sh）；建 `ragas_evaluation_results` / `ragas_retrieval_golden_set` 加前綴版表 + idempotent `INSERT...SELECT` 搬舊資料；9 個檔內 40+ SQL refs 改名；`judge_agreement_logs` → `multi_judge_v2_agreement_logs`；`depends_on=("multi_judge_v2",)` 強制 fail-fast
+  - PR-O-7 paraphrase 拆出：`layer_2_chamber/backend/services/paraphrase_service.py` → `modules/paraphrase/service.py`；`background.py::_run_paraphrase_job` 改 `get_hook("paraphrase")` → 無 hook 即排程 tick noop；不建專屬表（`source_instruction` 留在核心 `exchange_embeddings`）
+  - PR-O-8 advanced_compressor 拆出：`layer_0_router/compressor.py` 改為「截斷 fallback + hook 注入」入口（無 hook=取前 300 字+`...`）；Gemma 壓縮邏輯搬到 `modules/advanced_compressor/service.py`；`tests/layer0/test_compressor.py` 4 case 重寫覆蓋 hook on/off/fail
+  - PR-O-9 舊 schema 清理：刪 `evaluation/migration_evaluation.sql`（完全由 `db/ragas.sql` + `multi_judge_v2.sql` 取代）；註腳審查通過
+  - PR-O-10 文件 + 組合驗證：`config/shiba.yaml::features` 區塊補完整依賴鏈/模組對應/hook 名稱註解；`tests/test_pr_o_10_combinatorial.py` 10 case（all-off / single-on×4 / dep-pair×2 / dep-violation×2 / all-on）
+  - **驗收**：6 個 `modules/*/tests/verify_isolation.py` 全綠 + `tests/test_pr_o_10_combinatorial.py` 10/10 + 全 pytest 145 passed（6 個預存環境性失敗：numpy/apscheduler 缺失 + projects.path UNIQUE，與本次重構無關）
+  - **架構不變式**：全 7 個 flag 預設 `false` → 系統行為 = 純核心 4-layer；核心層只透過抽象 hook 名取得 feature 實作（DIP 落地，無 `modules.*` import 在核心層）
+
+### Added
+
 - **PR-L `aa9ec8c` golden-set 汰換（2026-05-21）**：`retrieval_golden_set` 加 `is_active INTEGER DEFAULT 1` soft-delete 欄位；C 段 12 題低分（score<4 或無法判定，含 ack-only 短句）標 `is_active=0` 保留審計軌跡；`c2_e2e_evaluation` / `ragas_runner` SQL 加 `AND is_active=1` 篩選；active set 縮為 16 題
 - **PR-M macro-exchange RAG 擴展 infra（2026-05-21，pr-m-rag-cross-exchange-context 分支）**：
   - PR-M.1 `9ad697a` schema：`exchange_embeddings.exchange_id` 外鍵 + 雙階段 backfill（原始 99.5% + paraphrase 98.2% = 總體 99.0% 命中）

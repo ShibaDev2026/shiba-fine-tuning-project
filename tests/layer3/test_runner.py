@@ -89,8 +89,8 @@ from layer_3_pipeline.runner import run_finetune_if_ready
 
 def test_run_skips_when_trigger_negative(conn):
     """should_trigger 回 False 時不執行 pipeline"""
-    from layer_3_pipeline.trigger_policy import TriggerDecision
-    with patch("layer_3_pipeline.runner.should_trigger",
+    from layer_3_pipeline.trigger_policy_basic import TriggerDecision
+    with patch("layer_3_pipeline.runner.should_trigger_basic",
                return_value=TriggerDecision(should_train=False, reason="no signal", approved_count=0)):
         result = run_finetune_if_ready(conn, adapter_block=1)
     assert result is None
@@ -105,17 +105,23 @@ def test_run_triggers_when_policy_positive(conn, tmp_path):
         )
     conn.commit()
 
-    from layer_3_pipeline.trigger_policy import TriggerDecision
-    from layer_3_pipeline.gatekeeper import GateResult
-    with patch("layer_3_pipeline.runner.should_trigger",
+    from layer_3_pipeline.trigger_policy_basic import TriggerDecision
+    from modules.gatekeeper.service import GateResult
+    fake_gate = lambda gguf_path, adapter_block, conn: GateResult(
+        passed=True, win_rate=0.8, ci_lower=0.7,
+        latency_ratio=1.0, acceptance_baseline=0.5,
+        reason="pass", n_evaluated=10,
+    )
+    # get_hook 依 name 區分：trigger 用 basic（回 None 走 fallback）、gate 用 fake_gate
+    def _hook_lookup(name: str):
+        return {"gate": fake_gate}.get(name)
+
+    with patch("layer_3_pipeline.runner.should_trigger_basic",
                return_value=TriggerDecision(should_train=True, reason="ebbinghaus", approved_count=30)), \
          patch("layer_3_pipeline.runner.export_dataset") as mock_export, \
          patch("layer_3_pipeline.runner.train_lora") as mock_train, \
          patch("layer_3_pipeline.runner.convert_to_gguf") as mock_convert, \
-         patch("layer_3_pipeline.runner.run_gate",
-               return_value=GateResult(passed=True, win_rate=0.8, ci_lower=0.7,
-                                       latency_ratio=1.0, acceptance_baseline=0.5,
-                                       reason="pass", n_evaluated=10)), \
+         patch("layer_3_pipeline.runner.get_hook", side_effect=_hook_lookup), \
          patch("layer_3_pipeline.runner.push_to_ollama") as mock_push:
 
         mock_export.return_value = {"total": 30, "path": str(tmp_path / "data.jsonl")}

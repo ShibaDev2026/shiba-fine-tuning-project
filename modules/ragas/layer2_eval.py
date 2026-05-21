@@ -1,7 +1,7 @@
 """
 layer2_eval.py — Phase B Layer 2 Judge 可靠性評估
 
-B.2  Fleiss' Kappa：從 judge_agreement_logs 計算 judge 間一致性
+B.2  Fleiss' Kappa：從 multi_judge_v2_agreement_logs 計算 judge 間一致性
 B.3  RAGAS Faithfulness：用本地 qwen3:30b 評估 approved 樣本的輸出忠實度
 
 執行：
@@ -33,10 +33,10 @@ _OLLAMA_MODEL = "qwen3:30b-a3b"
 # ── B.2 Fleiss' Kappa ────────────────────────────────────────────────────────
 
 def _load_votes() -> list[dict]:
-    """讀 judge_agreement_logs，每筆 expand votes_json 為 list[dict]"""
+    """讀 multi_judge_v2_agreement_logs，每筆 expand votes_json 為 list[dict]"""
     with get_connection() as conn:
         rows = conn.execute(
-            "SELECT id, sample_id, votes_json FROM judge_agreement_logs ORDER BY id"
+            "SELECT id, sample_id, votes_json FROM multi_judge_v2_agreement_logs ORDER BY id"
         ).fetchall()
     result = []
     for r in rows:
@@ -116,7 +116,7 @@ def _save_kappa_result(run_id: str, result: dict) -> None:
         return
     with get_connection() as conn:
         conn.execute(
-            """INSERT INTO evaluation_results
+            """INSERT INTO ragas_evaluation_results
                (run_id, phase, metric_name, metric_value, evaluator_model, metadata)
                VALUES (?, 'layer2', 'fleiss_kappa', ?, 'computed', ?)""",
             (run_id, kappa, json.dumps(result, ensure_ascii=False)),
@@ -211,12 +211,12 @@ def _score_faithfulness(instruction: str, output: str) -> tuple[float | None, st
 
 
 def action_faithfulness(run_id: str, limit: int | None = None) -> dict:
-    """B.3 主流程：對 training_samples 跑 Faithfulness，寫 judge_agreement_logs.ragas_faithfulness"""
+    """B.3 主流程：對 training_samples 跑 Faithfulness，寫 multi_judge_v2_agreement_logs.ragas_faithfulness"""
     with get_connection() as conn:
         sql = """SELECT ts.id, ts.instruction, ts.output, ts.status,
                         jal.id AS log_id
                  FROM training_samples ts
-                 LEFT JOIN judge_agreement_logs jal ON jal.sample_id = ts.id
+                 LEFT JOIN multi_judge_v2_agreement_logs jal ON jal.sample_id = ts.id
                    AND jal.ragas_faithfulness IS NULL
                  WHERE ts.output IS NOT NULL AND ts.instruction IS NOT NULL
                    AND ts.status IN ('approved', 'rejected')
@@ -245,10 +245,10 @@ def action_faithfulness(run_id: str, limit: int | None = None) -> dict:
             if score >= 0.8:
                 approved_faithful += 1
 
-        # 寫回 evaluation_results
+        # 寫回 ragas_evaluation_results
         with get_connection() as conn:
             conn.execute(
-                """INSERT INTO evaluation_results
+                """INSERT INTO ragas_evaluation_results
                    (run_id, phase, metric_name, metric_value, evaluator_model, sample_id)
                    VALUES (?, 'layer2', 'faithfulness', ?, ?, ?)""",
                 (run_id, score, f"local/{_OLLAMA_MODEL}", row["id"]),
@@ -256,7 +256,7 @@ def action_faithfulness(run_id: str, limit: int | None = None) -> dict:
             # 若有對應 log，更新 ragas_faithfulness
             if row["log_id"]:
                 conn.execute(
-                    "UPDATE judge_agreement_logs SET ragas_faithfulness=? WHERE id=?",
+                    "UPDATE multi_judge_v2_agreement_logs SET ragas_faithfulness=? WHERE id=?",
                     (score, row["log_id"]),
                 )
             conn.commit()

@@ -1,39 +1,30 @@
-# layer_3_pipeline/trigger_policy.py
+# modules/ebbinghaus_trigger/service.py
 """
-P1-1 動態訓練觸發策略（取代固定 approved≥30 門檻）。
+P1-1 動態訓練觸發策略（ebbinghaus_trigger feature；PR-O-4 自 layer_3 抽出）。
 
 三個信號，任一觸發 + approved ≥ MIN_SAMPLES → 開始訓練：
   A. Ebbinghaus 模型時間：壁鐘天數落在間隔 {1,2,4,7,15,30} 的容許窗口
   B. 採納退化：近 200 筆 local 決策採納率 < 7 日基線 - 10 pp
   C. 分布偏移：近 7 天 prompt embedding centroid 與上次訓練集 cosine > 0.35
+
+feature off 時 runner 改走 layer_3_pipeline/trigger_policy_basic.py（純 approved≥30）。
+`TriggerDecision` / `MIN_SAMPLES` 由 basic 模組定義為單一資料來源。
 """
 
 import json
 import logging
 import math
 import sqlite3
-from dataclasses import dataclass
+
+from layer_3_pipeline.trigger_policy_basic import MIN_SAMPLES, TriggerDecision
 
 logger = logging.getLogger(__name__)
 
-MIN_SAMPLES = 30                          # 安全下限，保留原值
 EBBINGHAUS_DAYS = [1, 2, 4, 7, 15, 30]  # FOREVER 論文間隔
 EBBINGHAUS_WINDOW = 0.5                  # ±0.5 天的容許窗口
 ADOPTION_WINDOW = 200                    # 信號 B 滑動視窗
 ADOPTION_DROP_THRESHOLD = 0.10           # 跌幅門檻
 DRIFT_THRESHOLD = 0.35                   # 信號 C cosine 距離門檻
-
-
-@dataclass
-class TriggerDecision:
-    should_train: bool
-    reason: str
-    approved_count: int
-    signal_a: bool = False
-    signal_b: bool = False
-    signal_c: bool = False
-    # D：首次訓練人工把關；True 時 runner 建立 pending_manual run，不立即啟動訓練
-    requires_manual: bool = False
 
 
 def should_trigger(conn: sqlite3.Connection, adapter_block: int) -> TriggerDecision:

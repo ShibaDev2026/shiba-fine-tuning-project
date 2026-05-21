@@ -13,7 +13,7 @@ sys.path.insert(0, str(_ROOT))
 _LAYER1_SCHEMA = _ROOT / "layer_1_memory" / "db" / "schema.sql"
 _LAYER2_SCHEMA = _ROOT / "layer_2_chamber" / "backend" / "db" / "schema_layer2.sql"
 
-from layer_3_pipeline.trigger_policy import _signal_distribution_drift
+from modules.ebbinghaus_trigger.service import _signal_distribution_drift
 
 
 def _make_db(tmp_path: Path) -> sqlite3.Connection:

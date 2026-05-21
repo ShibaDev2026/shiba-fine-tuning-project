@@ -21,6 +21,11 @@ def score_pending_samples(conn_factory) -> dict:
     conn_factory：呼叫後回傳 sqlite3.Connection
     """
     from ..services.multi_judge import multi_judge_score
+    from core.feature_registry import get_hook
+
+    # multi_judge_v2 feature 啟用時走 v2 strategy（vendor 多樣強制 + agreement log）；
+    # 未啟用即 v1 multi_judge_score（最小核心路徑，不寫 log）。
+    judge_fn = get_hook("judge_score") or multi_judge_score
 
     conn = conn_factory()
     try:
@@ -35,7 +40,7 @@ def score_pending_samples(conn_factory) -> dict:
 
         results = {"scored": 0, "failed": 0}
         for row in rows:
-            result = multi_judge_score(
+            result = judge_fn(
                 conn, row["id"], row["instruction"], row["input"] or "", row["output"],
                 session_id=row["session_id"],
             )
@@ -210,8 +215,13 @@ def _run_refiner_job(conn_factory) -> None:
 
 
 def _run_paraphrase_job(conn_factory) -> None:
-    from ..services.paraphrase_service import paraphrase_sparse_instructions
-    stats = paraphrase_sparse_instructions(conn_factory)
+    # paraphrase feature off → 無 hook → 排程 tick 直接 noop（不寫變體）
+    from core.feature_registry import get_hook
+    paraphrase_fn = get_hook("paraphrase")
+    if paraphrase_fn is None:
+        logger.debug("paraphrase hook 未註冊（feature off），排程 tick noop")
+        return
+    stats = paraphrase_fn(conn_factory)
     logger.info("同義說法補充完成：%s", stats)
 
 

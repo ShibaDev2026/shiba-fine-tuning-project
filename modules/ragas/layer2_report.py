@@ -11,11 +11,11 @@ from layer_1_memory.lib.db import get_connection
 
 
 def generate_report() -> str:
-    """讀 evaluation_results + judge_agreement_logs 產報告"""
+    """讀 ragas_evaluation_results + multi_judge_v2_agreement_logs 產報告"""
     with get_connection() as conn:
         # B.2 Kappa
         kappa_rows = conn.execute(
-            """SELECT metric_value, metadata FROM evaluation_results
+            """SELECT metric_value, metadata FROM ragas_evaluation_results
                WHERE phase='layer2' AND metric_name='fleiss_kappa'
                ORDER BY created_at DESC LIMIT 1"""
         ).fetchall()
@@ -31,14 +31,14 @@ def generate_report() -> str:
 
         # B.3 Faithfulness
         faith_rows = conn.execute(
-            """SELECT metric_value FROM evaluation_results
+            """SELECT metric_value FROM ragas_evaluation_results
                WHERE phase='layer2' AND metric_name='faithfulness'"""
         ).fetchall()
         faith_scores = [r["metric_value"] for r in faith_rows]
         faith_avg = sum(faith_scores) / len(faith_scores) if faith_scores else None
 
         # Judge agreement logs overview
-        log_cnt = conn.execute("SELECT COUNT(*) FROM judge_agreement_logs").fetchone()[0]
+        log_cnt = conn.execute("SELECT COUNT(*) FROM multi_judge_v2_agreement_logs").fetchone()[0]
         sample_cnt = conn.execute(
             "SELECT COUNT(*) FROM training_samples"
         ).fetchone()[0]
@@ -73,7 +73,7 @@ def generate_report() -> str:
     else:
         lines.append("**尚無足夠資料**（需 ≥2 votes/sample）")
         lines.append("")
-        lines.append(f"目前 judge_agreement_logs：{log_cnt} 筆（每筆 <2 票，無法計算）")
+        lines.append(f"目前 multi_judge_v2_agreement_logs：{log_cnt} 筆（每筆 <2 票，無法計算）")
         lines.append("")
         lines.append("**下一步**：")
         lines.append("1. 等待 Gemini 配額重置（UTC 00:00）")
@@ -131,10 +131,10 @@ def generate_report() -> str:
         "python -m evaluation.layer2_eval --action kappa",
         "",
         "# Kappa 分布",
-        'sqlite3 data/shiba-brain.db "SELECT ROUND(fleiss_kappa,1) k, COUNT(*) FROM judge_agreement_logs GROUP BY k ORDER BY k"',
+        'sqlite3 data/shiba-brain.db "SELECT ROUND(fleiss_kappa,1) k, COUNT(*) FROM multi_judge_v2_agreement_logs GROUP BY k ORDER BY k"',
         "",
         "# Judge vs RAGAS 衝突樣本（高一致性但低忠實度）",
-        'sqlite3 data/shiba-brain.db "SELECT sample_id, fleiss_kappa, ragas_faithfulness FROM judge_agreement_logs WHERE ragas_faithfulness < 0.5 AND fleiss_kappa > 0.7 LIMIT 10"',
+        'sqlite3 data/shiba-brain.db "SELECT sample_id, fleiss_kappa, ragas_faithfulness FROM multi_judge_v2_agreement_logs WHERE ragas_faithfulness < 0.5 AND fleiss_kappa > 0.7 LIMIT 10"',
         "```",
         "",
     ])

@@ -163,6 +163,7 @@ class TestSchemaCoreApplies:
             "gatekeeper_golden_samples",
             "ragas_runs", "ragas_results", "ragas_golden_set",
             "evaluation_runs", "evaluation_results", "retrieval_golden_set",
+            "ragas_evaluation_results", "ragas_retrieval_golden_set",
             "multi_judge_v2_agreement_logs", "judge_agreement_logs",
             "paraphrase_variant_sources",
         }

@@ -38,7 +38,7 @@ def sample_queries(n: int = 30, min_len: int = 8, max_len: int = 50) -> list[dic
     - 長度 [min_len, max_len]
     - 排除黑名單（無意義通用詞）
     - 排除高發散 instruction（與 _vector_search 一致：count(DISTINCT commands) >= 3）
-    - 排除已在 retrieval_golden_set 的 query（防 PR-N.2 擴增時撞題；包含 is_active=0 的汰換題，
+    - 排除已在 ragas_retrieval_golden_set 的 query（防 PR-N.2 擴增時撞題；包含 is_active=0 的汰換題，
       避免 PR-L 棄置題被重新抽中）
     - 同 instruction 去重
     """
@@ -48,7 +48,7 @@ def sample_queries(n: int = 30, min_len: int = 8, max_len: int = 50) -> list[dic
         FROM exchange_embeddings
         WHERE length(instruction) BETWEEN ? AND ?
           AND lower(trim(instruction)) NOT IN ({placeholders})
-          AND instruction NOT IN (SELECT query FROM retrieval_golden_set)
+          AND instruction NOT IN (SELECT query FROM ragas_retrieval_golden_set)
           AND instruction IN (
               SELECT instruction
               FROM exchange_embeddings
@@ -199,7 +199,7 @@ def write_to_golden_set(
     annotator: str,
     notes: str | None = None,
 ) -> int:
-    """寫入 retrieval_golden_set 表，回傳 lastrowid"""
+    """寫入 ragas_retrieval_golden_set 表，回傳 lastrowid"""
     uuids_json = json.dumps(annotation.get("relevant_session_uuids", []), ensure_ascii=False)
     full_notes_parts = []
     if "reasoning" in annotation:
@@ -212,7 +212,7 @@ def write_to_golden_set(
 
     with get_connection() as conn:
         cur = conn.execute(
-            """INSERT INTO retrieval_golden_set
+            """INSERT INTO ragas_retrieval_golden_set
                (query, expected_session_uuids, annotator, notes)
                VALUES (?, ?, ?, ?)""",
             (query, uuids_json, annotator, full_notes),
@@ -268,7 +268,7 @@ def _action_review() -> None:
     with get_connection() as conn:
         rows = conn.execute(
             """SELECT id, query, expected_session_uuids, annotator, notes
-               FROM retrieval_golden_set
+               FROM ragas_retrieval_golden_set
                WHERE annotator LIKE 'auto-by-%'
                  AND is_active = 1
                ORDER BY id"""
