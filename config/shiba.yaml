@@ -36,3 +36,18 @@ runtime:
   # container 內由 docker-compose 設 SHIBA_RUNTIME=docker
   # host 未設時預設 'host'
   environment_var: SHIBA_RUNTIME
+
+# ----------------------------------------------------------------
+# Feature Flags（PR-O-1 立案；後續 PR 依序接線）
+# 預設全 false = 最小核心閉環（Hook → Bridge → Score → Trigger → Update）
+# 任一 flag 翻為 true 時，由 core.feature_registry.apply_features 套用
+# 對應 modules/<topic>/db/<topic>.sql 並執行 init_fn
+# ----------------------------------------------------------------
+features:
+  shadow_gatekeeper:   false   # Layer 3 A/B 守門；必須與 golden_retention 同時 true
+  ebbinghaus_trigger:  false   # Layer 3 動態觸發；false=固定 approved≥30
+  ragas_eval:          false   # 整套 RAGAS 評估框架（含 weekly CI launchd）
+  multi_judge_v2:      false   # false=三方多數投票無 log；true=vendor 強制+Fleiss+log
+  paraphrase_service:  false   # false=不建 paraphrase_variant_sources
+  advanced_compressor: false   # false=Layer 0 直接 truncate，不走 Gemma 壓縮
+  golden_retention:    false   # shadow_gatekeeper 子能力；registry 強制檢核共開

@@ -72,10 +72,28 @@ class Runtime:
 
 
 @dataclass(frozen=True, slots=True)
+class Features:
+    """Feature flags（PR-O-1 立案；後續 PR 依序接線）。
+
+    所有欄位皆為 bool 且 frozen；缺鍵載入時 fail fast。
+    每個 flag 對應一個 modules/<topic>/ 模組，預設 false = 最小核心閉環。
+    """
+
+    shadow_gatekeeper: bool
+    ebbinghaus_trigger: bool
+    ragas_eval: bool
+    multi_judge_v2: bool
+    paraphrase_service: bool
+    advanced_compressor: bool
+    golden_retention: bool
+
+
+@dataclass(frozen=True, slots=True)
 class _Config:
     paths: Paths
     services: Services
     runtime: Runtime
+    features: Features
 
 
 # ----------------------------------------------------------------
@@ -118,6 +136,28 @@ def _build_paths(raw: dict[str, Any], project_root: Path) -> Paths:
     )
 
 
+def _build_features(raw: dict[str, Any]) -> Features:
+    """從 yaml features 區塊建 Features dataclass；缺鍵或型別錯誤 fail fast。"""
+
+    def _bool(key: str) -> bool:
+        value = _require(raw, key, f"features.{key}")
+        if not isinstance(value, bool):
+            raise TypeError(
+                f"features.{key} 須為 bool，收到 {type(value).__name__}={value!r}"
+            )
+        return value
+
+    return Features(
+        shadow_gatekeeper=_bool("shadow_gatekeeper"),
+        ebbinghaus_trigger=_bool("ebbinghaus_trigger"),
+        ragas_eval=_bool("ragas_eval"),
+        multi_judge_v2=_bool("multi_judge_v2"),
+        paraphrase_service=_bool("paraphrase_service"),
+        advanced_compressor=_bool("advanced_compressor"),
+        golden_retention=_bool("golden_retention"),
+    )
+
+
 def _build_services(raw: dict[str, Any], is_docker: bool) -> Services:
     """Services：port 直接取；ollama/layer3 URL 依 runtime 擇一暴露。"""
     ollama_key = "ollama_base_url_docker" if is_docker else "ollama_base_url_host"
@@ -145,11 +185,13 @@ def _load_config() -> _Config:
 
     paths_raw = _require(raw, "paths", "paths")
     services_raw = _require(raw, "services", "services")
+    features_raw = _require(raw, "features", "features")
 
     return _Config(
         paths=_build_paths(paths_raw, project_root),
         services=_build_services(services_raw, is_docker=(environment == "docker")),
         runtime=Runtime(environment=environment),
+        features=_build_features(features_raw),
     )
 
 
@@ -159,4 +201,4 @@ def _load_config() -> _Config:
 
 CONFIG: _Config = _load_config()
 
-__all__ = ["CONFIG", "Paths", "Services", "Runtime"]
+__all__ = ["CONFIG", "Paths", "Services", "Runtime", "Features"]
