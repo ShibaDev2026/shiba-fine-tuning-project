@@ -41,6 +41,14 @@ from layer_2_chamber.backend.services.teacher_service import (
 
 _SCORE_THRESHOLD = 7.0
 
+
+def _std(xs: list[float]) -> float:
+    """N>1 樣本標準差，N≤1 回 0.0（quick noise-floor 統計用）"""
+    if len(xs) < 2:
+        return 0.0
+    m = sum(xs) / len(xs)
+    return (sum((x - m) ** 2 for x in xs) / (len(xs) - 1)) ** 0.5
+
 # Judge 模型：改用 flash 主力（避開 flash-lite 在 PT 尖峰時段的 503 spike）
 # 配額 500 RPM / 5000 RPD 對 28 筆批次綽綽有餘
 _JUDGE_MODEL = "gemini-2.5-flash"
@@ -233,11 +241,14 @@ def run(
     skip_scoring: bool = False,
     top_n: int = 3,
     rag_window: int = 0,
+    n_runs: int = 1,
 ) -> str:
     """執行 E2E 評估，回傳 run_id。
 
     rag_window=0 → retrieve_for_eval（單 exchange，baseline）
     rag_window≥1 → retrieve_for_eval_with_context（±K 鄰居擴展）
+    n_runs≥2 → 每題重複跑 judge K 次，metric_value 寫 mean，
+              raw_scores 寫進 metadata（用於量化 LLM judge noise floor）
     """
     _ensure_runs_table()
 
@@ -310,33 +321,53 @@ def run(
 
             print(f"  → {generated[:80]}...")
 
-            # Gemini judge
+            # Gemini judge（n_runs≥2 時重跑 K 次取 mean）
             if skip_scoring:
                 score, reason = None, ""
+                raw_scores: list[float] = []
+                raw_reasons: list[str] = []
             else:
-                score, reason = _judge_answer(query, expected, generated)
-                time.sleep(4)  # Flash-Lite 速率保護
+                raw_scores = []
+                raw_reasons = []
+                for k in range(n_runs):
+                    judge_start = time.perf_counter()
+                    s_k, r_k = _judge_answer(query, expected, generated)
+                    judge_elapsed = time.perf_counter() - judge_start
+                    if s_k is not None:
+                        raw_scores.append(s_k)
+                        raw_reasons.append(r_k)
+                    # Flash 速率保護：動態 sleep（API 已耗時則扣除，下限 0.5s）
+                    time.sleep(max(0.5, 4.0 - judge_elapsed))
+                if raw_scores:
+                    score = sum(raw_scores) / len(raw_scores)
+                    reason = raw_reasons[0]  # 顯示第一條 reason 即可
+                else:
+                    score, reason = None, "Judge 全部失敗"
 
-            score_str = f"{score:.1f}" if score is not None else "N/A"
+            score_str = f"{score:.2f}" if score is not None else "N/A"
             flag = score is not None and score < _SCORE_THRESHOLD
-            print(f"  score={score_str} {'⚠' if flag else '✓'} {reason[:60]}")
+            extra = f" (K={n_runs} std={_std(raw_scores):.2f})" if n_runs > 1 and raw_scores else ""
+            print(f"  score={score_str}{extra} {'⚠' if flag else '✓'} {reason[:60]}")
 
             # 寫 evaluation_results
             if score is not None:
                 scores.append(score)
+                meta = {
+                    "model_spec": model_spec,
+                    "rag_source": source,
+                    "n_contexts": n_ctx,
+                    "generated": generated[:300],
+                    "reason": reason,
+                }
+                if n_runs > 1:
+                    meta["raw_scores"] = raw_scores
                 _write_eval_result(
                     run_id=run_id,
                     metric_name="answer_quality",
                     metric_value=score,
                     evaluator_model=_JUDGE_MODEL,
                     sample_id=qid,
-                    metadata={
-                        "model_spec": model_spec,
-                        "rag_source": source,
-                        "n_contexts": n_ctx,
-                        "generated": generated[:300],
-                        "reason": reason,
-                    },
+                    metadata=meta,
                 )
             ok += 1
 
@@ -360,7 +391,7 @@ def run(
         mean_score=mean_score,
         started_at=started_at,
         finished_at=finished_at,
-        metadata={"top_n": top_n, "rag_window": rag_window, "aborted": aborted},
+        metadata={"top_n": top_n, "rag_window": rag_window, "n_runs": n_runs, "aborted": aborted},
     )
 
     print(f"\n── {status_tag} {ok}/{len(rows)}  mean_score={mean_score}  run_id={run_id} ──")
@@ -437,6 +468,9 @@ def main() -> None:
     r.add_argument("--top-n", type=int, default=3)
     r.add_argument("--rag-window", type=int, default=0,
                    help="鄰居 exchange 擴展視窗 K（0=baseline 不擴展；建議 A/B 用 2）")
+    r.add_argument("--n-runs", type=int, default=1,
+                   help="每題 judge 重跑次數 K（K≥2 取 mean，raw_scores 寫 metadata；"
+                        "用於量化 LLM judge noise floor）")
     r.add_argument("--dry-run", action="store_true")
     r.add_argument("--skip-scoring", action="store_true")
 
@@ -453,6 +487,7 @@ def main() -> None:
             skip_scoring=args.skip_scoring,
             top_n=args.top_n,
             rag_window=args.rag_window,
+            n_runs=args.n_runs,
         )
     else:
         compare(args.run_id_1, args.run_id_2)
