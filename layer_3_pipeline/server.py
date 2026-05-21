@@ -5,6 +5,7 @@
 # GET  /health          → Layer 2 心跳檢查
 
 import logging
+import sqlite3
 from contextlib import contextmanager
 from fastapi import FastAPI, HTTPException
 
@@ -24,40 +25,22 @@ logger = logging.getLogger("layer3.server")
 
 @app.on_event("startup")
 def _startup():
-    """啟動時兜底建立 finetune_runs（DDL 主源在 layer_1_memory/db/schema.sql；
-    此處作為舊 DB 升級時的幂等防呆，定義須與 schema.sql 完全對齊）"""
+    """啟動 sanity check — finetune_runs 必須由 Layer 2 backend init / 或手動套用
+    layer_1_memory/db/schema.sql（最終 PR-O-9 後改 config/db/schema_core.sql）。
+
+    PR-O-2 解 V6：移除本檔內聯的 CREATE TABLE / INDEX（spec §3.2），
+    DDL 來源統一在 layer_1_memory/db/schema.sql 單一處，避免雙重 DDL 漂移。
+    """
     conn = _conn_factory()
     try:
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS finetune_runs (
-                id            INTEGER PRIMARY KEY AUTOINCREMENT,
-                adapter_block INTEGER NOT NULL,
-                status        TEXT NOT NULL DEFAULT 'pending'
-                                CHECK(status IN (
-                                    'pending', 'pending_manual',
-                                    'running', 'gate_eval', 'gate_rejected',
-                                    'done', 'failed'
-                                )),
-                dataset_path  TEXT,
-                adapter_path  TEXT,
-                gguf_path     TEXT,
-                ollama_model  TEXT,
-                sample_count  INTEGER,
-                error_msg     TEXT,
-                started_at    TEXT,
-                finished_at   TEXT,
-                created_at    TEXT NOT NULL DEFAULT (datetime('now')),
-                requires_manual_approval INTEGER NOT NULL DEFAULT 0,
-                approved_by_human        INTEGER NOT NULL DEFAULT 0,
-                approved_at              TEXT
-            )
-        """)
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_finetune_runs_block_status "
-            "ON finetune_runs(adapter_block, status, id)"
-        )
-        conn.commit()
-        logger.info("finetune_runs 表確認完成")
+        conn.execute("SELECT 1 FROM finetune_runs LIMIT 1").fetchone()
+        logger.info("finetune_runs 表 sanity check 通過")
+    except sqlite3.OperationalError as e:
+        # 表不存在 = Layer 2 backend 未啟動過 / DB 未初始化；明確錯誤勝於靜默建空表
+        raise RuntimeError(
+            "finetune_runs 表不存在；請先啟動 Layer 2 backend 完成 schema 初始化，"
+            "或手動套用 layer_1_memory/db/schema.sql"
+        ) from e
     finally:
         conn.close()
 
