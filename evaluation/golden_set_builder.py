@@ -38,6 +38,8 @@ def sample_queries(n: int = 30, min_len: int = 8, max_len: int = 50) -> list[dic
     - 長度 [min_len, max_len]
     - 排除黑名單（無意義通用詞）
     - 排除高發散 instruction（與 _vector_search 一致：count(DISTINCT commands) >= 3）
+    - 排除已在 retrieval_golden_set 的 query（防 PR-N.2 擴增時撞題；包含 is_active=0 的汰換題，
+      避免 PR-L 棄置題被重新抽中）
     - 同 instruction 去重
     """
     placeholders = ",".join("?" * len(_BLACKLIST))
@@ -46,6 +48,7 @@ def sample_queries(n: int = 30, min_len: int = 8, max_len: int = 50) -> list[dic
         FROM exchange_embeddings
         WHERE length(instruction) BETWEEN ? AND ?
           AND lower(trim(instruction)) NOT IN ({placeholders})
+          AND instruction NOT IN (SELECT query FROM retrieval_golden_set)
           AND instruction IN (
               SELECT instruction
               FROM exchange_embeddings
