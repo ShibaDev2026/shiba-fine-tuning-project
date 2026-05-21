@@ -18,6 +18,13 @@
 
 - **PR-M Phase 4 A/B 結果（16 題 × Claude judge）**：K=0 baseline 7.13 / K=1 6.50 / K=2 6.38 / K=3 6.69 — **K≥1 全敗**，唯一受益短句題（qid=2 +3）抵不過高分指令類題（qid=8/13/14 −3~−5）被鄰居稀釋；決策按 plan 矩陣 Δ<−0.1 → 退回 K=0；API/CLI/schema 保留當 OCP 基礎建設，Phase 5 持久化不啟動
 - **Conditional Expansion 棄計畫 `7ab03f6`（2026-05-21）**：Phase 1-5 全部驗證 — 規則分類器 precision=1.0/recall=0.875/F1=0.933，auto:2 mean=6.6875 vs K=0 7.1333（Δ=−0.4458）；三條獨立證據（macro-exchange 整體無效、命中題不受益、受益題抓不到）；DROP COLUMN needs_context_label + 刪 classifier 三檔 + revert 三檔；retrospective 寫入 `docs/archive/plans/2026-05-21-conditional-expansion.md`
+- **PR-N judge noise 治理 + golden set 擴增（2026-05-21）**：
+  - N.1.1 `6eeb468`：4 vendor client（anthropic/openai_compat/ollama/gemini）`generate()` 加 `temperature: float = 0.0` 參數，原硬編碼 0.1 改參數化；caller 不傳即 deterministic（評估友善），需要多樣性者顯式傳
+  - N.1.2 `a1cb3d5`：`c2_e2e_evaluation` 加 `--n-runs K` flag，K>1 對每題 judge 重跑 K 次取 mean，raw_scores 寫 metadata
+  - N.1.3 noise floor 量化：16 active 題 × K=3 judge，median std=0，mean std=**0.18**（14/16 完全 deterministic）；舊 PR-M 觀察 ~0.3 → 治理後降約 40%；雖略超 ≤0.15 目標，但 <<<0.5 N.2 子集對比門檻可接受
+  - N.2.0 `828f170`：`golden_set_builder.sample_queries` 加 `NOT IN (SELECT query FROM retrieval_golden_set)` 防擴增時撞題（含 `is_active=0` 已汰換題）
+  - N.2 golden set 16 → 65 active：annotate 80 候選 → embedding 去重 17 題（13 paraphrase 組）→ Shiba 4-tier 審查 drop 7 題（uuids=[] 3 + 自動回答可解 4）→ C.1 expected_answer 生成 56 新題 → 7 FLAG（score<7）全 drop；最終 `is_active=1 AND expected_answer IS NOT NULL` = **65**（16 EXIST + 49 NEW）
+  - N.2 雙 baseline（tag=`n50-baseline`）：Claude `e2e-claude-20260521T120858` mean=5.5968 / Qwen `e2e-ollama-20260521T122023` mean=5.8281；16 EXIST 子集 vs 舊 baseline 偏移雙方向（Claude −0.57 / Qwen +1.48）— 主因為 judge temperature 0.1→0 + PR-M retrieval API 改動，舊 baseline invalidate，本次數字為 **PR-N 後新基準**
 
 ## [1.6.0] - 2026-05-21
 
