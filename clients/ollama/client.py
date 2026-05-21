@@ -74,7 +74,7 @@ class OllamaClient:
         model_id: str,
         prompt: str,
         max_tokens: int = 2048,
-        temperature: float = 0.1,
+        temperature: float = 0.0,
         *,
         caller_module: str | None = None,
         teacher_id: int | None = None,

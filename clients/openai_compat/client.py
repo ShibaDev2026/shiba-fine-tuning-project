@@ -88,7 +88,7 @@ class OpenAICompatClient:
         prompt: str,
         max_tokens: int = 150,
         *,
-        temperature: float = 0.1,
+        temperature: float = 0.0,
         caller_module: str | None = None,
         teacher_id: int | None = None,
         sample_id: int | None = None,

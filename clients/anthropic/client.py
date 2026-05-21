@@ -74,6 +74,7 @@ class AnthropicClient:
         max_tokens: int = 150,
         *,
         effort: str = "medium",
+        temperature: float = 0.0,
         caller_module: str | None = None,
         teacher_id: int | None = None,
         sample_id: int | None = None,
@@ -88,6 +89,8 @@ class AnthropicClient:
 
         effort：'low'/'medium'/'high'，Sonnet 4.6 官方推薦 medium 兼顧成本與品質
         （API 預設為 high）。
+        temperature 預設 0.0（評估友善 / deterministic）；需要多樣性的 caller
+        （chat / training data 生成）應顯式傳 0.7~1.0。
         """
         log_ctx = {
             "caller_module": caller_module,
@@ -96,7 +99,7 @@ class AnthropicClient:
         }
 
         try:
-            return self._invoke_once(model_id, prompt, max_tokens, effort, log_ctx)
+            return self._invoke_once(model_id, prompt, max_tokens, effort, temperature, log_ctx)
         except _RetryableServerError as e:
             last_error = e
 
@@ -108,7 +111,7 @@ class AnthropicClient:
             )
             time.sleep(delay)
             try:
-                return self._invoke_once(model_id, prompt, max_tokens, effort, log_ctx)
+                return self._invoke_once(model_id, prompt, max_tokens, effort, temperature, log_ctx)
             except _RetryableServerError as e:
                 last_error = e
 
@@ -123,6 +126,7 @@ class AnthropicClient:
         prompt: str,
         max_tokens: int,
         effort: str,
+        temperature: float,
         log_ctx: dict,
     ) -> tuple[str | None, int, int, str]:
         url = f"{self._api_base}/messages"
@@ -130,7 +134,7 @@ class AnthropicClient:
             "model": model_id,
             "max_tokens": max_tokens,
             "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.1,
+            "temperature": temperature,
             "output_config": {"effort": effort},
         }).encode()
 

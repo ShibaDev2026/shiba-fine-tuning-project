@@ -76,6 +76,7 @@ class GeminiClient:
         max_tokens: int = 150,
         force_json: bool = True,
         *,
+        temperature: float = 0.0,
         caller_module: str | None = None,
         teacher_id: int | None = None,
         sample_id: int | None = None,
@@ -100,7 +101,7 @@ class GeminiClient:
         }
 
         try:
-            return self._invoke_once(model_id, prompt, max_tokens, force_json, log_ctx, disable_thinking)
+            return self._invoke_once(model_id, prompt, max_tokens, force_json, temperature, log_ctx, disable_thinking)
         except _RetryableServerError as e:
             last_error = e
 
@@ -112,7 +113,7 @@ class GeminiClient:
             )
             time.sleep(delay)
             try:
-                return self._invoke_once(model_id, prompt, max_tokens, force_json, log_ctx, disable_thinking)
+                return self._invoke_once(model_id, prompt, max_tokens, force_json, temperature, log_ctx, disable_thinking)
             except _RetryableServerError as e:
                 last_error = e
 
@@ -127,6 +128,7 @@ class GeminiClient:
         prompt: str,
         max_tokens: int,
         force_json: bool,
+        temperature: float,
         log_ctx: dict,
         disable_thinking: bool = False,
     ) -> tuple[str | None, int, int, str]:
@@ -134,7 +136,7 @@ class GeminiClient:
         from google.genai import types as genai_types
 
         config_kwargs: dict[str, Any] = {
-            "temperature": 0.1,
+            "temperature": temperature,
             "max_output_tokens": max_tokens,
         }
         if force_json:
