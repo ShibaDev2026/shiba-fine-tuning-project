@@ -289,7 +289,9 @@ def run(
             # 本地 Ollama 永久錯誤（thinking token 耗盡、空回應）僅 skip 此筆，
             # 不熔斷整批；外部 vendor（Gemini / Anthropic）429/5xx 仍維持熔斷以保護配額。
             try:
+                gen_start = time.perf_counter()
                 generated = _generate_answer(model_spec, query, contexts, sample_id=qid)
+                gen_elapsed = time.perf_counter() - gen_start
             except AIClientError as e:
                 if e.vendor == "ollama" and e.category.value == "permanent":
                     print(f"  ⚠ Ollama 永久錯誤 skip：{e.message[:80]}", file=sys.stderr)
@@ -298,7 +300,9 @@ def run(
             if vendor == "ollama":
                 pass  # Ollama 本地無需 sleep
             else:
-                time.sleep(4)  # Anthropic / 外部 API
+                # Anthropic 是 TPM-based 不撞 RPM，API latency 已吃掉 4s 預算的多數；
+                # 動態扣除已耗時，下限 0.5s 涵蓋網路抖動 + 上游 RPM slot 排隊空隙。
+                time.sleep(max(0.5, 4.0 - gen_elapsed))
 
             if not generated:
                 print(f"  ⚠ 生成失敗，跳過")
