@@ -5,6 +5,20 @@
 
 ## [Unreleased]
 
+### Added
+
+- **PR-L `aa9ec8c` golden-set 汰換（2026-05-21）**：`retrieval_golden_set` 加 `is_active INTEGER DEFAULT 1` soft-delete 欄位；C 段 12 題低分（score<4 或無法判定，含 ack-only 短句）標 `is_active=0` 保留審計軌跡；`c2_e2e_evaluation` / `ragas_runner` SQL 加 `AND is_active=1` 篩選；active set 縮為 16 題
+- **PR-M macro-exchange RAG 擴展 infra（2026-05-21，pr-m-rag-cross-exchange-context 分支）**：
+  - PR-M.1 `9ad697a` schema：`exchange_embeddings.exchange_id` 外鍵 + 雙階段 backfill（原始 99.5% + paraphrase 98.2% = 總體 99.0% 命中）
+  - PR-M.2 `42f198b` `rag.py::retrieve_for_eval_with_context(window_k=K)`：WITH CTE 拉鄰居 ±K exchange，preview_chars=200 截斷
+  - PR-M.3 `11228da` `c2_e2e_evaluation` + `ragas_runner` 加 `--rag-window K` CLI 旗標
+  - PR-M.4 `f53828c` Claude generation sleep 動態化 `max(0.5, 4 - elapsed)`，Phase 4 wall time −25%
+
+### Operations
+
+- **PR-M Phase 4 A/B 結果（16 題 × Claude judge）**：K=0 baseline 7.13 / K=1 6.50 / K=2 6.38 / K=3 6.69 — **K≥1 全敗**，唯一受益短句題（qid=2 +3）抵不過高分指令類題（qid=8/13/14 −3~−5）被鄰居稀釋；決策按 plan 矩陣 Δ<−0.1 → 退回 K=0；API/CLI/schema 保留當 OCP 基礎建設，Phase 5 持久化不啟動
+- **Conditional Expansion 棄計畫 `7ab03f6`（2026-05-21）**：Phase 1-5 全部驗證 — 規則分類器 precision=1.0/recall=0.875/F1=0.933，auto:2 mean=6.6875 vs K=0 7.1333（Δ=−0.4458）；三條獨立證據（macro-exchange 整體無效、命中題不受益、受益題抓不到）；DROP COLUMN needs_context_label + 刪 classifier 三檔 + revert 三檔；retrospective 寫入 `docs/archive/plans/2026-05-21-conditional-expansion.md`
+
 ## [1.6.0] - 2026-05-21
 
 RAGAS 評估框架完整落地（Phase 0/A/B/C 全部完成）；Teacher 配額治理改寫（Gemini Paid Tier 升級 + RPM 速率管控 + 429 分流 + UTC TZ 對齊）；`clients/` 共用 AI 呼叫包誕生（vendor 分包 + 三類錯誤 + ai_api_call_logs）；中文召回核心升級（nomic-embed-text → bge-m3，1024-dim）；4 vendor client 統一 exponential backoff。
