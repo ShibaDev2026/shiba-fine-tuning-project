@@ -118,6 +118,61 @@ def get_project_path(payload: dict) -> str | None:
 
 
 # ============================================================
+# Debug echo（stderr 區塊，使用者可見、不進 Claude context）
+# ============================================================
+
+_ANSI_HEADER = "\033[1;36m"  # 粗體青
+_ANSI_LABEL = "\033[1;33m"   # 粗體黃
+_ANSI_RESET = "\033[0m"
+
+
+def _infer_rag_source(memory_context: str | None) -> str:
+    """從 memory_context 內容判斷召回路徑（vector / fts5 / none）"""
+    if not memory_context:
+        return "none"
+    # _build_exchange_context 的 vector 路徑用「### 問題：」
+    if "### 問題：" in memory_context:
+        return "vector"
+    # build_rag_output 的 FTS5 路徑用「### [」
+    if "### [" in memory_context:
+        return "fts5"
+    return "unknown"
+
+
+def _echo_to_stderr(
+    combined: str,
+    router_context: str | None,
+    memory_context: str | None,
+) -> None:
+    """把召回內容以 ANSI 區塊寫到 stderr（exit 0，僅顯示給使用者）。
+
+    side-effect only：任何 stderr 寫入失敗（BrokenPipe / 編碼錯誤）都不得
+    冒泡，否則會把 main() 已備好的 additionalContext 一起連坐丟失。
+    """
+    try:
+        rag_source = _infer_rag_source(memory_context)
+        parts = []
+        if router_context:
+            parts.append("router")
+        if memory_context:
+            parts.append(f"rag={rag_source}")
+        source_label = "+".join(parts) if parts else "empty"
+
+        block = (
+            f"{_ANSI_HEADER}[=== 本地RAG召回：{source_label} ==={_ANSI_RESET}\n"
+            f"{combined.rstrip()}\n"
+            f"{_ANSI_HEADER}[=== END ==={_ANSI_RESET}\n"
+        )
+        # 用 .buffer.write 強制 utf-8 + 'replace' 容錯，避免 ASCII stderr
+        # 環境（LANG=C / launchd / CI runner）遇到中文或 emoji 拋 UnicodeEncodeError
+        sys.stderr.buffer.write(block.encode("utf-8", errors="replace"))
+        sys.stderr.buffer.flush()
+    except Exception as exc:  # noqa: BLE001
+        # debug echo 失敗不得影響主流程；只在 file logger 留痕
+        logging.getLogger(__name__).warning("debug_echo 寫入 stderr 失敗：%s", exc)
+
+
+# ============================================================
 # Hook 入口
 # ============================================================
 
@@ -162,6 +217,7 @@ def main() -> None:
         rag_config = config.get("rag", {})
         top_n = rag_config.get("top_n", 3)
         token_budget = rag_config.get("token_budget", 500)
+        debug_echo = bool(rag_config.get("debug_echo", False))
 
         # 執行 RAG 檢索
         memory_context = get_rag_context(
@@ -193,11 +249,13 @@ def main() -> None:
         combined_context = "\n\n".join(parts) if parts else ""
 
         if combined_context:
+            session_id = payload.get("session_id", "")
+            router_label = "local" if router_context else "rag-only"
             logger.info(
-                "context 注入 %d 字元（session=%s，router=%s）",
+                "context prepared %d 字元（session=%s，router=%s）",
                 len(combined_context),
-                payload.get("session_id", ""),
-                "local" if router_context else "rag-only",
+                session_id,
+                router_label,
             )
             output = {
                 "hookSpecificOutput": {
@@ -205,7 +263,16 @@ def main() -> None:
                     "additionalContext": combined_context,
                 }
             }
+            # 先保證主契約 stdout JSON 落地，再做 best-effort stderr echo；
+            # 避免 echo blocking / 例外連坐毀掉 additionalContext。
             print(json.dumps(output, ensure_ascii=False))
+            sys.stdout.flush()
+            logger.info("context emitted（session=%s）", session_id)
+
+            # debug_echo：把召回內容以 ANSI 色塊寫到 stderr，只給使用者看
+            # （Claude Code 對 exit 0 的 stderr 不會回灌 model context，不計 token）
+            if debug_echo:
+                _echo_to_stderr(combined_context, router_context, memory_context)
         else:
             logger.debug("無 context，輸出空物件")
             print(empty_output)
