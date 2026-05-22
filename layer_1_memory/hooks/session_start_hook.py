@@ -161,10 +161,18 @@ def _echo_to_stderr(
             parts.append(f"rag={rag_source}")
         source_label = "+".join(parts) if parts else "empty"
 
+        # 非 TTY（pipe / log file / SSH 無 TTY / CI）或 NO_COLOR 環境跳過色碼，
+        # 否則使用者會在 transcript 看到 literal "\033[1;36m..." 雜訊
+        use_color = sys.stderr.isatty() and not os.environ.get("NO_COLOR")
+        header = "\033[1;36m" if use_color else ""
+        reset = "\033[0m" if use_color else ""
+
+        # 三段內容組成單一字串、一次 write — 避免並發 hook 進程下三段
+        # syscall 交錯 + 終端機殘留色彩
         block = (
-            f"{_ANSI_HEADER}[=== 本地RAG召回：{source_label} ==={_ANSI_RESET}\n"
+            f"{header}[=== 本地RAG召回：{source_label} ==={reset}\n"
             f"{combined.rstrip()}\n"
-            f"{_ANSI_HEADER}[=== END ==={_ANSI_RESET}\n"
+            f"{header}[=== END ==={reset}\n"
         )
         # 用 .buffer.write 強制 utf-8 + 'replace' 容錯，避免 ASCII stderr
         # 環境（LANG=C / launchd / CI runner）遇到中文或 emoji 拋 UnicodeEncodeError
