@@ -64,7 +64,10 @@ from lib.rag import get_rag_context
 # 設定
 # ============================================================
 
-_CONFIG_PATH = _LAYER1_DIR / "config.yaml"
+# config 必須跟 _PROJECT_ROOT 對齊 — 否則 hook 被複製到 plugin 目錄時，
+# 即使 SHIBA_PROJECT_ROOT 指回真專案根，這條 path 還是會落在 plugin 副本的
+# config.yaml 上，使用者改 repo config 的新欄位完全失效。
+_CONFIG_PATH = _PROJECT_ROOT / "layer_1_memory" / "config.yaml"
 
 
 def _load_config() -> dict:

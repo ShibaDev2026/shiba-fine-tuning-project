@@ -9,6 +9,7 @@
 rag:
   top_n: 3                  # 每次注入最多幾筆歷史記憶
   token_budget: 500         # hookSpecificOutput 最大 token 數
+  debug_echo: false         # true 時將召回內容以 ANSI 區塊 echo 到 stderr（只給使用者看，不進 Claude context、不消 token）；預設 false 避免把含路徑/secret 的歷史記憶外洩到終端 / log / screen recording
 
 # ============================================================
 # Logging 設定（log 檔路徑由 CONFIG.paths.logs_dir 提供，此處只設 level）

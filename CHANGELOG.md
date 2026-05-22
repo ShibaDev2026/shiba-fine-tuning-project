@@ -11,6 +11,8 @@
   - **safety**：`_echo_to_stderr` 自包 try/except + `sys.stderr.buffer.write(... .encode("utf-8", errors="replace"))`，避免 ASCII stderr 環境（LANG=C / launchd / CI runner）遇中文或 router `🤖` emoji 拋 UnicodeEncodeError、或 BrokenPipeError 連坐毀掉 `additionalContext`；echo 失敗只進 logger.warning
   - **順序**：`main()` 改為先 `print(json.dumps(output))` + `sys.stdout.flush()` 保證主契約落地，再執行 debug echo；避免 echo blocking 拖延 hook timeout
   - **logger 兩階段**：`context prepared` / `context emitted` 兩條訊息分別記錄，避免 echo 失敗時 log 撒謊『已注入』但 stdout 實吐 `{}`
+  - **預設關閉**：`config.yaml::rag.debug_echo: false`（避免把含路徑/secret 的歷史記憶外洩到終端 / log / screen recording，違反 ~/.claude/CLAUDE.md 全域 secret 規則）
+  - **`_CONFIG_PATH` 吃 SHIBA_PROJECT_ROOT env**：原本 `_LAYER1_DIR / config.yaml` 只看 hook 自身相對路徑，hook 被複製到 plugin 目錄時讀的是 plugin 版 config.yaml，repo config 改 `debug_echo` 完全失效；改為 `_PROJECT_ROOT / layer_1_memory / config.yaml` 與 sys.path 設定對齊
 
 ### Added
 
