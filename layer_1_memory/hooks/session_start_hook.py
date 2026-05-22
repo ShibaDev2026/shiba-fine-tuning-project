@@ -124,28 +124,10 @@ def get_project_path(payload: dict) -> str | None:
 # Debug echo（stderr 區塊，使用者可見、不進 Claude context）
 # ============================================================
 
-_ANSI_HEADER = "\033[1;36m"  # 粗體青
-_ANSI_LABEL = "\033[1;33m"   # 粗體黃
-_ANSI_RESET = "\033[0m"
-
-
-def _infer_rag_source(memory_context: str | None) -> str:
-    """從 memory_context 內容判斷召回路徑（vector / fts5 / none）"""
-    if not memory_context:
-        return "none"
-    # _build_exchange_context 的 vector 路徑用「### 問題：」
-    if "### 問題：" in memory_context:
-        return "vector"
-    # build_rag_output 的 FTS5 路徑用「### [」
-    if "### [" in memory_context:
-        return "fts5"
-    return "unknown"
-
-
 def _echo_to_stderr(
     combined: str,
     router_context: str | None,
-    memory_context: str | None,
+    rag_source: str,
 ) -> None:
     """把召回內容以 ANSI 區塊寫到 stderr（exit 0，僅顯示給使用者）。
 
@@ -153,11 +135,10 @@ def _echo_to_stderr(
     冒泡，否則會把 main() 已備好的 additionalContext 一起連坐丟失。
     """
     try:
-        rag_source = _infer_rag_source(memory_context)
         parts = []
         if router_context:
             parts.append("router")
-        if memory_context:
+        if rag_source != "none":
             parts.append(f"rag={rag_source}")
         source_label = "+".join(parts) if parts else "empty"
 
@@ -230,8 +211,8 @@ def main() -> None:
         token_budget = rag_config.get("token_budget", 500)
         debug_echo = bool(rag_config.get("debug_echo", False))
 
-        # 執行 RAG 檢索
-        memory_context = get_rag_context(
+        # 執行 RAG 檢索（callee 顯式回傳召回路徑，避免 caller 字串 sniff）
+        memory_context, rag_source = get_rag_context(
             query=query,
             project_path=project_path,
             top_n=top_n,
@@ -283,7 +264,7 @@ def main() -> None:
             # debug_echo：把召回內容以 ANSI 色塊寫到 stderr，只給使用者看
             # （Claude Code 對 exit 0 的 stderr 不會回灌 model context，不計 token）
             if debug_echo:
-                _echo_to_stderr(combined_context, router_context, memory_context)
+                _echo_to_stderr(combined_context, router_context, rag_source)
         else:
             logger.debug("無 context，輸出空物件")
             print(empty_output)

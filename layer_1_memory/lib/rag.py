@@ -11,6 +11,7 @@ import logging
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Literal
 
 import yaml
 
@@ -23,6 +24,9 @@ logger = logging.getLogger(__name__)
 _CHARS_PER_TOKEN = 4
 # FTS5 snippet 函式的最大 token 數
 _SNIPPET_TOKENS = 32
+
+# RAG 召回路徑標記 — 由 callee 顯式回傳，避免 caller 用字串 sniff 推斷
+RagSource = Literal["vector", "fts5", "none"]
 
 
 def retrieve_relevant_sessions(
@@ -140,15 +144,22 @@ def get_rag_context(
     project_path: str | None = None,
     top_n: int = 3,
     token_budget: int = 500,
-) -> str:
+) -> tuple[str, RagSource]:
     """
-    主要入口：一站式取得 RAG 注入字串。
+    主要入口：一站式取得 RAG 注入字串 + 召回路徑來源。
     優先向量召回 exchange_embeddings；Ollama 不可用時 fallback FTS5。
+
+    回傳：(context, source)
+      - context 為 "" 時，source 為 "none"
+      - vector 命中時 source="vector"，FTS5 命中時 source="fts5"
+
+    caller 拿 source 用於觀測 / debug echo / metrics，不再用字串 sniff 推斷。
     """
     # 嘗試語意向量召回
     vector_results = _vector_search(query, top_n=top_n)
     if vector_results:
-        return _build_exchange_context(vector_results, token_budget=token_budget)
+        ctx = _build_exchange_context(vector_results, token_budget=token_budget)
+        return (ctx, "vector" if ctx else "none")
 
     # Fallback：FTS5 關鍵字召回
     sessions = retrieve_relevant_sessions(
@@ -157,8 +168,9 @@ def get_rag_context(
         top_n=top_n,
     )
     if not sessions:
-        return ""
-    return build_rag_output(sessions, token_budget=token_budget)
+        return ("", "none")
+    ctx = build_rag_output(sessions, token_budget=token_budget)
+    return (ctx, "fts5" if ctx else "none")
 
 
 def retrieve_for_eval_with_context(

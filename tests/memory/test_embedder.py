@@ -40,6 +40,7 @@ def test_vector_search_fallback_to_fts5(monkeypatch):
     )
 
     from layer_1_memory.lib.rag import get_rag_context
-    # 不需要真實 DB，FTS5 空結果時回傳空字串
-    result = get_rag_context("幫我列出目錄")
-    assert isinstance(result, str)  # 不 crash，回傳字串（空或有內容皆可）
+    # 不需要真實 DB，FTS5 空結果時回傳 ("", "none")
+    context, source = get_rag_context("幫我列出目錄")
+    assert isinstance(context, str)  # 不 crash，回傳字串（空或有內容皆可）
+    assert source in {"vector", "fts5", "none"}
