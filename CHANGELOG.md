@@ -15,6 +15,7 @@
   - **`_CONFIG_PATH` 吃 SHIBA_PROJECT_ROOT env**：原本 `_LAYER1_DIR / config.yaml` 只看 hook 自身相對路徑，hook 被複製到 plugin 目錄時讀的是 plugin 版 config.yaml，repo config 改 `debug_echo` 完全失效；改為 `_PROJECT_ROOT / layer_1_memory / config.yaml` 與 sys.path 設定對齊
   - **TTY 偵測 + 單次 write**：`sys.stderr.isatty() and not NO_COLOR` 才掛 ANSI 色碼，避免 pipe / log file / SSH 無 TTY 環境看到 literal `\033[1;36m...` 雜訊；三段內容組成單一字串、一次 `buffer.write`，避免並發 hook 進程下三段 syscall 交錯
   - **source classification refactor（DIP / OCP）**：`get_rag_context` 簽名改 `tuple[str, RagSource]`（`Literal["vector", "fts5", "none"]`），來源由 callee 顯式回傳；刪 hook 內 `_infer_rag_source` 字串 sniff；補 2 條整合測試守住 producer↔caller 契約，未來加 reranker / HyDE 新路徑不會靜默誤分類 `unknown`
+  - **polish**：`rstrip("\n")` 取代 `rstrip()` 保留 markdown 有意義的尾隨空白；ANSI label 改 `[=== ... ===]` 補閉合括號；刪除不可達的 `source_label = "empty"` fallback（caller 已 gate `if combined_context:`）
 
 ### Added
 

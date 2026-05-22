@@ -135,12 +135,13 @@ def _echo_to_stderr(
     冒泡，否則會把 main() 已備好的 additionalContext 一起連坐丟失。
     """
     try:
+        # caller 已透過 `if combined_context:` 確保至少一邊有內容，parts 不會為空
         parts = []
         if router_context:
             parts.append("router")
         if rag_source != "none":
             parts.append(f"rag={rag_source}")
-        source_label = "+".join(parts) if parts else "empty"
+        source_label = "+".join(parts)
 
         # 非 TTY（pipe / log file / SSH 無 TTY / CI）或 NO_COLOR 環境跳過色碼，
         # 否則使用者會在 transcript 看到 literal "\033[1;36m..." 雜訊
@@ -150,10 +151,11 @@ def _echo_to_stderr(
 
         # 三段內容組成單一字串、一次 write — 避免並發 hook 進程下三段
         # syscall 交錯 + 終端機殘留色彩
+        # 用 rstrip("\n") 而非 rstrip()，保留 markdown 內可能有意義的尾隨空白
         block = (
-            f"{header}[=== 本地RAG召回：{source_label} ==={reset}\n"
-            f"{combined.rstrip()}\n"
-            f"{header}[=== END ==={reset}\n"
+            f"{header}[=== 本地RAG召回：{source_label} ===]{reset}\n"
+            f"{combined.rstrip(chr(10))}\n"
+            f"{header}[=== END ===]{reset}\n"
         )
         # 用 .buffer.write 強制 utf-8 + 'replace' 容錯，避免 ASCII stderr
         # 環境（LANG=C / launchd / CI runner）遇到中文或 emoji 拋 UnicodeEncodeError
