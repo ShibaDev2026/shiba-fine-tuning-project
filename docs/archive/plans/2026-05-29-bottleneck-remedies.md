@@ -20,10 +20,15 @@
 - 選項 B：保留一條最小 fine-tune 驗證（需先解 D4 資料污染）。
 - **預設傾向 A**；B 僅在 Gate 0 數字翻盤時考慮。
 
-### D2 — Layer 1 是否導入 Adaptive Retrieval Gating
-- 現況：always-retrieve（疑為 grounding 淨負主因）。
-- 候選：TARG（training-free，用 no-context draft 的 prefix logits 算不確定度決定是否檢索）/ Astute RAG（source-aware 合併內外知識）。
-- 待驗證：gating 後 grounding 淨值是否翻正。
+### D2 — retrieval 閾值校準（現狀已查明 2026-05-29，ready to execute）
+- **現狀**：L1 已有 gate＝`_vector_search` rag.py:400 `score>0.35`（硬編碼，註釋自承「降門檻提召回」拍腦袋，**全專案僅此一處**）；非真 always-retrieve。grounding poison 實證它沒擋住無關召回（能力驗證 #7 無關 query「你有閱讀那四份論文嗎」仍召回注入）。
+- **執行序列**：① 獨立掃描腳本（放 experiments/，不碰 production）用 `ragas_retrieval_golden_set` 掃 threshold 0.35→0.7 量 uuid_recall/precision/hit@1/mrr ② 選最優 ③ 單次異動改 rag.py:400 並參數化 ④ pytest tests/memory 驗證。
+- **環境**：ollama UP ✓、`.venv` ✓（用 `.venv/bin/python`；shell 未激活故 pytest 需全路徑）。
+- **工具**：`modules/ragas/ragas_runner.py`（`run_layer1_evaluation` 從 `ragas_retrieval_golden_set` 讀 GT → `retrieve_for_eval` → `_compute_uuid_metrics`）。**RAGAS 實際在 `modules/ragas/`，非 memory 舊記的 `evaluation/`**。
+- **隱患**：golden set 的 GT uuid 若建在 over-merge 髒資料上會影響校準可信度（牽連 D4）。
+- **執行結果（2026-05-29，experiments/2026-05-29_d2_threshold_calibration/scan.py）**：65 golden query 掃 0.30–0.70。① 0.35→0.55 指標全同 → 0.35 對相關 query **零過濾作用**；調 0.70 precision 僅 +3%（0.841→0.872）。② **決定性**：hit/miss score 分離度僅 **+0.054**（hit avg 0.915 vs miss avg 0.861，miss max=1.0）→ 誤召回 score 與正召回一樣高，**閾值無法區分**。
+- **結論**：調閾值是錯藥方（改 0.35 無用，0.35 維持不動避免無效異動）。真瓶頸＝召回排序品質 → **D2 重新定向為 reranker（cross-encoder 重排 top-k）**；memory 中「暫緩的 reranker」其實是正解，不該暫緩。
+- **附帶發現**：(a) `ragas_runner` 讀 `ragas_retrieval_golden_set` 但實際表名 `retrieval_golden_set`（改名 migration 未跑，runner 現坏）；(b) `_compute_uuid_metrics` recall 對重複 uuid over-count（>1）。兩者待修。
 
 ### D3 — Judge 校準
 - 現況：multi_judge 三方投票，auto adoption 92% vs 真實 13%（agreeableness/self-preference bias）。
