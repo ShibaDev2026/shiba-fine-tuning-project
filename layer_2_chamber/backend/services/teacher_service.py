@@ -159,6 +159,17 @@ def upsert_teacher(
     return cur.lastrowid
 
 
+def set_teacher_active(conn: sqlite3.Connection, name: str, is_active: bool) -> bool:
+    """依 name 切換 teacher 啟用狀態（硬切換用：停付費 / bench 裁判）。
+    回傳是否命中至少一列（name 不存在回 False，不報錯）。"""
+    cur = conn.execute(
+        "UPDATE teachers SET is_active=? WHERE name=?",
+        (1 if is_active else 0, name),
+    )
+    conn.commit()
+    return cur.rowcount > 0
+
+
 def get_today_usage(conn: sqlite3.Connection, teacher_id: int) -> int:
     """取得今日已使用次數（UTC 對齊：與 SQLite datetime('now') 一致，
     避免 CST 跨日後本機日期與 UTC 不同造成 COUNT 失準 0-8 小時）"""

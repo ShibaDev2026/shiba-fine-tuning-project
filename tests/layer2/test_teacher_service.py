@@ -117,6 +117,22 @@ class TestQuota:
 # 三方投票邏輯由 tests/layer2/test_multi_judge.py 涵蓋（若無則待後續補）。
 
 
+class TestSetTeacherActive:
+    def test_deactivate_existing(self, tmp_path):
+        from layer_2_chamber.backend.services.teacher_service import set_teacher_active
+        conn = _make_db(tmp_path)
+        upsert_teacher(conn, name="Paid", model_id="m", api_base="http://x",
+                       keychain_ref="r")
+        assert set_teacher_active(conn, "Paid", False) is True
+        row = conn.execute("SELECT is_active FROM teachers WHERE name='Paid'").fetchone()
+        assert row["is_active"] == 0
+
+    def test_unknown_name_returns_false(self, tmp_path):
+        from layer_2_chamber.backend.services.teacher_service import set_teacher_active
+        conn = _make_db(tmp_path)
+        assert set_teacher_active(conn, "NoSuch", False) is False
+
+
 class TestTeacherVendor:
     def test_upsert_writes_vendor(self, tmp_path):
         conn = _make_db(tmp_path)
