@@ -7,6 +7,14 @@
 
 ### Added
 
+- **`model_api_tools/` 模型清單爬蟲 → `search_model_list` 表（2026-06-15）** — 爬取 Ollama library 與 HuggingFace（LM Studio 風格 GGUF/MLX）模型來源寫入統一 DB，未來「要下載／分析／選用哪些模型」可直接查表判斷：
+  - **schema** `config/db/schema_search_model_list.sql`：`search_model_list`（append-only 快照，帶 `scrape_run_id` / `scraped_at`）+ `model_local_detail` 子表（本機深層 raw metadata）+ `v_search_model_latest` view（每 `source`+`name` 取最新 `scraped_at` 列）
+  - **core 模組（SRP 拆分、I/O 全 DIP 注入免網路）**：`store.py`（`ModelRecord` / `write_batch` 單 txn / `get_latest`）、`ollama_scraper.py`（ollama.com/library HTML，`x-test-*` 錨點 + wrapping span `title` 精確 UTC 時戳、relative-time fallback）、`hf_scraper.py`（huggingface.co/api/models，lane=gguf/mlx 權威標記 format、`lastModified` 降序停損 + `Link` header cursor 分頁）、`local_scanner.py`（`/api/tags`+`/api/show`、`lms ls --json` 掃本機已裝 → `enrich_catalog` 升 deep + `is_local_installed`）、`runner.py`（`ScrapeParams` 編排、`uuid4` run_id、預設範圍 today−365d→today）
+  - **觸發 adapter**：`cli.py`（`python -m model_api_tools.cli --source {ollama,hf,both}`，正解為單次 `both`，避免本機模型在缺 library slug 比對下裂成 slug + `:tag` 兩列）+ `api.py`（獨立 FastAPI app，**不掛** Layer 2 backend）+ `requirements.txt`
+  - **驗收**：8 tests（store roundtrip×3 / ollama 解析 / hf 解析+停損 / local 掃描+enrich），全 in-memory + 注入 fake 免網路；雙來源 real-source 實跑寫入成功
+
+### Added
+
 - **session_start_hook `debug_echo` 觀測旁路（2026-05-23）** — `rag.debug_echo` flag 啟用時將召回內容以 ANSI 區塊 echo 到 stderr，僅顯示給使用者（Claude Code 對 exit 0 的 stderr 不回灌 model context，不消 token）。實作經 /code-review xhigh 15-finding 修復後 ship：
   - **safety**：`_echo_to_stderr` 自包 try/except + `sys.stderr.buffer.write(... .encode("utf-8", errors="replace"))`，避免 ASCII stderr 環境（LANG=C / launchd / CI runner）遇中文或 router `🤖` emoji 拋 UnicodeEncodeError、或 BrokenPipeError 連坐毀掉 `additionalContext`；echo 失敗只進 logger.warning
   - **順序**：`main()` 改為先 `print(json.dumps(output))` + `sys.stdout.flush()` 保證主契約落地，再執行 debug echo；避免 echo blocking 拖延 hook timeout

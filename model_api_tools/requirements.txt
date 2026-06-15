@@ -1,0 +1,8 @@
+# model_api_tools 獨立 FastAPI app 的 runtime 依賴
+# core/ 各模組只用 stdlib（urllib / json / sqlite3 / subprocess / html.parser）+ 專案內 shiba_config，無外部依賴；
+# 僅 api.py（FastAPI adapter）需以下套件。CLI（cli.py）純 stdlib，不需任何外部套件即可跑。
+# 版本對齊 layer_2_chamber/backend（同一專案 runtime）；本機驗證環境：
+#   fastapi 0.115.6 + starlette 0.41.3 + pydantic 2.13.4（Python 3.14）。
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+pydantic>=2.10,<3
