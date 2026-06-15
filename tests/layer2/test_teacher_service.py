@@ -115,3 +115,24 @@ class TestQuota:
 
 # A4：score_sample 已移除（兩裁判流程被 services/multi_judge.multi_judge_score 取代）。
 # 三方投票邏輯由 tests/layer2/test_multi_judge.py 涵蓋（若無則待後續補）。
+
+
+class TestTeacherVendor:
+    def test_upsert_writes_vendor(self, tmp_path):
+        conn = _make_db(tmp_path)
+        tid = upsert_teacher(
+            conn, name="J-Qwen", model_id="qwen3.5-27b",
+            api_base="http://localhost:1234/v1", keychain_ref=None,
+            vendor="local-qwen",
+        )
+        row = conn.execute("SELECT vendor FROM teachers WHERE id=?", (tid,)).fetchone()
+        assert row["vendor"] == "local-qwen"
+
+    def test_upsert_vendor_defaults_unknown(self, tmp_path):
+        conn = _make_db(tmp_path)
+        tid = upsert_teacher(
+            conn, name="J-Default", model_id="m",
+            api_base="http://x", keychain_ref=None,
+        )
+        row = conn.execute("SELECT vendor FROM teachers WHERE id=?", (tid,)).fetchone()
+        assert row["vendor"] == "unknown"

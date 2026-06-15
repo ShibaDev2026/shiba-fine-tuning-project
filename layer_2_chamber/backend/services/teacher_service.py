@@ -124,6 +124,7 @@ def upsert_teacher(
     daily_request_limit: int | None = None,
     daily_token_limit: int | None = None,
     quota_reset_period: str = "daily",
+    vendor: str = "unknown",
 ) -> int:
     """新增或更新 Teacher（依 name UPSERT）"""
     # daily_request_limit 預設與 daily_limit 一致（向後相容）
@@ -138,10 +139,10 @@ def upsert_teacher(
         conn.execute(
             """UPDATE teachers SET model_id=?, api_base=?, keychain_ref=?,
                priority=?, daily_limit=?, daily_request_limit=?,
-               daily_token_limit=?, quota_reset_period=? WHERE id=?""",
+               daily_token_limit=?, quota_reset_period=?, vendor=? WHERE id=?""",
             (model_id, api_base, keychain_ref, priority, daily_limit,
              daily_request_limit, daily_token_limit, quota_reset_period,
-             existing["id"]),
+             vendor, existing["id"]),
         )
         conn.commit()
         return existing["id"]
@@ -149,10 +150,10 @@ def upsert_teacher(
     cur = conn.execute(
         """INSERT INTO teachers
                (name, model_id, api_base, keychain_ref, priority, daily_limit,
-                daily_request_limit, daily_token_limit, quota_reset_period)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                daily_request_limit, daily_token_limit, quota_reset_period, vendor)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (name, model_id, api_base, keychain_ref, priority, daily_limit,
-         daily_request_limit, daily_token_limit, quota_reset_period),
+         daily_request_limit, daily_token_limit, quota_reset_period, vendor),
     )
     conn.commit()
     return cur.lastrowid
