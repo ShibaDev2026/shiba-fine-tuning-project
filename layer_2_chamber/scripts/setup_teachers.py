@@ -118,13 +118,15 @@ PAID_TEACHER_NAMES = [
     "Grok 3 Mini", "GitHub Models GPT-4o-mini", "Mistral 7B",
 ]
 
-# 5 裁判 = 3 active（三家族異質）+ 2 bench。model_id 以 LM Studio /v1/models 暴露者為準。
+# 5 裁判 = 3 active（三家族異質）+ 2 bench。model_id 對齊 LM Studio /v1/models 實際 id（2026-06-16 實機）。
+# 註：plan 估計名（Qwen3.5-27B / GLM-4.5）不在 LMS catalog，改用實際存在之最接近型號——
+#   active Qwen 取 35B-A3B MoE（呼應專案 qwen3-30b-a3b responder）；bench GLM 以 4.6v-flash 代 4.5。
 LOCAL_JUDGES = [
-    {"name": "Local Qwen3.5-27B (LMS)",   "model_id": "qwen3.5-27b",   "vendor": "local-qwen",  "priority": 0, "is_active": 1},
-    {"name": "Local GLM-4.7-Flash (LMS)", "model_id": "glm-4.7-flash", "vendor": "local-glm",   "priority": 1, "is_active": 1},
-    {"name": "Local Gemma (LMS)",         "model_id": "gemma-4-e4b",   "vendor": "local-gemma", "priority": 2, "is_active": 1},
-    {"name": "Local Qwen3.5-9B (LMS)",    "model_id": "qwen3.5-9b",    "vendor": "local-qwen",  "priority": 3, "is_active": 0},
-    {"name": "Local GLM-4.5 (LMS)",       "model_id": "glm-4.5",       "vendor": "local-glm",   "priority": 4, "is_active": 0},
+    {"name": "Local Qwen3.5-35B-A3B (LMS)", "model_id": "qwen/qwen3.5-35b-a3b", "vendor": "local-qwen",  "priority": 0, "is_active": 1},
+    {"name": "Local GLM-4.7-Flash (LMS)",   "model_id": "zai-org/glm-4.7-flash", "vendor": "local-glm",   "priority": 1, "is_active": 1},
+    {"name": "Local Gemma-4-e4b (LMS)",     "model_id": "google/gemma-4-e4b",    "vendor": "local-gemma", "priority": 2, "is_active": 1},
+    {"name": "Local Qwen3.5-9B (LMS)",      "model_id": "qwen/qwen3.5-9b",       "vendor": "local-qwen",  "priority": 3, "is_active": 0},
+    {"name": "Local GLM-4.6v-Flash (LMS)",  "model_id": "zai-org/glm-4.6v-flash", "vendor": "local-glm",   "priority": 4, "is_active": 0},
 ]
 
 
