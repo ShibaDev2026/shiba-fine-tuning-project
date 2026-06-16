@@ -4,8 +4,6 @@ import sys
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
-
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from layer_2_chamber.backend.services.teacher_service import upsert_teacher
