@@ -202,22 +202,26 @@ def cmd_setup(dry_run: bool = False):
 
 
 def cmd_verify():
-    """對每個 Teacher 送一筆測試評分，驗證 API 連線"""
+    """對每個 active Teacher 送一筆測試評分，驗證連線。"""
     conn = init_layer2_db()
     teachers = get_active_teachers(conn)
     conn.close()
-
     if not teachers:
-        print("✗ 無可用 Teacher，請先執行 --setup")
+        print("✗ 無可用 Teacher，請先執行 --setup / --cutover")
         return
+
+    # 若有本地 LM Studio 裁判，先檢查 server 在線
+    if any(t["keychain_ref"] is None for t in teachers):
+        if not _lmstudio_online(_LMSTUDIO_BASE):
+            print(f"✗ LM Studio server 未在線（{_LMSTUDIO_BASE}）。請先 `lms server start`。")
+            return
 
     print("=== 驗證 Teacher 連線 ===\n")
     for t in teachers:
-        api_key = get_api_key(t["keychain_ref"])
+        api_key = _resolve_api_key(t)
         if not api_key:
-            print(f"✗ {t['name']}：Keychain 取不到 key")
+            print(f"✗ {t['name']}：取不到 key")
             continue
-
         result = _test_call(t, api_key)
         if result:
             print(f"✓ {t['name']}：score={result['score']}，reason={result['reason']}")
@@ -243,6 +247,22 @@ def cmd_list():
         except Exception:
             req_lim = t["daily_limit"]
         print(f"{t['id']:<4} {t['name']:<28} {t['model_id']:<22} {t['priority']:<4} {str(req_lim):<8} {'✓' if t['is_active'] else '✗'}")
+
+
+def _resolve_api_key(teacher) -> str | None:
+    """本地裁判（keychain_ref 為 None）回 'none'；遠端取 Keychain。"""
+    ref = teacher["keychain_ref"]
+    return "none" if ref is None else get_api_key(ref)
+
+
+def _lmstudio_online(api_base: str) -> bool:
+    """探測 LM Studio /v1/models 是否可達。"""
+    import urllib.request as urlreq
+    try:
+        with urlreq.urlopen(api_base.rstrip("/") + "/models", timeout=3) as resp:
+            return resp.status == 200
+    except Exception:
+        return False
 
 
 def _save_keychain(ref: str, key: str) -> None:

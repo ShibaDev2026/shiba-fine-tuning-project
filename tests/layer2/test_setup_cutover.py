@@ -53,3 +53,18 @@ def test_cutover_disables_paid_and_seeds_judges(tmp_path):
         "SELECT COUNT(*) c FROM teachers WHERE is_active=0 AND keychain_ref IS NULL"
     ).fetchone()
     assert bench["c"] == 2
+
+
+def test_resolve_api_key_local_returns_none_string():
+    """本地裁判（keychain_ref=None）應回傳字串 'none'，不呼叫 Keychain"""
+    from layer_2_chamber.scripts.setup_teachers import _resolve_api_key
+    local = {"keychain_ref": None}
+    assert _resolve_api_key(local) == "none"
+
+
+def test_resolve_api_key_remote_uses_keychain():
+    """遠端裁判應透過 get_api_key 取得 key"""
+    from layer_2_chamber.scripts import setup_teachers
+    remote = {"keychain_ref": "some-ref"}
+    with patch.object(setup_teachers, "get_api_key", return_value="KEY123"):
+        assert setup_teachers._resolve_api_key(remote) == "KEY123"
