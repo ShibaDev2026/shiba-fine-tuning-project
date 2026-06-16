@@ -75,14 +75,15 @@
 
 ## 5. 必補的 code 改動（localized）
 
-### 5.1 thinking 控制
-- 現況：`OpenAICompatClient.generate()` 送純 OpenAI 請求（`model/messages/max_tokens/temperature`），**未真正關 thinking**；`disable_thinking` 目前只接到 Gemini 路徑。本地 qwen 僅靠 `max_tokens` headroom 硬扛。
-- 改動：`OpenAICompatClient.generate()` 新增 `disable_thinking: bool` 參數。
-  - Qwen 系：prompt 注入 `/no_think` 軟開關。
-  - GLM 系：依其 chat template 的 thinking flag 關閉（實作時查證；LM Studio 可能透過 `reasoning_content` 分流，屆時確認 `content` 乾淨即可）。
-  - gemma：無強制 thinking，免處理。
-- `teacher_service._call_openai_compat` 對本地裁判帶入 `disable_thinking=True`。
-- 範圍：`clients/openai_compat/client.py` + `teacher_service._call_openai_compat`，單一行為、localized。
+### 5.1 thinking 控制（2026-06-16 Task 8 實機修正）
+- 現況：`OpenAICompatClient.generate()` 送純 OpenAI 請求（`model/messages/max_tokens/temperature`），**未真正關 thinking**；`disable_thinking` 目前只接到 Gemini 路徑。
+- **⚠ 原設計的 `/no_think` prompt 注入經實機證偽**：對實際下載的 qwen3.5-35b-a3b / glm-4.7-flash（LM Studio + GGUF）完全無效（reasoning_tokens 仍燒滿、content 空）；`chat_template_kwargs:{enable_thinking:false}` 同樣無效（vLLM 用法，LM Studio 後端不吃）。
+- **實機唯一有效機制：OpenAI API 參數 `reasoning_effort:"none"`**（reasoning_tokens→0、content 直接吐乾淨 JSON）。改動如下：
+  - `OpenAICompatClient.generate()` 新增 `disable_thinking: bool`，內部以 `_thinking_extra_body(vendor, disable_thinking)` 產生 `extra_body`：
+    - **qwen / glm 系**：`{"reasoning_effort":"none"}`。
+    - **gemma 系**：不帶旗標（帶了反而在 `content` 碎念）；gemma 走 `reasoning_content` 分流，需 `max_tokens` headroom（production scoring 用 2048，足夠容納其 reasoning ~500 token + 最終 JSON）。
+- `teacher_service._call_openai_compat` 對本地裁判帶入 `disable_thinking=True`（`keychain_ref is None`）。
+- 範圍：`clients/openai_compat/client.py`（`_thinking_extra_body` + `generate`/`_invoke_once` 串 `extra_body`）+ `teacher_service`；`setup_teachers._test_call` verify 路徑同步（qwen/glm 帶 `reasoning_effort:none`、`max_tokens=2048` 對齊 production）。
 
 ### 5.2 不變動
 - `multi_judge` 投票邏輯、weight 計算、`teacher_usage_logs` schema 皆不動。

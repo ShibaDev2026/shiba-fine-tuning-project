@@ -5,8 +5,16 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **Layer 2 評分裁判：付費 API → 本地 LM Studio 硬切換（2026-06-16，可回滾）** — 自主性／去外部依賴；接受裁判品質些微下降換取完全本地化（L2 屬實驗平台，D1 已決）：
+  - **切換**：`setup_teachers.py --cutover` 將 Gemini Flash / Flash-Lite / Claude Sonnet 4.6 設 `is_active=0`（保留 row 可一鍵回滾），新增 5 本地裁判（`keychain_ref=NULL`、`api_base=http://localhost:1234/v1`）：active 三家族 Qwen3.5-35B-A3B（`local-qwen`）+ GLM-4.7-Flash（`local-glm`）+ Gemma-4-e4b（`local-gemma`），bench 2 個（Qwen3.5-9B / GLM-4.6v-Flash）。三家族 vendor 標記滿足 `multi_judge` ≥2 vendor early-exit。回滾 snapshot：`data/teachers_snapshot_pre_cutover_*.json`。
+  - **⚠ thinking 控制機制修正（實機證偽原設計）**：原 spec 的 `/no_think` prompt 注入對實際 GGUF（qwen3.5-35b-a3b / glm-4.7-flash via LM Studio）**完全無效**（reasoning_tokens 燒滿、content 空）；`chat_template_kwargs.enable_thinking` 同樣無效。**唯一有效機制 = OpenAI API 參數 `reasoning_effort:"none"`**（rtok→0、直接吐乾淨 JSON），僅 qwen/glm 帶；gemma 不帶（帶了反而碎念），走 `reasoning_content` 分流需 `max_tokens=2048` headroom。
+  - **運維**：評分前需 `lms server start --port 1234`；裁判 JIT 循序載入不常駐（co-resident 因 LM Studio 記憶體 guardrail 在 64GB 上被阻擋，三裁判 ≈50GiB）。
+
 ### Added
 
+- **`OpenAICompatClient.generate(disable_thinking=…)` + `_thinking_extra_body()`** — 本地 qwen/glm 裁判經 `extra_body={"reasoning_effort":"none"}` 關 thinking 穩定吐 JSON；`set_teacher_active()` teacher 啟用切換；`setup_teachers.py --cutover` 硬切換子指令、`--verify` 對齊 production（qwen/glm 帶 reasoning_effort、max_tokens=2048）。
 - **`model_api_tools/` 模型清單爬蟲 → `search_model_list` 表（2026-06-15）** — 爬取 Ollama library 與 HuggingFace（LM Studio 風格 GGUF/MLX）模型來源寫入統一 DB，未來「要下載／分析／選用哪些模型」可直接查表判斷：
   - **schema** `config/db/schema_search_model_list.sql`：`search_model_list`（append-only 快照，帶 `scrape_run_id` / `scraped_at`）+ `model_local_detail` 子表（本機深層 raw metadata）+ `v_search_model_latest` view（每 `source`+`name` 取最新 `scraped_at` 列）
   - **core 模組（SRP 拆分、I/O 全 DIP 注入免網路）**：`store.py`（`ModelRecord` / `write_batch` 單 txn / `get_latest`）、`ollama_scraper.py`（ollama.com/library HTML，`x-test-*` 錨點 + wrapping span `title` 精確 UTC 時戳、relative-time fallback）、`hf_scraper.py`（huggingface.co/api/models，lane=gguf/mlx 權威標記 format、`lastModified` 降序停損 + `Link` header cursor 分頁）、`local_scanner.py`（`/api/tags`+`/api/show`、`lms ls --json` 掃本機已裝 → `enrich_catalog` 升 deep + `is_local_installed`）、`runner.py`（`ScrapeParams` 編排、`uuid4` run_id、預設範圍 today−365d→today）

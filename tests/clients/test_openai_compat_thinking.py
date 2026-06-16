@@ -5,21 +5,25 @@ from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from clients.openai_compat.client import OpenAICompatClient, _apply_thinking_control
+from clients.openai_compat.client import OpenAICompatClient, _thinking_extra_body
 
 
-def test_apply_thinking_control_qwen_appends_no_think():
-    out = _apply_thinking_control("PROMPT", "local-qwen", True)
-    assert out.endswith("/no_think")
-    assert "PROMPT" in out
+def test_thinking_extra_body_qwen_sets_reasoning_effort_none():
+    # 實測 LM Studio：qwen3.5 唯一有效的關 thinking 機制是 reasoning_effort=none
+    assert _thinking_extra_body("local-qwen", True) == {"reasoning_effort": "none"}
 
 
-def test_apply_thinking_control_gemma_untouched():
-    assert _apply_thinking_control("PROMPT", "local-gemma", True) == "PROMPT"
+def test_thinking_extra_body_glm_sets_reasoning_effort_none():
+    assert _thinking_extra_body("local-glm", True) == {"reasoning_effort": "none"}
 
 
-def test_apply_thinking_control_disabled_flag_off():
-    assert _apply_thinking_control("PROMPT", "local-qwen", False) == "PROMPT"
+def test_thinking_extra_body_gemma_empty():
+    # gemma 加 reasoning_effort 反而碎念，靠 reasoning_content 分流 + token headroom
+    assert _thinking_extra_body("local-gemma", True) == {}
+
+
+def test_thinking_extra_body_disabled_flag_off():
+    assert _thinking_extra_body("local-qwen", False) == {}
 
 
 def _fake_completion(content: str):
@@ -30,7 +34,7 @@ def _fake_completion(content: str):
     return resp
 
 
-def test_generate_injects_no_think_for_qwen():
+def test_generate_passes_reasoning_effort_for_qwen():
     client = OpenAICompatClient(
         api_key="none", api_base="http://localhost:1234/v1", vendor="local-qwen",
     )
@@ -38,9 +42,11 @@ def test_generate_injects_no_think_for_qwen():
     fake_openai.chat.completions.create.return_value = _fake_completion('{"score":9,"reason":"ok"}')
     with patch("openai.OpenAI", return_value=fake_openai), \
          patch("clients.openai_compat.client.log_api_call"):
-        text, _, _, status = client.generate(
+        _, _, _, status = client.generate(
             model_id="qwen3.5-27b", prompt="EVAL", disable_thinking=True,
         )
     assert status == "success"
-    sent_messages = fake_openai.chat.completions.create.call_args.kwargs["messages"]
-    assert "/no_think" in sent_messages[0]["content"]
+    sent = fake_openai.chat.completions.create.call_args.kwargs
+    # prompt 不再被注入 /no_think，改由 extra_body 帶 reasoning_effort
+    assert sent["messages"][0]["content"] == "EVAL"
+    assert sent["extra_body"] == {"reasoning_effort": "none"}

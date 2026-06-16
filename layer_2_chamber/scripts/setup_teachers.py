@@ -300,12 +300,19 @@ def _test_call(teacher, api_key: str) -> dict | None:
         else:
             from openai import OpenAI
             client = OpenAI(api_key=api_key, base_url=teacher["api_base"])
+            # 本地 qwen/glm 裁判帶 reasoning_effort=none 關 thinking（與 production 一致）；
+            # gemma 不帶、靠 max_tokens headroom 容納 reasoning_content 分流
+            vendor = ((teacher["vendor"] if "vendor" in teacher.keys() else "") or "").lower()
+            extra_body = ({"reasoning_effort": "none"}
+                          if ("qwen" in vendor or "glm" in vendor) else {})
             resp = client.chat.completions.create(
                 model=teacher["model_id"],
                 messages=[{"role": "user", "content": prompt}],
-                max_tokens=100, temperature=0.1,
+                max_tokens=2048, temperature=0.1,  # 對齊 production scoring，gemma reasoning_content 需足夠 headroom
+                extra_body=extra_body,
             )
-            raw = resp.choices[0].message.content.strip()
+            content = resp.choices[0].message.content
+            raw = (content or "").strip()
 
         raw = raw.strip()
         if raw.startswith("```"):
