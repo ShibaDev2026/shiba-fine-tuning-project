@@ -156,6 +156,25 @@
 
 觸發條件：各 block ≥ 30 approved 樣本，或 Ebbinghaus 間隔 / 採納退化 / 分布偏移任一信號。
 
+## 模型清單工具（model_api_tools）
+
+爬取 Ollama library 與 HuggingFace（GGUF / MLX）模型來源，寫入統一 DB 表 `search_model_list`，供「要下載／分析／選用哪些模型」直接查表判斷；本機已裝模型標 `is_local_installed=1` 並補深層規格。
+
+```bash
+# 觸發爬取（務必單次 both，分開跑會讓本機 Ollama 模型裂列）
+python -m model_api_tools.cli --source both --max-records 100
+
+# 啟動查詢 API（Swagger 文件在 /docs）
+uvicorn model_api_tools.api:app --port 8900
+```
+
+| 端點 | 說明 |
+|------|------|
+| `POST /scrape/{source}` | 觸發爬取，`source ∈ {ollama, hf, both}`，回 run 摘要 |
+| `GET /models` | 查 `v_search_model_latest`，過濾 `source` / `format`（gguf/mlx）/ `author` / `q`（name 模糊）+ `limit`(1–500) / `offset` 分頁 |
+
+> `--max-records` 為**每 lane（author × format）**配額（非全域），確保各來源／格式都取得代表性樣本；查詢走 `v_search_model_latest`（每 source+name 最新一批）。
+
 ## 快速啟動
 
 ### 標準啟動（docker-compose，v1.0.0）
