@@ -53,6 +53,14 @@ def _detect_source_type(api_base: str) -> str:
     return "local" if _LOCAL_HOST_RE.search(api_base or "") else "remote"
 
 
+def _apply_thinking_control(prompt: str, vendor: str | None, disable_thinking: bool) -> str:
+    """關閉本地裁判 thinking 以穩定吐 JSON。
+    Qwen 系用 /no_think 軟開關；GLM 走 reasoning_content 分流、gemma 無強制 thinking，皆不注入。"""
+    if disable_thinking and vendor and "qwen" in vendor.lower():
+        return f"{prompt}\n/no_think"
+    return prompt
+
+
 class OpenAICompatClient:
     """OpenAI-compatible chat.completions 端點 client。
 
@@ -89,6 +97,7 @@ class OpenAICompatClient:
         max_tokens: int = 150,
         *,
         temperature: float = 0.0,
+        disable_thinking: bool = False,
         caller_module: str | None = None,
         teacher_id: int | None = None,
         sample_id: int | None = None,
@@ -101,6 +110,8 @@ class OpenAICompatClient:
 
         失敗時 raise AIPermanentError / AITransientError（呼叫端整批熔斷）。
         """
+        # Qwen 系注入 /no_think 使 thinking 關閉，確保純 JSON 輸出
+        prompt = _apply_thinking_control(prompt, self._vendor, disable_thinking)
         log_ctx = {
             "caller_module": caller_module,
             "teacher_id": teacher_id,
