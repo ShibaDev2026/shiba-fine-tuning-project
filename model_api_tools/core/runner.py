@@ -17,7 +17,7 @@ from datetime import date, datetime, timedelta, timezone
 
 from shiba_config import CONFIG
 
-from . import hf_scraper, local_scanner, ollama_scraper, store
+from . import hf_scraper, local_scanner, name_parser, ollama_scraper, store
 from .hf_scraper import DEFAULT_HF_FORMATS, DEFAULT_HF_WHITELIST
 
 
@@ -68,6 +68,9 @@ def run_scrape(
 
     # 2) 本機掃描 + deep enrich
     records = local_scanner.enrich_catalog(catalog, scan_fn()) if params.scan_local else catalog
+
+    # 2.5) name 衍生回填：補仍為 NULL 的 param_size / quantization（deep 實測優先保留）
+    records = name_parser.backfill_specs(records)
 
     # 3) 寫入（單一 run_id / scraped_at）
     own_conn = conn is None
