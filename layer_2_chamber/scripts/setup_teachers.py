@@ -26,6 +26,7 @@ from layer_2_chamber.backend.core.config import init_layer2_db
 from layer_2_chamber.backend.services.teacher_service import (
     get_active_teachers,
     get_api_key,
+    set_teacher_active,
     upsert_teacher,
 )
 from shiba_config import CONFIG
@@ -107,6 +108,47 @@ _TEST_SAMPLE = {
     "input": "",
     "output": "執行 git add . && git commit -m 'fix: 修正 FTS5 trigram migration'",
 }
+
+# ── 本地 LM Studio 裁判（硬切換目標）─────────────────────────────────
+_LMSTUDIO_BASE = "http://localhost:1234/v1"
+
+# 付費 teacher（硬切換時 is_active=0，保留 row 可回滾）
+PAID_TEACHER_NAMES = [
+    "Gemini 2.5 Flash", "Gemini 2.5 Flash-Lite", "Claude Sonnet 4.6",
+    "Grok 3 Mini", "GitHub Models GPT-4o-mini", "Mistral 7B",
+]
+
+# 5 裁判 = 3 active（三家族異質）+ 2 bench。model_id 以 LM Studio /v1/models 暴露者為準。
+LOCAL_JUDGES = [
+    {"name": "Local Qwen3.5-27B (LMS)",   "model_id": "qwen3.5-27b",   "vendor": "local-qwen",  "priority": 0, "is_active": 1},
+    {"name": "Local GLM-4.7-Flash (LMS)", "model_id": "glm-4.7-flash", "vendor": "local-glm",   "priority": 1, "is_active": 1},
+    {"name": "Local Gemma (LMS)",         "model_id": "gemma-4-e4b",   "vendor": "local-gemma", "priority": 2, "is_active": 1},
+    {"name": "Local Qwen3.5-9B (LMS)",    "model_id": "qwen3.5-9b",    "vendor": "local-qwen",  "priority": 3, "is_active": 0},
+    {"name": "Local GLM-4.5 (LMS)",       "model_id": "glm-4.5",       "vendor": "local-glm",   "priority": 4, "is_active": 0},
+]
+
+
+def cmd_cutover():
+    """硬切換：停用付費 teacher + seed 本地 LM Studio 裁判（3 active + 2 bench）。"""
+    conn = init_layer2_db()
+    print("=== 硬切換：付費 → 本地 LM Studio 裁判 ===\n")
+    for name in PAID_TEACHER_NAMES:
+        if set_teacher_active(conn, name, False):
+            print(f"✓ 停用付費 teacher：{name}")
+    for j in LOCAL_JUDGES:
+        tid = upsert_teacher(
+            conn, name=j["name"], model_id=j["model_id"], api_base=_LMSTUDIO_BASE,
+            keychain_ref=None, priority=j["priority"],
+            daily_limit=9999, daily_request_limit=None, daily_token_limit=None,
+            quota_reset_period="none", vendor=j["vendor"],
+        )
+        # upsert_teacher 不觸碰 is_active（UPDATE 語句不含此欄位、INSERT 靠 schema DEFAULT 1）
+        # bench 裁判（is_active=0）需顯式呼叫才能覆寫 DEFAULT
+        set_teacher_active(conn, j["name"], bool(j["is_active"]))
+        flag = "active" if j["is_active"] else "bench"
+        print(f"✓ 本地裁判 {j['name']} id={tid}（{flag}）")
+    conn.close()
+    print("\n切換完成，執行 --verify 驗證連線（需先 lms server start）。")
 
 
 def cmd_setup(dry_run: bool = False):
@@ -262,6 +304,8 @@ if __name__ == "__main__":
     group.add_argument("--setup", action="store_true", help="初始化 Keychain + seed DB")
     group.add_argument("--verify", action="store_true", help="驗證 API 連線")
     group.add_argument("--list", action="store_true", help="列出現有 Teacher")
+    group.add_argument("--cutover", action="store_true",
+                       help="硬切換：停用付費 teacher 並 seed 本地 LM Studio 裁判")
     parser.add_argument("--dry-run", action="store_true", help="只印出將插入的資料，不寫入")
     args = parser.parse_args()
 
@@ -271,3 +315,5 @@ if __name__ == "__main__":
         cmd_verify()
     elif args.list:
         cmd_list()
+    elif args.cutover:
+        cmd_cutover()
