@@ -53,6 +53,21 @@ def _detect_source_type(api_base: str) -> str:
     return "local" if _LOCAL_HOST_RE.search(api_base or "") else "remote"
 
 
+def _thinking_extra_body(vendor: str | None, disable_thinking: bool) -> dict:
+    """關閉本地裁判 thinking 以穩定吐 JSON，回傳要併入 OpenAI 請求的 extra_body。
+
+    實測（LM Studio + GGUF）：`/no_think` 與 `chat_template_kwargs.enable_thinking=false`
+    對 qwen3.5 / glm-4.7 皆無效；唯一有效是 API 參數 `reasoning_effort="none"`（rtok→0）。
+    gemma 加 reasoning_effort 反而在 content 碎念，故僅 qwen / glm 帶旗標，gemma 不帶
+    （靠 reasoning_content 分流 + max_tokens headroom）。"""
+    if not (disable_thinking and vendor):
+        return {}
+    v = vendor.lower()
+    if "qwen" in v or "glm" in v:
+        return {"reasoning_effort": "none"}
+    return {}
+
+
 class OpenAICompatClient:
     """OpenAI-compatible chat.completions 端點 client。
 
@@ -89,6 +104,7 @@ class OpenAICompatClient:
         max_tokens: int = 150,
         *,
         temperature: float = 0.0,
+        disable_thinking: bool = False,
         caller_module: str | None = None,
         teacher_id: int | None = None,
         sample_id: int | None = None,
@@ -101,6 +117,8 @@ class OpenAICompatClient:
 
         失敗時 raise AIPermanentError / AITransientError（呼叫端整批熔斷）。
         """
+        # 本地 qwen/glm 裁判帶 reasoning_effort=none 關閉 thinking，確保純 JSON 輸出
+        extra_body = _thinking_extra_body(self._vendor, disable_thinking)
         log_ctx = {
             "caller_module": caller_module,
             "teacher_id": teacher_id,
@@ -108,7 +126,7 @@ class OpenAICompatClient:
         }
 
         try:
-            return self._invoke_once(model_id, prompt, max_tokens, temperature, log_ctx)
+            return self._invoke_once(model_id, prompt, max_tokens, temperature, log_ctx, extra_body)
         except _RetryableServerError as e:
             last_error = e
 
@@ -120,7 +138,7 @@ class OpenAICompatClient:
             )
             time.sleep(delay)
             try:
-                return self._invoke_once(model_id, prompt, max_tokens, temperature, log_ctx)
+                return self._invoke_once(model_id, prompt, max_tokens, temperature, log_ctx, extra_body)
             except _RetryableServerError as e:
                 last_error = e
 
@@ -136,6 +154,7 @@ class OpenAICompatClient:
         max_tokens: int,
         temperature: float,
         log_ctx: dict,
+        extra_body: dict | None = None,
     ) -> tuple[str | None, int, int, str]:
         # 延遲 import，避免未安裝 openai 的環境匯入 clients package 就炸
         from openai import (
@@ -157,6 +176,7 @@ class OpenAICompatClient:
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=max_tokens,
                 temperature=temperature,
+                extra_body=extra_body or {},
             )
         except RateLimitError as e:
             received_at = _now_iso()

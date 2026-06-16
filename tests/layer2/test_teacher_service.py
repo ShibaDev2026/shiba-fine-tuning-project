@@ -115,3 +115,53 @@ class TestQuota:
 
 # A4：score_sample 已移除（兩裁判流程被 services/multi_judge.multi_judge_score 取代）。
 # 三方投票邏輯由 tests/layer2/test_multi_judge.py 涵蓋（若無則待後續補）。
+
+
+class TestSetTeacherActive:
+    def test_deactivate_existing(self, tmp_path):
+        from layer_2_chamber.backend.services.teacher_service import set_teacher_active
+        conn = _make_db(tmp_path)
+        upsert_teacher(conn, name="Paid", model_id="m", api_base="http://x",
+                       keychain_ref="r")
+        assert set_teacher_active(conn, "Paid", False) is True
+        row = conn.execute("SELECT is_active FROM teachers WHERE name='Paid'").fetchone()
+        assert row["is_active"] == 0
+
+    def test_unknown_name_returns_false(self, tmp_path):
+        from layer_2_chamber.backend.services.teacher_service import set_teacher_active
+        conn = _make_db(tmp_path)
+        assert set_teacher_active(conn, "NoSuch", False) is False
+
+
+class TestTeacherVendor:
+    def test_upsert_writes_vendor(self, tmp_path):
+        conn = _make_db(tmp_path)
+        tid = upsert_teacher(
+            conn, name="J-Qwen", model_id="qwen3.5-27b",
+            api_base="http://localhost:1234/v1", keychain_ref=None,
+            vendor="local-qwen",
+        )
+        row = conn.execute("SELECT vendor FROM teachers WHERE id=?", (tid,)).fetchone()
+        assert row["vendor"] == "local-qwen"
+
+    def test_upsert_vendor_defaults_unknown(self, tmp_path):
+        conn = _make_db(tmp_path)
+        tid = upsert_teacher(
+            conn, name="J-Default", model_id="m",
+            api_base="http://x", keychain_ref=None,
+        )
+        row = conn.execute("SELECT vendor FROM teachers WHERE id=?", (tid,)).fetchone()
+        assert row["vendor"] == "unknown"
+
+
+class TestDisableThinkingForwarded:
+    def test_call_openai_compat_forwards_disable_thinking(self):
+        from layer_2_chamber.backend.services import teacher_service
+        fake_client = MagicMock()
+        fake_client.generate.return_value = ("{}", 1, 1, "success")
+        with patch("clients.openai_compat.OpenAICompatClient", return_value=fake_client):
+            teacher_service._call_openai_compat(
+                "none", "http://localhost:1234/v1", "qwen3.5-27b", "P",
+                vendor="local-qwen", disable_thinking=True,
+            )
+        assert fake_client.generate.call_args.kwargs["disable_thinking"] is True

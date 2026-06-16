@@ -124,6 +124,7 @@ def upsert_teacher(
     daily_request_limit: int | None = None,
     daily_token_limit: int | None = None,
     quota_reset_period: str = "daily",
+    vendor: str = "unknown",
 ) -> int:
     """新增或更新 Teacher（依 name UPSERT）"""
     # daily_request_limit 預設與 daily_limit 一致（向後相容）
@@ -138,10 +139,10 @@ def upsert_teacher(
         conn.execute(
             """UPDATE teachers SET model_id=?, api_base=?, keychain_ref=?,
                priority=?, daily_limit=?, daily_request_limit=?,
-               daily_token_limit=?, quota_reset_period=? WHERE id=?""",
+               daily_token_limit=?, quota_reset_period=?, vendor=? WHERE id=?""",
             (model_id, api_base, keychain_ref, priority, daily_limit,
              daily_request_limit, daily_token_limit, quota_reset_period,
-             existing["id"]),
+             vendor, existing["id"]),
         )
         conn.commit()
         return existing["id"]
@@ -149,13 +150,24 @@ def upsert_teacher(
     cur = conn.execute(
         """INSERT INTO teachers
                (name, model_id, api_base, keychain_ref, priority, daily_limit,
-                daily_request_limit, daily_token_limit, quota_reset_period)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                daily_request_limit, daily_token_limit, quota_reset_period, vendor)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (name, model_id, api_base, keychain_ref, priority, daily_limit,
-         daily_request_limit, daily_token_limit, quota_reset_period),
+         daily_request_limit, daily_token_limit, quota_reset_period, vendor),
     )
     conn.commit()
     return cur.lastrowid
+
+
+def set_teacher_active(conn: sqlite3.Connection, name: str, is_active: bool) -> bool:
+    """依 name 切換 teacher 啟用狀態（硬切換用：停付費 / bench 裁判）。
+    回傳是否命中至少一列（name 不存在回 False，不報錯）。"""
+    cur = conn.execute(
+        "UPDATE teachers SET is_active=? WHERE name=?",
+        (1 if is_active else 0, name),
+    )
+    conn.commit()
+    return cur.rowcount > 0
 
 
 def get_today_usage(conn: sqlite3.Connection, teacher_id: int) -> int:
@@ -433,12 +445,13 @@ def _call_teacher(
             teacher_id=teacher["id"], sample_id=sample_id,
         )
     else:
-        # 本地 qwen3 系列 thinking 也吃 num_predict 配額，需留足空間給正文
-        # vendor 由 teacher row 帶入（DB 存 'local' / 'mistral' / 'openai'），未設則 fallback
+        # 本地裁判（keychain_ref 為 None）關 thinking，使其穩定吐乾淨 JSON；
+        # vendor 由 teacher row 帶入（DB 存家族標記 'local-qwen' 等），未設則 fallback
         raw, input_t, output_t, status = _call_openai_compat(
             api_key, teacher["api_base"], teacher["model_id"], prompt,
             max_tokens=2048,
             vendor=_vendor_of(teacher),
+            disable_thinking=(teacher["keychain_ref"] is None),
             caller_module="teacher_service",
             teacher_id=teacher["id"], sample_id=sample_id,
         )
@@ -519,6 +532,7 @@ def _call_openai_compat(
     max_tokens: int = 150,
     *,
     vendor: str | None = None,
+    disable_thinking: bool = False,
     caller_module: str | None = None,
     teacher_id: int | None = None,
     sample_id: int | None = None,
@@ -526,7 +540,8 @@ def _call_openai_compat(
     """OpenAI-compatible 端點呼叫（thin wrapper → clients.openai_compat.OpenAICompatClient）。
 
     source_type 由 client 依 api_base 自動判定（localhost / *.local → local，其餘 remote）。
-    vendor 由呼叫端依 teacher 欄位帶入（'local' / 'mistral' / 'openai' ...）。
+    vendor 由呼叫端依 teacher 欄位帶入（'local-qwen' / 'mistral' / 'openai' ...）。
+    disable_thinking：True 時要求端點關閉 thinking 模式（本地裁判使用）。
     """
     from clients.openai_compat import OpenAICompatClient
 
@@ -534,6 +549,7 @@ def _call_openai_compat(
         model_id=model_id,
         prompt=prompt,
         max_tokens=max_tokens,
+        disable_thinking=disable_thinking,
         caller_module=caller_module,
         teacher_id=teacher_id,
         sample_id=sample_id,

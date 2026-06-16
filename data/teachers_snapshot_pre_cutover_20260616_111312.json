@@ -1,0 +1,37 @@
+[
+  {
+    "id": 1,
+    "name": "Gemini 2.5 Flash",
+    "is_active": 1,
+    "keychain_ref": "gemini-api-key",
+    "vendor": "google"
+  },
+  {
+    "id": 2,
+    "name": "Gemini 2.5 Flash-Lite",
+    "is_active": 1,
+    "keychain_ref": "gemini-api-key",
+    "vendor": "google"
+  },
+  {
+    "id": 3,
+    "name": "smoke_test_teacher",
+    "is_active": 0,
+    "keychain_ref": null,
+    "vendor": "xai"
+  },
+  {
+    "id": 4,
+    "name": "Qwen3.6 35B Local",
+    "is_active": 1,
+    "keychain_ref": null,
+    "vendor": "local"
+  },
+  {
+    "id": 5,
+    "name": "Claude Sonnet 4.6",
+    "is_active": 1,
+    "keychain_ref": "anthropic-api-key",
+    "vendor": "anthropic"
+  }
+]

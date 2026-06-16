@@ -1,0 +1,6 @@
+[
+  {"id": "mlx-community/Model-A-mlx-4bit", "author": null, "lastModified": "2026-06-15T13:45:27.000Z", "createdAt": "2026-06-01T00:00:00.000Z", "downloads": 11967, "likes": 20, "pipeline_tag": "text-generation", "library_name": "mlx", "tags": ["mlx", "safetensors", "gemma4", "4bit"]},
+  {"id": "mlx-community/Model-B-mlx-8bit", "author": null, "lastModified": "2025-08-01T10:00:00.000Z", "downloads": 500, "likes": 3, "pipeline_tag": "text-generation", "library_name": "mlx", "tags": ["mlx", "8bit"]},
+  {"id": "mlx-community/Model-C-old-mlx", "author": null, "lastModified": "2025-03-01T00:00:00.000Z", "downloads": 50, "likes": 0, "pipeline_tag": "text-generation", "library_name": "mlx", "tags": ["mlx"]},
+  {"id": "mlx-community/Model-D-ancient-mlx", "author": null, "lastModified": "2024-01-01T00:00:00.000Z", "downloads": 5, "likes": 0, "pipeline_tag": "text-generation", "library_name": "mlx", "tags": ["mlx"]}
+]
