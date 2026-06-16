@@ -152,3 +152,16 @@ class TestTeacherVendor:
         )
         row = conn.execute("SELECT vendor FROM teachers WHERE id=?", (tid,)).fetchone()
         assert row["vendor"] == "unknown"
+
+
+class TestDisableThinkingForwarded:
+    def test_call_openai_compat_forwards_disable_thinking(self):
+        from layer_2_chamber.backend.services import teacher_service
+        fake_client = MagicMock()
+        fake_client.generate.return_value = ("{}", 1, 1, "success")
+        with patch("clients.openai_compat.OpenAICompatClient", return_value=fake_client):
+            teacher_service._call_openai_compat(
+                "none", "http://localhost:1234/v1", "qwen3.5-27b", "P",
+                vendor="local-qwen", disable_thinking=True,
+            )
+        assert fake_client.generate.call_args.kwargs["disable_thinking"] is True

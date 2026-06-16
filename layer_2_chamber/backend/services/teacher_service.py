@@ -445,12 +445,13 @@ def _call_teacher(
             teacher_id=teacher["id"], sample_id=sample_id,
         )
     else:
-        # 本地 qwen3 系列 thinking 也吃 num_predict 配額，需留足空間給正文
-        # vendor 由 teacher row 帶入（DB 存 'local' / 'mistral' / 'openai'），未設則 fallback
+        # 本地裁判（keychain_ref 為 None）關 thinking，使其穩定吐乾淨 JSON；
+        # vendor 由 teacher row 帶入（DB 存家族標記 'local-qwen' 等），未設則 fallback
         raw, input_t, output_t, status = _call_openai_compat(
             api_key, teacher["api_base"], teacher["model_id"], prompt,
             max_tokens=2048,
             vendor=_vendor_of(teacher),
+            disable_thinking=(teacher["keychain_ref"] is None),
             caller_module="teacher_service",
             teacher_id=teacher["id"], sample_id=sample_id,
         )
@@ -531,6 +532,7 @@ def _call_openai_compat(
     max_tokens: int = 150,
     *,
     vendor: str | None = None,
+    disable_thinking: bool = False,
     caller_module: str | None = None,
     teacher_id: int | None = None,
     sample_id: int | None = None,
@@ -538,7 +540,8 @@ def _call_openai_compat(
     """OpenAI-compatible 端點呼叫（thin wrapper → clients.openai_compat.OpenAICompatClient）。
 
     source_type 由 client 依 api_base 自動判定（localhost / *.local → local，其餘 remote）。
-    vendor 由呼叫端依 teacher 欄位帶入（'local' / 'mistral' / 'openai' ...）。
+    vendor 由呼叫端依 teacher 欄位帶入（'local-qwen' / 'mistral' / 'openai' ...）。
+    disable_thinking：True 時要求端點關閉 thinking 模式（本地裁判使用）。
     """
     from clients.openai_compat import OpenAICompatClient
 
@@ -546,6 +549,7 @@ def _call_openai_compat(
         model_id=model_id,
         prompt=prompt,
         max_tokens=max_tokens,
+        disable_thinking=disable_thinking,
         caller_module=caller_module,
         teacher_id=teacher_id,
         sample_id=sample_id,
