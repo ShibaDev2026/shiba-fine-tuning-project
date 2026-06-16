@@ -1,7 +1,9 @@
-"""api.py — model_api_tools 的 FastAPI 觸發 adapter（獨立 app，不掛 Layer 2 backend）。
+"""api.py — model_api_tools 的 FastAPI adapter（獨立 app，不掛 Layer 2 backend）。
 
-職責（SRP）：HTTP 觸發 → 組 ScrapeParams → 呼叫 run_scrape → 回 JSON 摘要，
-不含抓取 / 掃描 / SQL 邏輯（全委派 core.runner）。與 cli.py 共用同一份 core（DIP）。
+職責（SRP）：兩類 HTTP 端點，皆委派 core，不含抓取 / 掃描 / SQL 邏輯：
+- 觸發爬取：POST /scrape/{source} → 組 ScrapeParams → run_scrape → JSON 摘要。
+- 搜尋清單：GET /models → store.search_models/count_models → 分頁結果。
+與 cli.py 共用同一份 core（DIP）。
 
 FastAPI 為「此 adapter 專屬」依賴（core 不依賴它）；故 import 僅在本檔，
 不會拖累無 fastapi 的測試環境（pytest 對本檔之測試以 importorskip 保護）。
@@ -12,11 +14,14 @@ Vue dashboard 的「更新模型清單」按鈕另接此 app。
 
 from __future__ import annotations
 
-from typing import Callable, Optional
+import sqlite3
+from typing import Callable, Iterator, Optional
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Query
 from pydantic import BaseModel
+from shiba_config import CONFIG
 
+from .core import store
 from .core.hf_scraper import DEFAULT_HF_FORMATS, DEFAULT_HF_WHITELIST
 from .core.runner import ScrapeParams, run_scrape
 
@@ -44,7 +49,52 @@ def get_runner() -> Callable[[ScrapeParams], dict]:
     return run_scrape
 
 
+def get_conn() -> Iterator[sqlite3.Connection]:
+    """DIP seam：開統一 DB（CONFIG.paths.db）唯讀查詢用，請求結束關閉。
+
+    測試以 app.dependency_overrides[get_conn] 注入 in-memory conn（覆寫版不關閉）。
+    """
+    conn = sqlite3.connect(str(CONFIG.paths.db))
+    try:
+        yield conn
+    finally:
+        conn.close()
+
+
+class ModelSearchResponse(BaseModel):
+    """GET /models 回應；items 為 v_search_model_latest 列（dict 直出）。"""
+
+    total: int                               # 符合條件總數（分頁前）
+    count: int                               # 本頁實際回傳筆數
+    limit: int
+    offset: int
+    items: list[dict]
+
+
 app = FastAPI(title="model_api_tools scraper", version="0.1.0")
+
+
+@app.get("/models", response_model=ModelSearchResponse)
+def list_models(
+    source: Optional[str] = Query(None, description="ollama / huggingface"),
+    model_format: Optional[str] = Query(None, alias="format", description="gguf / mlx ..."),
+    author: Optional[str] = Query(None, description="HF author / 發布者"),
+    q: Optional[str] = Query(None, description="對 name 模糊比對的關鍵字"),
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> ModelSearchResponse:
+    """搜尋已爬取的模型清單（走 v_search_model_latest，每 (source,name) 最新一批）。"""
+    total = store.count_models(
+        conn, source=source, model_format=model_format, author=author, keyword=q
+    )
+    items = store.search_models(
+        conn, source=source, model_format=model_format, author=author,
+        keyword=q, limit=limit, offset=offset,
+    )
+    return ModelSearchResponse(
+        total=total, count=len(items), limit=limit, offset=offset, items=items
+    )
 
 
 @app.post("/scrape/{source}")

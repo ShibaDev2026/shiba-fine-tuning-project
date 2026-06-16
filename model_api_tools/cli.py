@@ -56,7 +56,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--start", default=None, help="起始日期 YYYY-MM-DD（預設今天-365d）")
     p.add_argument("--end", default=None, help="結束日期 YYYY-MM-DD（預設今天）")
     p.add_argument("--max-records", type=int, default=None, dest="max_records",
-                   help="每來源安全上限")
+                   help="HF 每 lane（author×format）安全上限；None=不限")
     p.add_argument("--whitelist", default=None,
                    help=f"HF author 白名單，逗號分隔（預設 {','.join(DEFAULT_HF_WHITELIST)}）")
     p.add_argument("--formats", default=None,

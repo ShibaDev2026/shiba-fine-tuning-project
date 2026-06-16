@@ -120,7 +120,10 @@ def scrape_hf(
     """每 author × format lane 分頁抓取，依 lastModified 過濾 [start, end]。
 
     停損：lane 內 lastModified 降序，遇 < start 即停該 lane（其後只會更舊）。
-    max_records：跨所有 lane 的總筆數安全上限。fetch 可注入（測試免網路）。
+    max_records：**每 lane**（單一 author × format）的筆數安全上限，非全域上限。
+    全域上限會讓循序處理的第一條 lane 吃光配額、後續 lane（如 mlx-community、
+    mlx format）被靜默餓死；改為 per-lane 配額確保每條 lane 都能取到代表性樣本。
+    fetch 可注入（測試免網路）。
     """
     if fetch is None:
         fetch = fetch_models_page
@@ -130,10 +133,9 @@ def scrape_hf(
     for author in whitelist:
         for fmt in formats:
             url: str | None = build_lane_url(author, fmt)
+            lane_count = 0                            # 本 lane 已收筆數（per-lane 配額）
             stop = False
             while url and not stop:
-                if max_records is not None and len(out) >= max_records:
-                    return out[:max_records]
                 models, next_url = fetch(url)
                 for rec in parse_hf_models(models, fmt):
                     d = _date_of(rec.updated_at)
@@ -145,8 +147,10 @@ def scrape_hf(
                     if d > end_d:
                         continue                      # 太新，尚未進範圍
                     out.append(rec)
-                    if max_records is not None and len(out) >= max_records:
-                        return out[:max_records]
+                    lane_count += 1
+                    if max_records is not None and lane_count >= max_records:
+                        stop = True                   # 本 lane 配額用盡 → 換下一條 lane
+                        break
                 url = next_url
     return out
 

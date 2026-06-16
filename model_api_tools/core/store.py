@@ -176,6 +176,73 @@ def get_latest(conn: sqlite3.Connection, source: str | None = None) -> list[dict
     return _rows_to_dicts(conn.execute(sql, params))
 
 
+def _latest_filter(
+    source: str | None,
+    model_format: str | None,
+    author: str | None,
+    keyword: str | None,
+) -> tuple[str, tuple]:
+    """組 v_search_model_latest 的 WHERE 片段 + 參數（DIP：搜尋 SQL 收斂在 store）。
+
+    search_models / count_models 共用，確保兩者過濾條件一致。keyword 對 name 模糊比對。
+    """
+    clauses: list[str] = []
+    params: list = []
+    if source is not None:
+        clauses.append("source=?")
+        params.append(source)
+    if model_format is not None:
+        clauses.append("model_format=?")
+        params.append(model_format)
+    if author is not None:
+        clauses.append("author=?")
+        params.append(author)
+    if keyword:
+        clauses.append("name LIKE ?")
+        params.append(f"%{keyword}%")
+    where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+    return where, tuple(params)
+
+
+def search_models(
+    conn: sqlite3.Connection,
+    *,
+    source: str | None = None,
+    model_format: str | None = None,
+    author: str | None = None,
+    keyword: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> list[dict]:
+    """條件查詢 v_search_model_latest（搜尋 API 用）；分頁 limit/offset。
+
+    排序與 get_latest 一致（先 source 分組、組內 download_count 降序），
+    因跨來源 download 單位不同。
+    """
+    where, params = _latest_filter(source, model_format, author, keyword)
+    sql = (
+        "SELECT * FROM v_search_model_latest" + where
+        + " ORDER BY source, download_count DESC LIMIT ? OFFSET ?"
+    )
+    return _rows_to_dicts(conn.execute(sql, params + (limit, offset)))
+
+
+def count_models(
+    conn: sqlite3.Connection,
+    *,
+    source: str | None = None,
+    model_format: str | None = None,
+    author: str | None = None,
+    keyword: str | None = None,
+) -> int:
+    """符合條件的最新模型總數（搜尋 API 分頁用，與 search_models 同條件）。"""
+    where, params = _latest_filter(source, model_format, author, keyword)
+    row = conn.execute(
+        "SELECT COUNT(*) FROM v_search_model_latest" + where, params
+    ).fetchone()
+    return int(row[0])
+
+
 def list_by_run(conn: sqlite3.Connection, scrape_run_id: str) -> list[dict]:
     """某次觸發批次寫入的全部列。"""
     return _rows_to_dicts(
@@ -209,6 +276,8 @@ __all__ = [
     "init_search_model_list",
     "write_batch",
     "get_latest",
+    "search_models",
+    "count_models",
     "list_by_run",
     "get_local_detail",
 ]

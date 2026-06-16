@@ -28,7 +28,7 @@ class ScrapeParams:
     sources: tuple = ("ollama", "huggingface")          # 要爬的遠端來源
     start: str | None = None                            # None → 今天 - 365d
     end: str | None = None                              # None → 今天
-    max_records: int | None = None                      # 每來源安全上限
+    max_records: int | None = None                      # HF 每 lane（author×format）安全上限
     hf_whitelist: tuple = DEFAULT_HF_WHITELIST
     formats: tuple = DEFAULT_HF_FORMATS
     scan_local: bool = True                             # 是否本機掃描 + deep enrich

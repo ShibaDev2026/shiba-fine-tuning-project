@@ -12,7 +12,13 @@
   - **⚠ thinking 控制機制修正（實機證偽原設計）**：原 spec 的 `/no_think` prompt 注入對實際 GGUF（qwen3.5-35b-a3b / glm-4.7-flash via LM Studio）**完全無效**（reasoning_tokens 燒滿、content 空）；`chat_template_kwargs.enable_thinking` 同樣無效。**唯一有效機制 = OpenAI API 參數 `reasoning_effort:"none"`**（rtok→0、直接吐乾淨 JSON），僅 qwen/glm 帶；gemma 不帶（帶了反而碎念），走 `reasoning_content` 分流需 `max_tokens=2048` headroom。
   - **運維**：評分前需 `lms server start --port 1234`；裁判 JIT 循序載入不常駐（co-resident 因 LM Studio 記憶體 guardrail 在 64GB 上被阻擋，三裁判 ≈50GiB）。
 
+### Fixed
+
+- **`hf_scraper.scrape_hf` `max_records` 全域上限 → 每 lane 配額（2026-06-16）** — 原本 `max_records` 為跨所有 lane 的全域上限，循序處理時第一條 lane（`lmstudio-community/gguf`）即吃光配額 return，後續 author（`mlx-community` / `ggml-org`）與所有 `mlx` lane 被**靜默餓死**（DB 0 筆 MLX）。改為**每 lane（author × format）**配額：起始重置 `lane_count`，配額用盡只停該 lane 不全域 return。重跑後 `v_search_model_latest` MLX 0 → 200 筆。同步更新 `runner.ScrapeParams.max_records` / `cli --max-records` 註解語意。
+
 ### Added
+
+- **`model_api_tools` 搜尋 API：`GET /models`（2026-06-16）** — `api.py` 原僅有 `POST /scrape/{source}` 觸發爬取，補上查詢端：走 `v_search_model_latest`（每 source×name 最新一批），支援 `source` / `format` / `author` / `q`（name 模糊比對）過濾與 `limit`(1–500)/`offset` 分頁，回 `{total, count, limit, offset, items}`。SQL 收斂於 `store.search_models` / `count_models`（共用 `_latest_filter`，DIP）；`get_conn` 為 yield 型 DIP seam（請求結束關閉、測試可 override）。驗收：3 tests（無過濾 / format=mlx / keyword+分頁，importorskip fastapi + in-memory 注入）。
 
 - **`OpenAICompatClient.generate(disable_thinking=…)` + `_thinking_extra_body()`** — 本地 qwen/glm 裁判經 `extra_body={"reasoning_effort":"none"}` 關 thinking 穩定吐 JSON；`set_teacher_active()` teacher 啟用切換；`setup_teachers.py --cutover` 硬切換子指令、`--verify` 對齊 production（qwen/glm 帶 reasoning_effort、max_tokens=2048）。
 - **`model_api_tools/` 模型清單爬蟲 → `search_model_list` 表（2026-06-15）** — 爬取 Ollama library 與 HuggingFace（LM Studio 風格 GGUF/MLX）模型來源寫入統一 DB，未來「要下載／分析／選用哪些模型」可直接查表判斷：
