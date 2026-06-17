@@ -79,9 +79,9 @@
 │                                                                          │
 │  APScheduler scoring（每小時 minute=3）                                   │
 │     └─ services/multi_judge.py 三方 Judge 投票（SEAL ReSTEM^EM）          │
-│         ├─ Gemini 2.5 Flash      （主審）                                 │
-│         ├─ Claude Sonnet 4.6     （副審）                                 │
-│         └─ Qwen3.6 35B Local     （本地審）                               │
+│         ├─ Local Qwen3.5-35B-A3B  （主審）                                │
+│         ├─ Local GLM-4.7-Flash  （副審）                                  │
+│         └─ Local Gemma-4-e4b  （三審）                                    │
 │                                                                          │
 │  狀態流轉：                                                              │
 │     · 共識 approved / soft 0.5 / rejected                                 │
@@ -131,22 +131,26 @@
 | 壓縮（Primary） | gemma3:4b（think: false） | `config/models/compressor-gemma3-4b.yaml` |
 | 回應（Response） | qwen3:30b-a3b → shiba-block1 | `config/models/responder-qwen3-30b-a3b.yaml` |
 | 重型 fallback | qwen3.6:35b-a3b-nvfp4 | `config/models/responder-qwen36-35b-a3b-nvfp4.yaml` |
-| Judge（初裁） | Gemini 2.5 Flash（Paid Tier，RPM=500）| — |
+| Judge（評分） | 本地三家族 Qwen3.5-35B / GLM-4.7-Flash / Gemma-4-e4b（付費 API 已停用）| DB `teachers` |
 
 > v1.5.0 起所有模型參數 yaml 化，前端 `PhaseRouter` 可即時切換；offline kill switch 由 `router_config.ollama_status` 控制。
 
 ### Teacher 評分池（當前 main，DB 實際狀態）
 
-| 優先 | Teacher | model_id | RPM | 每日上限 | 狀態 |
-|------|---------|----------|-----|---------|------|
-| 0 | Gemini 2.5 Flash | gemini-2.5-flash | 500 | 250 | active |
-| 0 | Qwen3.6 35B Local | qwen3.6:35b-a3b-nvfp4 | — | 500 | active |
-| 1 | Claude Sonnet 4.6 | claude-sonnet-4-6 | 50 | 999999 | active（Anthropic 無 RPD）|
-| 20 | Gemini 2.5 Flash-Lite | gemini-2.5-flash-lite | 2000 | 1000 | active |
+> **2026-06-16 硬切換本地化（可回滾）**：付費裁判（Gemini Flash / Flash-Lite / Claude Sonnet 4.6）已全數 `is_active=0`，Layer 2 評分改用**本地 LM Studio（LMS）三家族**（`api_base=localhost:1234/v1`、`keychain_ref=NULL`、JIT 循序載入不常駐）。評分前需先 `lms server start --port 1234`。回滾路徑＝把付費裁判 `is_active=1`。
 
-> 2026-05-20 升 Gemini Paid Tier 後 RPM 已調整，daily_limit 規格上限為 Flash 5000 / Flash-Lite Unlimited（待 DB backfill）；切換 teacher = 改 DB `api_base + keychain_ref + priority`，零改 code。
+| 優先 | Teacher | model_id | 每日上限 | 狀態 |
+|------|---------|----------|---------|------|
+| 0 | Local Qwen3.5-35B-A3B | qwen/qwen3.5-35b-a3b | 9999 | **active**（本地 LMS）|
+| 1 | Local GLM-4.7-Flash | zai-org/glm-4.7-flash | 9999 | **active**（本地 LMS）|
+| 2 | Local Gemma-4-e4b | google/gemma-4-e4b | 9999 | **active**（本地 LMS）|
+| 0 | Gemini 2.5 Flash | gemini-2.5-flash | 250 | disabled（付費，可回滾）|
+| 1 | Claude Sonnet 4.6 | claude-sonnet-4-6 | 999999 | disabled（付費，無 RPD）|
+| 20 | Gemini 2.5 Flash-Lite | gemini-2.5-flash-lite | 1000 | disabled（付費，可回滾）|
+
+> 本地裁判關 thinking 唯一有效法為 API 參數 `reasoning_effort:"none"`（僅 qwen/glm；gemma 靠 `reasoning_content` 分流 + `max_tokens=2048`）；`/no_think` 與 `enable_thinking` 對 LM Studio GGUF 實測無效。切換 teacher = 改 DB `api_base + keychain_ref + priority`，零改 code（DIP）。
 >
-> **歷史 / 可選 teacher**：早期版本（v0.7~v0.8）曾納入 Grok 3 Mini、GitHub GPT-4o-mini、Mistral 7B、Local Qwen 7B（最後備援）等池子；目前已從 DB 清出，未來可重新啟用。
+> **停用 / 歷史 teacher**：付費三家保留於 DB 供回滾；另 Qwen3.6 35B Local（Ollama nvfp4）、bench 2 家（Qwen3.5-9B / GLM-4.6v-Flash）及早期 Grok / GPT-4o-mini / Mistral 等亦為 `is_active=0`，未來可重啟。
 
 ## LoRA Adapter
 
