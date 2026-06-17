@@ -24,6 +24,8 @@ docs/references/git/*/
 *.db
 *.db-wal
 *.db-shm
+*.bak
+*.db.bak
 *.log
 
 # 專案本地執行產物

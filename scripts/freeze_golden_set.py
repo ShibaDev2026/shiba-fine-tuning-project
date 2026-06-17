@@ -30,8 +30,8 @@ PER_TYPE = MAX_TOTAL // len(EVENT_TYPES) + 1  # 各 event_type 上限（略高�
 MIN_SCORE = 9.0
 
 
-def main(dry_run: bool = False):
-    conn = sqlite3.connect(str(CONFIG.paths.db))
+def main(dry_run: bool = False, db_path=None):
+    conn = sqlite3.connect(str(db_path or CONFIG.paths.db))
     conn.row_factory = sqlite3.Row
 
     # 確保 gatekeeper_golden_samples 表存在（初次執行 migration 可能不會跑到）
@@ -63,7 +63,8 @@ def main(dry_run: bool = False):
 
     for event_type in EVENT_TYPES:
         rows = conn.execute(
-            """SELECT id, instruction, input, output, score
+            """SELECT id, instruction, input,
+                      COALESCE(expected_answer, output) AS expected_output, score
                FROM training_samples
                WHERE status = 'approved'
                  AND score >= ?
@@ -88,7 +89,7 @@ def main(dry_run: bool = False):
                         row["id"],
                         row["instruction"],
                         row["input"] or "",
-                        row["output"],
+                        row["expected_output"],
                         event_type,
                         row["score"],
                     ),

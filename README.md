@@ -41,6 +41,7 @@
 - `services/multi_judge.py`：**P1-2** 三方 Judge 投票（SEAL ReSTEM^EM）
 - `extraction/dataset_formatter.py`：Alpaca JSONL 輸出，Ebbinghaus 分桶 replay
 - `api/`：FastAPI 監控儀表板 + MCP server
+- `services/grading_harness.py` + `scripts/grading_harness_cli.py`：**評分 harness（2026-06-17）** — session 可續迭代評分；Tier A 本地三裁判評 `training_samples`、Tier B 由 48 題題庫橋接 Claude 親撰 gold；48 黃金樣本經本地三裁判**獨立**複評（破 grader=author 循環、48/48 PASS、panel 9.3 ≫ Tier A 地板 6.67）後凍入 `gatekeeper_golden_samples`（8×6 event_type）
 
 ### Layer 3 — Fine-tuning 管道
 
@@ -243,6 +244,7 @@ bash scripts/db_backup.sh
 | `ai_api_call_logs` | 跨 vendor 統一 AI 呼叫稽核（v1.5.x 後）|
 | `retrieval_golden_set` / `evaluation_results` / `evaluation_runs` | RAGAS Phase 0 schema（評估腳本在 `ragas-evaluation` branch）|
 | `questions` / `question_sets` / `judge_agreement_logs` / `golden_samples` | Layer 2 評分相關（multi_judge / question pool）|
+| `gatekeeper_golden_samples` | Layer 3 A/B 守門黃金樣本（2026-06-17 凍結 48 筆 ＝ 6 event_type × 8，score 9.0–9.5，源自 grading harness Tier B）|
 | `tool_executions` / `branch_messages` / `projects` / `lost_and_found` | 內部記錄表（tool 執行追蹤、孤兒資料回收等）|
 
 ## Feature Flags（PR-O 模組化開關）

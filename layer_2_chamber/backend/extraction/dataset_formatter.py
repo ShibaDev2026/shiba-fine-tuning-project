@@ -137,6 +137,7 @@ def _fetch_new_samples(
                COALESCE(weight, 1.0) as weight
           FROM training_samples
          WHERE status = 'approved'
+           AND question_id IS NULL  -- 排除題庫橋接 Tier B 種子列（output=''，親評答案在 expected_answer）
            AND id >= ?
     """
     params: list = [since_id]
@@ -169,6 +170,7 @@ def _fetch_ebbinghaus_replay(
                    COALESCE(weight, 1.0) as weight
               FROM training_samples
              WHERE status = 'approved'
+               AND question_id IS NULL  -- 排除題庫橋接 Tier B 種子列（同 _fetch_new_samples）
                AND score >= ?
                AND created_at BETWEEN ? AND ?
                AND id < ?
