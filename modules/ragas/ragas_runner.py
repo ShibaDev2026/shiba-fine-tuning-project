@@ -25,7 +25,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-PROJECT_ROOT = Path(__file__).parent.parent
+PROJECT_ROOT = Path(__file__).parent.parent.parent  # modules/ragas/ → 專案根（parent×3）
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from layer_1_memory.lib.db import get_connection
@@ -76,11 +76,12 @@ def _compute_uuid_metrics(
         return {"uuid_recall": None, "uuid_precision": None, "hit@1": None, "mrr": None}
 
     gt_set = set(ground_truth_uuids)
-    ret_list = retrieved_uuids  # 保留順序以計算 MRR
+    ret_list = retrieved_uuids  # 保留順序以計算 MRR / hit@1
+    ret_set = set(ret_list)     # recall/precision 用去重集合：避免重複 UUID 使分子膨脹 over-count
 
-    hits = [u for u in ret_list if u in gt_set]
-    recall = len(hits) / len(gt_set) if gt_set else 0.0
-    precision = len(hits) / len(ret_list) if ret_list else 0.0
+    hit_set = gt_set & ret_set
+    recall = len(hit_set) / len(gt_set) if gt_set else 0.0
+    precision = len(hit_set) / len(ret_set) if ret_set else 0.0
     hit1 = 1.0 if (ret_list and ret_list[0] in gt_set) else 0.0
 
     # MRR：第一個命中的排名倒數

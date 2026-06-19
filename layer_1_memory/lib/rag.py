@@ -344,7 +344,9 @@ def retrieve_for_eval(
             "session: {}\n{}".format(s.get("session_uuid", ""), s.get("summary", ""))
             for s in sessions
         ],
-        "retrieved_session_uuids": [s.get("session_uuid", "") for s in sessions],
+        # 保序去重：與 vector 路徑一致（sessions_fts 當前 session 層級已 unique，
+        # 此為防禦+一致性，防未來 schema 改 exchange 層級時悄悄 inflate metrics）
+        "retrieved_session_uuids": list(dict.fromkeys(s.get("session_uuid", "") for s in sessions)),
     }
 
 
