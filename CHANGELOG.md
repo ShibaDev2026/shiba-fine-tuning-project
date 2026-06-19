@@ -19,6 +19,8 @@
 
 ### Added
 
+- **D3 judge 可信度診斷：混淆矩陣（2026-06-19，結論＝校準可結案）** — `scripts/judge_confusion_matrix.py`（+`tests/layer2/test_judge_confusion_matrix.py`，2 passed）：Claude in-session **盲評** + Shiba 人類標記（`user_accepted`）為 GT，對比本地 panel 對 74 筆真實 session 輸出（`question_id IS NULL` 排除 Tier B gold）的 approved/rejected，算混淆矩陣。**核心結論（誠實切窄）**：(1) Claude 不適合當 GT——9 筆 Shiba 採納的 good 僅認同 1/9，「訓練價值」標準系統性嚴於「實用採納」；(2) 9 筆 shiba-good 錨**全是 `user_accepted=1` high_value override**（panel 獨立 score avg 3.46、本會 reject）→ 主矩陣 panel 軸污染、TPR/TNR 作廢（同 Tier B `question_id` 機制，初版漏抓、advisor 抓出）；(3) **survives on aggregate**：14 approved 中 13 是 override、panel 自然 approve 僅 **1/74（≈1.4%）**，**D3 文獻 agreeableness/放水病未觀察到 → judge 校準可結案、放水病不存在**。**construct divergence**（採納於情境 ≠ 訓練價值 ≠ panel 分數），非 Claude 失準。報告：`docs/note/2026-06-19-d3-judge-confusion-matrix.md`。
+
 - **評分 harness + Tier A/B 黃金樣本凍結（2026-06-17）** — 讓 `training_samples` / 黃金樣本評分可 session 續跑迭代評滿，評分者 = Claude（本 session 親撰，非付費 API）+ 本地三裁判：
   - **harness**：`services/grading_harness.py`（核心迭代評分 + 凍結門檻）+ `scripts/grading_harness_cli.py`（CLI）。**Tier A** = 本地三裁判（Qwen3.5-35B / GLM-4.7-Flash / Gemma-4-e4b）評 `training_samples`，drain 後 max **6.67** < freeze 門檻 9.0 → **未產生任何 gold，證實需 Claude 親撰**。**Tier B** = 由 48 題題庫橋接、Claude 親撰 gold（`question_id` FK 作冪等鍵 + L3 判別子，`status=approved`、寫 `expected_answer`，6 event_type × 8 = 48）。
   - **破 grader=author 循環**：48 gold 全經本地三裁判**獨立**複評（`_call_openai_compat` 直呼避 `output[:500]` 截斷、`max_tokens=2048`、thinking 關閉、judge-outer 序評）→ **48/48 PASS**（panel-mean 9.32–9.33，清楚高於 Tier A 地板 6.67）。誠實邊界：建立 provenance / floor-clearance，**非**逐筆品質排序（panel 頂端飽和：Gemma 釘 10.0、GLM 釘 9.0、僅 Qwen 區辨）。報告：`docs/note/2026-06-17-tierB-{batch1,21gold}-judge-reeval.md`。
