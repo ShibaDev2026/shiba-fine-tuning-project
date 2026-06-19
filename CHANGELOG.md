@@ -14,6 +14,13 @@
 
 ### Fixed
 
+- **RAGAS 評估修復：feature 未初始化 + uuid 指標 over-count（2026-06-19）** — RAGAS runner 跑不動的兩個根因（+附帶一個）：
+  - **Bug 1（feature 未初始化，非「讀錯表名」）**：PR-O 模組化把 ragas code 改用 `ragas_` 前綴表 + `feature_registry`，但 `apply_features` **從未接線到啟動流程**（`feature_registry.py` 自注「尚未接線」）→ `ragas_` 表從沒建、`migrate_legacy` 從沒跑、舊資料滯留無前綴舊表（`retrieval_golden_set` 111 / `evaluation_results` 909），runner 查 `ragas_retrieval_golden_set` 查無此表。修：`scripts/migrate_ragas_tables.py` 一次性套 `ragas.sql` schema + 跑 `migrate_legacy`（搬 909+111 筆，冪等、可重跑、row counts match）。**所有 active code 已寫 `ragas_` 前綴、無人寫舊名 → 舊表 vestigial、無雙寫衝突**（grep 證）。
+  - **Bug 2（uuid_recall/precision over-count，latent）**：兩條 retrieve 路徑當前都已去重（vector path / `_with_context`）或 session-unique（FTS5 `sessions_fts`）→ over-count **非當前任一路徑觸發**；但 `_compute_uuid_metrics` 寫法 `hits=[u for u in ret_list if u in gt_set]`（分子含重複、分母 `gt_set` 去重）**允許** recall >1.0。修：硬化 metric 層用去重集合交集 `len(gt_set & set(ret_list))` + `rag.py` FTS5 路徑保序去重（一致性，防未來 schema 改 exchange 層級）。補 3 regression test（dup→recall 1.0 非 2.0）。
+  - **Bug 3（附帶）**：runner `PROJECT_ROOT=parent.parent`=`modules/` 算錯（該 `parent×3` 至專案根）→ 直接執行 `ModuleNotFoundError`。修正後直接執行 / `-m` 皆可。
+  - **驗收**：3 regression test passed；migration 冪等（二跑 0 搬移、`is_active` 68 正確帶過）；runner end-to-end（judge=none 真實 30 筆）跑通、表可讀、recall/precision ≤1.0；`tests/memory/` 30 passed（3 pre-existing `test_db.py` fail 與本次無關）。
+  - **⚠ plumbing fixed ≠ RAGAS ready（誠實邊界）**：end-to-end 在 **Ollama offline** 下跑（FTS5 fallback、30 筆 recall 全 0）→ 只證 Bug 1（表可讀、不崩）+ metrics bounded，**未證 RAGAS 產出有意義測量**。reranker 驗證前**仍欠一次 Ollama up 的 run 確認非零/合理 recall**（否則 golden-set UUID 與當前 session UUID 不匹配會被誤判成 reranker regression）。
+  - **⚠ 未解架構債**：`apply_features` 仍無呼叫者——「feature_registry 接線 main/server 啟動」未完成，本次只修 RAGAS 資料存取、**未完成 PR-O 接線**。
 - **`grading_harness.harness_progress` 過寬吞 `OperationalError`（2026-06-19，L2 follow-up）** — 原 `except sqlite3.OperationalError: pass` 把 gold 表查詢的**所有** OperationalError 當「表尚未建立」吞成 0，連 DB locked / malformed 等真實故障也被靜默吞掉。改為只在訊息含 `no such table` 時吞（freeze 從未跑過視為 0），其餘 re-raise 不靜默。補 1 測試（gold 查詢遇 `database is locked` → re-raise）。
 - **`hf_scraper.scrape_hf` `max_records` 全域上限 → 每 lane 配額（2026-06-16）** — 原本 `max_records` 為跨所有 lane 的全域上限，循序處理時第一條 lane（`lmstudio-community/gguf`）即吃光配額 return，後續 author（`mlx-community` / `ggml-org`）與所有 `mlx` lane 被**靜默餓死**（DB 0 筆 MLX）。改為**每 lane（author × format）**配額：起始重置 `lane_count`，配額用盡只停該 lane 不全域 return。重跑後 `v_search_model_latest` MLX 0 → 200 筆。同步更新 `runner.ScrapeParams.max_records` / `cli --max-records` 註解語意。
 
