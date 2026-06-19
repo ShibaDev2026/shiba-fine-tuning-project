@@ -1,0 +1,91 @@
+sample_id,config,accepted,failure_mode,note
+1,A,0,role_confusion,中文敘述/推理,無指令
+1,B,0,wrong_command,猜檔名 backfill_script.sh
+1,C,0,wrong_command,grounding 抓到 .bak 資料檔非腳本
+2,A,0,role_confusion,中文敘述/推理,無指令
+2,B,0,hallucination,MySQL CREATE TABLE,專案是 SQLite
+2,C,0,wrong_command,add ./echo 文件,未改 config 程式
+3,A,0,role_confusion,中文敘述/推理,無指令
+3,B,0,wrong_command,db 路徑錯 ~/.local-brain；且為狀態查詢非指令請求
+3,C,0,wrong_command,db 路徑錯 ~/.local-brain
+4,A,0,role_confusion,中文敘述/推理,無指令
+4,B,0,wrong_command,分析請求,非指令請求
+4,C,0,wrong_command,grounding 干擾:傾印全部 untracked
+5,A,0,role_confusion,中文敘述/推理,無指令
+5,B,0,wrong_command,add/commit 但未編輯 readme 內容
+5,C,1,ok,echo>>README 附參考段於 main(邊界,需抽查)
+6,A,0,role_confusion,中文敘述/推理,無指令
+6,B,0,wrong_command,規劃請求
+6,C,0,wrong_command,規劃請求
+7,A,0,role_confusion,中文敘述/推理,無指令
+7,B,0,wrong_command,how-to 問題
+7,C,0,wrong_command,how-to 問題
+8,A,0,role_confusion,中文敘述/推理,無指令
+8,B,1,ok,pip install openai
+8,C,1,ok,pip install openai
+9,A,0,role_confusion,中文敘述/推理,無指令
+9,B,1,ok,pip install openai
+9,C,1,ok,pip install openai
+10,A,0,role_confusion,中文敘述/推理,無指令
+10,B,0,wrong_command,把 移除 誤判為刪分支(危險)
+10,C,0,wrong_command,git rm --cached 全部 untracked(grounding 干擾,危險)
+11,A,0,role_confusion,中文敘述/推理,無指令
+11,B,0,wrong_command,概念問題
+11,C,0,wrong_command,概念問題
+12,A,0,role_confusion,中文敘述/推理,無指令
+12,B,0,wrong_command,雜訊:對話 summary
+12,C,0,wrong_command,雜訊+grounding 干擾
+13,A,0,role_confusion,中文敘述/推理,無指令
+13,B,0,wrong_command,雜訊:skill 文件
+13,C,0,wrong_command,雜訊:skill 文件
+14,A,0,role_confusion,中文敘述/推理,無指令
+14,B,0,wrong_command,add/commit 但未編輯 readme 內容
+14,C,0,wrong_command,add/commit 但未編輯 readme 內容
+15,A,0,role_confusion,中文敘述/推理,無指令
+15,B,0,wrong_command,雜訊:skill 文件
+15,C,0,wrong_command,雜訊:skill 文件
+16,A,0,role_confusion,中文敘述/推理,無指令
+16,B,0,wrong_command,把 使用者 誤判為 git config user
+16,C,0,wrong_command,grounding 干擾:傾印全部 untracked
+17,A,0,role_confusion,中文敘述/推理,無指令
+17,B,0,wrong_command,規劃/討論
+17,C,0,wrong_command,規劃/討論
+18,A,0,role_confusion,中文敘述/推理,無指令
+18,B,1,ok,git log --oneline -5
+18,C,1,ok,git log --oneline -5
+19,A,0,role_confusion,中文敘述/推理,無指令
+19,B,0,wrong_command,概念問題
+19,C,0,wrong_command,概念問題
+20,A,0,role_confusion,中文敘述/推理,無指令
+20,B,0,wrong_command,狀態問題
+20,C,0,wrong_command,grounding 干擾:傾印全部 untracked
+21,A,0,role_confusion,中文敘述/推理,無指令
+21,B,0,wrong_command,準則問題,非指令
+21,C,0,wrong_command,grounding:提交使用者待決去留的檔(危險)
+22,A,0,role_confusion,中文敘述/推理,無指令
+22,B,0,wrong_command,雜訊:task-notification
+22,C,0,wrong_command,雜訊:task-notification
+23,A,0,role_confusion,中文敘述/推理,無指令
+23,B,0,wrong_command,雜訊:skill 文件
+23,C,0,wrong_command,雜訊:skill 文件
+24,A,0,role_confusion,中文敘述/推理,無指令
+24,B,0,hallucination,wget example.com 假 URL
+24,C,0,hallucination,捏造 yaml 結構
+25,A,0,role_confusion,中文敘述/推理,無指令
+25,B,0,wrong_command,概念問題
+25,C,0,wrong_command,概念問題
+26,A,0,role_confusion,中文敘述/推理,無指令
+26,B,0,wrong_command,概念/規劃,只 echo 文字
+26,C,0,wrong_command,概念/規劃,捏造目錄
+27,A,0,role_confusion,中文敘述/推理,無指令
+27,B,0,wrong_command,雜訊:task-notification
+27,C,0,wrong_command,雜訊:task-notification
+28,A,0,role_confusion,中文敘述/推理,無指令
+28,B,0,wrong_command,git rm 刪檔;請求是從 task 移除(危險)
+28,C,0,wrong_command,git rm 刪檔;請求是從 task 移除(危險)
+29,A,0,role_confusion,中文敘述/推理,無指令
+29,B,0,wrong_command,工作流程請求
+29,C,0,wrong_command,工作流程請求
+30,A,0,role_confusion,中文敘述/推理,無指令
+30,B,0,wrong_command,git 概念問題
+30,C,0,wrong_command,git 概念問題

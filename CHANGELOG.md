@@ -24,7 +24,8 @@
   - **L3 汙染防護**：`extraction/dataset_formatter.py` 之 `_fetch_new_samples` + `_fetch_ebbinghaus_replay` 皆加 `AND question_id IS NULL`，排除 Tier B 橋接 seed 列（`output` 為空）混入 MLX 訓練集。
   - **凍結**：`scripts/freeze_golden_set.py`（`score>=9.0` + `approved`，各 event_type 均勻配額、上限 50）→ 48 gold 凍入 `gatekeeper_golden_samples`（8×6 event_type、無重複）。
   - **sid 121 前提糾正查證**：gold 主張「Gemma3 無原生 thinking 模式 → `think:false` no-op」經 web 查證確認（內建 thinking 是 **Gemma 4** 才加入；Gemma 3 社群可 fine-tune（GRPO）外加但**非 stock 開關**），gold polish 補註此細節堵裁判過度保守 hedge。
-  - **驗收**：`pytest tests/layer2/test_grading_harness.py tests/layer2/test_dataset_formatter.py -q` **24 passed**。
+  - **merge 前自我 review fail-closed 補強（2026-06-19）**：(H1) `freeze_golden_set` query 加 `COALESCE(expected_answer, output) != ''`，擋 Tier B 種子列若漏帶 `expected_output` 卻被評 approved 時鑄出**空答案 gold**（fail-open → fail-closed）；(M1) `scrub_for_export` / `assert_clean` 補 RFC1918 私有網段（`10.x`、`172.16-31.x`）scrub + backstop（原 `scrub_pii` 只覆蓋 `192.168`/`127.x`，無 IP fail-closed 回查）。
+  - **驗收**：`pytest tests/layer2/test_grading_harness.py tests/layer2/test_dataset_formatter.py -q` **27 passed**（+3：freeze 空答案守衛、私有 IP scrub、私有 IP backstop）。
 
 - **`model_api_tools` 搜尋 API：`GET /models`（2026-06-16）** — `api.py` 原僅有 `POST /scrape/{source}` 觸發爬取，補上查詢端：走 `v_search_model_latest`（每 source×name 最新一批），支援 `source` / `format` / `author` / `q`（name 模糊比對）過濾與 `limit`(1–500)/`offset` 分頁，回 `{total, count, limit, offset, items}`。SQL 收斂於 `store.search_models` / `count_models`（共用 `_latest_filter`，DIP）；`get_conn` 為 yield 型 DIP seam（請求結束關閉、測試可 override）。驗收：3 tests（無過濾 / format=mlx / keyword+分頁，importorskip fastapi + in-memory 注入）。
 

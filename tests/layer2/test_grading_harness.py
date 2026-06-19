@@ -128,6 +128,20 @@ def test_assert_clean_raises_on_email():
         gh.assert_clean("reach me at someone@example.com")
 
 
+def test_scrub_for_export_redacts_private_ip():
+    # M1：scrub_pii 只覆蓋 192.168/127 → export 邊界補 RFC1918 私有網段（10.x、172.16-31.x）
+    from layer_2_chamber.backend.services import grading_harness as gh
+    out = gh.scrub_for_export("host 10.0.3.5 and 172.20.1.9 reachable")
+    assert "10.0.3.5" not in out and "172.20.1.9" not in out
+    assert "<LOCAL_IP>" in out
+
+
+def test_assert_clean_raises_on_private_ip():
+    from layer_2_chamber.backend.services import grading_harness as gh
+    with pytest.raises(ValueError):  # fail-closed：殘留私有 IP → 不送 Claude
+        gh.assert_clean("internal box at 10.8.0.1")
+
+
 # ---- Task 2: export_gold_candidates ----
 def test_export_balances_and_scrubs(monkeypatch):
     from layer_2_chamber.backend.services import grading_harness as gh
@@ -206,6 +220,23 @@ def test_freeze_prefers_expected_answer(tmp_path):
     conn = sqlite3.connect(dbfile); conn.row_factory = sqlite3.Row
     row = conn.execute("SELECT expected_output FROM gatekeeper_golden_samples").fetchone()
     assert row["expected_output"] == "GOLD_ANS"   # 取 expected_answer 而非 RAW_OUT
+
+
+def test_freeze_excludes_empty_answer_gold(tmp_path):
+    """H1 fail-closed：approved + score>=9 但答案空（expected_answer NULL + output=''）→ 不鑄 gold。"""
+    freeze_golden_set = _load_freeze_golden_set()
+    dbfile = str(tmp_path / "t.db")
+    conn = sqlite3.connect(dbfile); conn.row_factory = sqlite3.Row
+    conn.executescript(_SCHEMA_SQL)
+    # Tier B 種子列：被評 approved/9.5 卻漏帶 expected_output → output 留 ''、expected_answer NULL
+    conn.execute(
+        "INSERT INTO training_samples (source,event_type,instruction,input,output,expected_answer,status,score) "
+        "VALUES ('layer1_bridge','git_ops','i','','','','approved',9.5)")
+    conn.commit(); conn.close()
+    freeze_golden_set.main(dry_run=False, db_path=dbfile)
+    conn = sqlite3.connect(dbfile); conn.row_factory = sqlite3.Row
+    n = conn.execute("SELECT COUNT(*) FROM gatekeeper_golden_samples").fetchone()[0]
+    assert n == 0   # 空答案列被擋，不進 gold set
 
 
 # ---- Task 6: E2E ----

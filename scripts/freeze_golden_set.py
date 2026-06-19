@@ -4,6 +4,8 @@ scripts/freeze_golden_set.py — 一次性執行：凍結歷史高分樣本為 g
 
 挑選條件：
   - status='approved' AND score >= 9.0
+  - 答案非空（COALESCE(expected_answer, output) != ''）— 擋 Tier B 種子列若漏帶
+    expected_output 卻被評 approved 時鑄出空答案 gold（fail-closed）
   - 各 event_type 均勻配額（各 ~7 筆），上限 50 筆
   - 已凍結的 source_sample_id 不重複寫入
 
@@ -69,6 +71,7 @@ def main(dry_run: bool = False, db_path=None):
                WHERE status = 'approved'
                  AND score >= ?
                  AND event_type = ?
+                 AND COALESCE(expected_answer, output) != ''  -- 擋空答案 gold（fail-closed）
                ORDER BY score DESC, id DESC
                LIMIT ?""",
             (MIN_SCORE, event_type, PER_TYPE),

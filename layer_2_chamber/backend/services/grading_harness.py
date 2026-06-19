@@ -24,9 +24,18 @@ EVENT_TYPES = [
 ]
 _USER_PLACEHOLDER = "<USER>"
 _EMAIL_PLACEHOLDER = "<EMAIL>"
+_IP_PLACEHOLDER = "<LOCAL_IP>"
 # refiner.scrub_pii 不含 email pattern（實機驗證：git_ops 樣本含 author/Co-Authored-By email，
 # 含 Shiba 個人信箱）→ 在 export 邊界（送 Anthropic 前）補上 email redaction。
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+# refiner.scrub_pii 的 IP pattern 只覆蓋 192.168/127.x → export 邊界補滿 RFC1918 私有網段
+# （10.x、172.16-31.x）+ loopback，並讓 assert_clean 有 IP backstop（fail-closed）。
+_PRIVATE_IP_RE = re.compile(
+    r"\b(?:10\.\d{1,3}\.\d{1,3}\.\d{1,3}"
+    r"|172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}"
+    r"|192\.168\.\d{1,3}\.\d{1,3}"
+    r"|127\.\d{1,3}\.\d{1,3}\.\d{1,3})\b"
+)
 
 
 def _sensitive_tokens() -> list[str]:
@@ -43,6 +52,7 @@ def scrub_for_export(text: str | None) -> str:
     for tok in _sensitive_tokens():
         out = out.replace(tok, _USER_PLACEHOLDER)
     out = _EMAIL_RE.sub(_EMAIL_PLACEHOLDER, out)  # email PII（scrub_pii 未覆蓋）
+    out = _PRIVATE_IP_RE.sub(_IP_PLACEHOLDER, out)  # RFC1918 私有 IP（scrub_pii 只覆蓋 192.168/127）
     return out
 
 
@@ -57,6 +67,8 @@ def assert_clean(text: str) -> None:
             raise ValueError(f"PII residue after scrub: token len={len(tok)}")
     if _EMAIL_RE.search(text or ""):
         raise ValueError("PII residue after scrub: email shape")
+    if _PRIVATE_IP_RE.search(text or ""):
+        raise ValueError("PII residue after scrub: private IP shape")
 
 
 def bridge_questions(
