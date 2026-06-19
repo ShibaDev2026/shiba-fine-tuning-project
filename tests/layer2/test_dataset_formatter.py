@@ -151,6 +151,29 @@ class TestExportDataset:
         assert "請幫我" in content
         assert "\\u" not in content
 
+    def test_question_bank_seed_excluded_without_block_filter(self, tmp_path):
+        """Tier B 題庫橋接列（question_id 設、output=''）即使 adapter_block=None 也不得進 dataset。
+
+        對應 POST /export 省略 adapter_block 的路徑：無 block 過濾時，靠 question_id IS NULL
+        排除親評種子列，避免空 output 餵進 MLX（與 B2 空集守衛同一防護理念）。
+        """
+        conn = _make_db(tmp_path)
+        _insert_sample(conn, instruction="real", output="real-out", adapter_block=1)
+        # 模擬 bridge_questions 產生的 Tier B 種子列：question_id 設、output=''、adapter_block 留 NULL
+        conn.execute("INSERT INTO question_sets (id, name, event_type) VALUES (1, 'qs', 'git_ops')")
+        conn.execute("INSERT INTO questions (id, set_id, prompt) VALUES (1, 1, 'q?')")
+        conn.execute(
+            """INSERT INTO training_samples
+               (source, question_id, event_type, instruction, input, output, score, status)
+               VALUES ('layer1_bridge_v2', 1, 'git_ops', 'seed', '', '', 9.5, 'approved')""",
+        )
+        conn.commit()
+
+        out = tmp_path / "dataset.jsonl"
+        stats = export_dataset(conn, out)  # adapter_block=None → 無 block 過濾（POST /export 漏洞路徑）
+        assert stats["total"] == 1  # 只有 real 列；Tier B 空 output 列被 question_id IS NULL 排除
+        assert all(json.loads(line)["output"] != "" for line in out.read_text().splitlines())
+
 
 class TestGetExportStats:
     def test_stats_by_status(self, tmp_path):

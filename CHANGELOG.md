@@ -18,6 +18,15 @@
 
 ### Added
 
+- **評分 harness + Tier A/B 黃金樣本凍結（2026-06-17）** — 讓 `training_samples` / 黃金樣本評分可 session 續跑迭代評滿，評分者 = Claude（本 session 親撰，非付費 API）+ 本地三裁判：
+  - **harness**：`services/grading_harness.py`（核心迭代評分 + 凍結門檻）+ `scripts/grading_harness_cli.py`（CLI）。**Tier A** = 本地三裁判（Qwen3.5-35B / GLM-4.7-Flash / Gemma-4-e4b）評 `training_samples`，drain 後 max **6.67** < freeze 門檻 9.0 → **未產生任何 gold，證實需 Claude 親撰**。**Tier B** = 由 48 題題庫橋接、Claude 親撰 gold（`question_id` FK 作冪等鍵 + L3 判別子，`status=approved`、寫 `expected_answer`，6 event_type × 8 = 48）。
+  - **破 grader=author 循環**：48 gold 全經本地三裁判**獨立**複評（`_call_openai_compat` 直呼避 `output[:500]` 截斷、`max_tokens=2048`、thinking 關閉、judge-outer 序評）→ **48/48 PASS**（panel-mean 9.32–9.33，清楚高於 Tier A 地板 6.67）。誠實邊界：建立 provenance / floor-clearance，**非**逐筆品質排序（panel 頂端飽和：Gemma 釘 10.0、GLM 釘 9.0、僅 Qwen 區辨）。報告：`docs/note/2026-06-17-tierB-{batch1,21gold}-judge-reeval.md`。
+  - **L3 汙染防護**：`extraction/dataset_formatter.py` 之 `_fetch_new_samples` + `_fetch_ebbinghaus_replay` 皆加 `AND question_id IS NULL`，排除 Tier B 橋接 seed 列（`output` 為空）混入 MLX 訓練集。
+  - **凍結**：`scripts/freeze_golden_set.py`（`score>=9.0` + `approved`，各 event_type 均勻配額、上限 50）→ 48 gold 凍入 `gatekeeper_golden_samples`（8×6 event_type、無重複）。
+  - **sid 121 前提糾正查證**：gold 主張「Gemma3 無原生 thinking 模式 → `think:false` no-op」經 web 查證確認（內建 thinking 是 **Gemma 4** 才加入；Gemma 3 社群可 fine-tune（GRPO）外加但**非 stock 開關**），gold polish 補註此細節堵裁判過度保守 hedge。
+  - **merge 前自我 review fail-closed 補強（2026-06-19）**：(H1) `freeze_golden_set` query 加 `COALESCE(expected_answer, output) != ''`，擋 Tier B 種子列若漏帶 `expected_output` 卻被評 approved 時鑄出**空答案 gold**（fail-open → fail-closed）；(M1) `scrub_for_export` / `assert_clean` 補 RFC1918 私有網段（`10.x`、`172.16-31.x`）scrub + backstop（原 `scrub_pii` 只覆蓋 `192.168`/`127.x`，無 IP fail-closed 回查）。
+  - **驗收**：`pytest tests/layer2/test_grading_harness.py tests/layer2/test_dataset_formatter.py -q` **27 passed**（+3：freeze 空答案守衛、私有 IP scrub、私有 IP backstop）。
+
 - **`model_api_tools` 搜尋 API：`GET /models`（2026-06-16）** — `api.py` 原僅有 `POST /scrape/{source}` 觸發爬取，補上查詢端：走 `v_search_model_latest`（每 source×name 最新一批），支援 `source` / `format` / `author` / `q`（name 模糊比對）過濾與 `limit`(1–500)/`offset` 分頁，回 `{total, count, limit, offset, items}`。SQL 收斂於 `store.search_models` / `count_models`（共用 `_latest_filter`，DIP）；`get_conn` 為 yield 型 DIP seam（請求結束關閉、測試可 override）。驗收：3 tests（無過濾 / format=mlx / keyword+分頁，importorskip fastapi + in-memory 注入）。
 
 - **`model_api_tools` name regex 回填 `param_size` / `quantization`（2026-06-16）** — HF `/api/models` **list** endpoint 規格上不回 config 細節（param/quant/ctx 淺層皆 NULL），規格 metadata 原僅本機 deep enrich 的 14 筆有值 → 表幾乎無法按 size/量化篩選。新增 `core/name_parser.py`（純函數、零 I/O/SQL）解析 repo name 編碼的規格：MoE（`35B-A3B`）/ effective（`E4B`）/ dense（`12B`/`270M`）參數量 + 量化精度（`4bit` / `Q4_K_M` / `mxfp4` / `bf16`，優先序 bit>Q>fp>half；方法修飾 QAT/AWQ 不計）。`backfill_specs` 經 `Protocol` duck typing 只補仍為 NULL 的欄位（**deep 實測權威 > name 解析 > NULL**），接進 `runner` deep enrich 後一步。重跑後 `v_search_model_latest` param **55→2149**、quant **14→2563**（70% / 83% 覆蓋）；剩餘 NULL 經抽樣確認為真無 size（whisper / OCR / 版本號家族如 GLM-4.7），非漏解析。驗收：`pytest tests/model_api_tools/ -q` **22 passed**（11 既有 + name_parser 11）。

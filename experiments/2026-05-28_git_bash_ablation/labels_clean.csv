@@ -1,0 +1,61 @@
+sample_id,config,accepted,failure_mode,note
+1,B,0,hallucination,brew upgrade 卻給 git pull/npm install
+2,B,0,format_error,吐工具名 "Bash, Grep"
+3,B,0,wrong_command,docker run 不同 stack（非 compose）→ 流氓容器；邊界
+4,B,0,hallucination,grep 卻給 echo 'ABC'
+5,B,0,wrong_command,tree 用 cpp pattern（語言錯）
+6,B,0,wrong_command,sleep loop 沒採樣
+7,B,1,ok,4 個 git checkout -b 切 PR 分支（符合意圖）；邊界
+8,B,1,ok,git stash（與 gold 逐字相同，疑 RAG copy）
+9,B,1,ok,git log --oneline -5（逐字相同，疑 RAG copy）
+10,B,0,hallucination,ls apps 卻給 git checkout/commit
+11,B,0,hallucination,grep 卻給 git add/push
+12,B,0,wrong_command,reboot（危險且錯）
+13,B,0,placeholder_unfilled,<PLACEHOLDER> 未填且漏 ls
+14,B,0,hallucination,launchctl 卻給 echo '好'
+15,B,0,hallucination,設 env 卻給 echo Hello World
+16,B,0,wrong_command,git config 而非 git diff
+17,B,0,hallucination,grep 卻給 git add/push
+18,B,0,hallucination,pytest 卻給 git add/commit
+19,B,0,wrong_command,git status/log 而非 add 指定檔
+20,B,0,empty,空 commands
+21,B,0,wrong_command,sensors（macOS 無此指令）
+22,B,0,empty,空 commands
+23,B,1,ok,powermetrics smc temp（與 gold 逐字相同，RAG copy）
+24,B,0,hallucination,python run 卻給 git status/branch
+25,B,0,hallucination,uvicorn 卻給 git checkout/commit/push
+26,B,0,wrong_command,開新分支 + add . 而非 add clients/
+27,B,0,hallucination,git log 卻給 git add/commit
+28,B,0,wrong_command,ls-tree grep（誤讀意圖）
+29,B,0,hallucination,python run 卻給 git checkout/pull
+30,B,0,hallucination,grep 卻給 git add/push
+1,C,0,wrong_command,brew upgrade 卻給 git push
+2,C,0,wrong_command,rm db 卻給 git push
+3,C,0,placeholder_unfilled,/path/to/grafana 佔位未填
+4,C,0,grounding_poison,吐當下 git status 未追蹤檔
+5,C,0,wrong_command,tree [ch] pattern 錯
+6,C,0,wrong_command,sleep loop 沒採樣
+7,C,1,ok,4 個 git checkout -b pr-1..4；邊界
+8,C,1,ok,git stash（RAG copy）
+9,C,1,ok,git log --oneline -5（RAG copy）
+10,C,0,grounding_poison,吐當下 git status 未追蹤檔
+11,C,0,grounding_poison,吐當下 git status 未追蹤檔
+12,C,0,wrong_command,git reset --hard / clean -fd（危險且錯）
+13,C,0,wrong_command,git push 而非 branch+ls
+14,C,0,grounding_poison,吐當下 git status 未追蹤檔
+15,C,0,grounding_poison,吐當下 git status 未追蹤檔
+16,C,0,grounding_poison,吐當下 git status 未追蹤檔
+17,C,0,grounding_poison,吐當下 git status 未追蹤檔
+18,C,0,wrong_command,pytest 卻給 git add/commit/push
+19,C,0,wrong_command,add . 而非 add 指定檔
+20,C,0,grounding_poison,吐當下 git status 未追蹤檔
+21,C,0,wrong_command,sensors（macOS 無此指令）
+22,C,0,empty,空 commands
+23,C,1,ok,powermetrics smc temp（RAG copy）
+24,C,0,grounding_poison,吐當下 git status 未追蹤檔
+25,C,0,grounding_poison,吐當下 git status 未追蹤檔
+26,C,0,wrong_command,開新分支 + push（scope 錯）
+27,C,0,grounding_poison,吐當下 git status 未追蹤檔
+28,C,0,wrong_command,ls-files grep（誤讀意圖）
+29,C,0,grounding_poison,吐當下 git status 未追蹤檔
+30,C,0,grounding_poison,吐當下 git status 未追蹤檔

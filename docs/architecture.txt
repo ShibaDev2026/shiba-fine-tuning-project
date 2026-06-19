@@ -1,0 +1,91 @@
+shiba-fine-tuning-project/
+│
+├── layer_0_router/                      路由層：分類→壓縮→走 Qwen 或 Claude
+│   ├── router.py                        # Layer 0 主入口：分類 → 壓縮 → 呼叫 Qwen → 回傳注入字串
+│   ├── classifier.py                    # Gemma 分類器：判斷任務走 local 還是 claude
+│   ├── compressor.py                    # Context 壓縮入口（feature off=截斷 / on=Gemma 改寫）
+│   ├── telemetry.py                     # router_decisions 寫入 + 混合採納判定（accepted/rewrote）
+│   └── _config.py                       # 從 router_config + model_registry 載入 Layer 0 三顆模型設定
+│
+├── layer_1_memory/                      日常記憶層：Stop Hook → SQLite → FTS5+Embedding RAG
+│   ├── config.yaml                      # Layer 1 邏輯參數（RAG / decay / event_importance）
+│   ├── hooks/
+│   │   ├── session_start_hook.py        # SessionStart Hook：FTS5/RAG 召回 top-3 → 注入 context
+│   │   └── session_stop_hook.py         # Stop Hook：解析 .jsonl → 分類 → 寫 SQLite + FTS5
+│   └── lib/
+│       ├── classifier.py                # 規則型事件分類器（7 種 event_type）
+│       ├── db.py                        # SQLite 連線/WAL/init_db/migration + 基本 CRUD
+│       ├── embedder.py                  # Ollama embedding API 封裝（bge-m3）
+│       ├── exchanges.py                 # 四步循環語意層重建（exchanges + exchange_messages）
+│       ├── parser.py                    # 解析 Claude Code .jsonl 對話檔（含 DAG / branch）
+│       └── rag.py                       # 語意向量 + FTS5 雙路召回，輸出 hookSpecificOutput Markdown
+│
+├── layer_2_chamber/                     精神時光屋：問題集 × 多 Judge → 訓練資料集
+│   └── backend/
+│       ├── main.py                      # FastAPI :8000 入口（uvicorn 啟動點）
+│       ├── core/
+│       │   ├── background.py            # APScheduler 排程（抽取 / 評分 / 冷資料壓縮）
+│       │   └── config.py                # Layer 2 設定載入 + DB 初始化
+│       ├── extraction/
+│       │   ├── pipeline.py              # 訓練樣本抽取管線（路徑 A v2 + B）
+│       │   └── dataset_formatter.py     # Alpaca JSONL 輸出（70/20/10 比例）
+│       ├── services/
+│       │   ├── refiner_service.py       # Qwen 本地精煉（PII scrub + 自包含性改寫）
+│       │   ├── teacher_service.py       # Teacher CRUD + Keychain 取 key + 評分呼叫
+│       │   └── multi_judge.py           # 多 Judge 投票（v1 fallback，3/3 或 2/3 approved）
+│       └── api/
+│           ├── routes_router.py         # router_decisions 查詢 / 採納更新
+│           ├── routes_router_config.py  # router_config 讀寫（模型選擇 / 維護狀態）
+│           ├── routes_models.py         # model_registry 唯讀
+│           ├── routes_memory.py         # Layer 1 sessions 查詢 / 統計
+│           ├── routes_dashboard.py      # 樣本統計與手動 approve
+│           ├── routes_dataset.py        # 抽取 / 匯出 Alpaca JSONL
+│           ├── routes_finetune.py       # 手動觸發 fine-tune + Ollama 狀態
+│           ├── routes_teachers.py       # Teacher 配額監控與管理
+│           └── routes_mcp.py            # MCP 端點（query_memory / get_stats）
+│
+├── layer_3_pipeline/                    Fine-tuning：MLX LoRA → GGUF → Ollama 更新
+│   ├── server.py                        # FastAPI :8001（host launchd 常駐，需 MPS/MLX）
+│   ├── runner.py                        # Pipeline 主協調器（訓練 → 轉檔 → 推送）
+│   ├── mlx_trainer.py                   # 呼叫 mlx_lm.lora CLI 執行 LoRA 訓練
+│   ├── gguf_converter.py                # mlx_lm.fuse + llama.cpp convert → GGUF
+│   ├── ollama_updater.py                # ollama create 推送 GGUF 至本地
+│   ├── db.py                            # finetune_runs 表 CRUD
+│   └── trigger_policy_basic.py          # 核心 fallback 觸發策略（PR-O-4）
+│
+├── core/                                跨層核心抽象（PR-O DIP 骨架）
+│   ├── feature_registry.py              # Feature Flag 註冊中心（hooks register/get）
+│   └── judge_strategy.py                # JudgeStrategy Protocol 介面
+│
+├── modules/                             可插拔功能模組（feature-flag 啟用）
+│   ├── gatekeeper/service.py            # Shadow Gate：新模型上線前四條件 A/B 守門
+│   ├── ebbinghaus_trigger/service.py    # 動態訓練觸發（艾賓浩斯 + 採納退化 + 分布偏移）
+│   ├── multi_judge_v2/service.py        # 多 Judge v2 評分策略（PR-O-5）
+│   ├── paraphrase/service.py            # 同義說法生成（PR-O-7）
+│   ├── advanced_compressor/service.py   # Gemma 壓縮服務（PR-O-8）
+│   └── ragas/                           評估框架（Phase A/B/C）
+│       ├── ragas_runner.py              # Layer 1 召回評估（Phase A.3，uuid_recall@k）
+│       ├── golden_set_builder.py        # Golden Set 半自動建構（sample → annotate）
+│       ├── c1_generate_answers.py       # C.1 Golden Q&A 標準答案生成
+│       ├── c2_e2e_evaluation.py         # C.2/C.3 E2E RAG 品質評估
+│       ├── c4_weekly_ci.py              # C.4 每週日採樣 10 筆做品質 CI
+│       ├── layer2_eval.py               # Phase B：Fleiss' Kappa + Faithfulness
+│       ├── layer2_report.py             # Layer 2 評估結果彙整輸出
+│       ├── backfill_bge_m3.py           # exchange_embeddings 從 nomic 重 embed 到 bge-m3
+│       ├── schemas.py                   # RAGAS 評估三元組資料結構
+│       └── migrations*.py               # ragas_* 相關 DDL / 資料遷移
+│
+├── clients/                             AI 廠商共用 client（DIP 抽象）
+│   ├── base.py                          # 共用錯誤分類（AIErrorCategory / AIClientError）
+│   ├── api_log.py                       # AI API 呼叫歷程共用記錄器
+│   ├── anthropic/client.py              # Claude Sonnet client
+│   ├── gemini/client.py                 # Gemini Flash / Flash-Lite client
+│   ├── ollama/client.py                 # 本地 Ollama client
+│   └── openai_compat/client.py          # OpenAI 相容 API client（Mistral 等）
+│
+├── tools/
+│   └── compare_extraction.py            # 路徑 A v1 vs v2 A/B 對比（純讀，不寫）
+│
+└── config/
+    ├── shiba.yaml                       # 全專案唯一 source of truth（DB 路徑等）
+    └── models/                          # 5 顆模型 yaml（classifier / compressor / responder ×2 / training base）
