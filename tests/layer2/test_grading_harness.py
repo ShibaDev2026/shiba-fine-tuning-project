@@ -204,7 +204,24 @@ def test_harness_progress_counts():
     prog = gh.harness_progress(conn)
     assert prog["training_samples"]["git_ops"]["pending"] == 1
     assert prog["training_samples"]["git_ops"]["approved"] == 1
-    assert prog["gold"] == {}           # gold 表未建 → 空（OperationalError 吞成 {}）
+    assert prog["gold"] == {}           # gold 表未建 → 空（only「no such table」吞成 {}）
+
+
+def test_harness_progress_reraises_db_locked():
+    """L2：gold 查詢遇非『表不存在』的 OperationalError（DB locked）→ re-raise 不靜默吞。"""
+    from layer_2_chamber.backend.services import grading_harness as gh
+    conn = _conn()  # training_samples 已建（無 gatekeeper 表）
+
+    class _LockedOnGold:
+        """只攔 gold 查詢丟 locked，其餘 delegate 真 conn（模擬 DB 鎖定非缺表）。"""
+        def __init__(self, real): self._real = real
+        def execute(self, sql, *a, **k):
+            if "gatekeeper_golden_samples" in sql:
+                raise sqlite3.OperationalError("database is locked")
+            return self._real.execute(sql, *a, **k)
+
+    with pytest.raises(sqlite3.OperationalError, match="locked"):
+        gh.harness_progress(_LockedOnGold(conn))  # type: ignore[arg-type]  # duck-typed fake
 
 
 def test_freeze_prefers_expected_answer(tmp_path):

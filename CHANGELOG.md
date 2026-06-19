@@ -14,6 +14,7 @@
 
 ### Fixed
 
+- **`grading_harness.harness_progress` 過寬吞 `OperationalError`（2026-06-19，L2 follow-up）** — 原 `except sqlite3.OperationalError: pass` 把 gold 表查詢的**所有** OperationalError 當「表尚未建立」吞成 0，連 DB locked / malformed 等真實故障也被靜默吞掉。改為只在訊息含 `no such table` 時吞（freeze 從未跑過視為 0），其餘 re-raise 不靜默。補 1 測試（gold 查詢遇 `database is locked` → re-raise）。
 - **`hf_scraper.scrape_hf` `max_records` 全域上限 → 每 lane 配額（2026-06-16）** — 原本 `max_records` 為跨所有 lane 的全域上限，循序處理時第一條 lane（`lmstudio-community/gguf`）即吃光配額 return，後續 author（`mlx-community` / `ggml-org`）與所有 `mlx` lane 被**靜默餓死**（DB 0 筆 MLX）。改為**每 lane（author × format）**配額：起始重置 `lane_count`，配額用盡只停該 lane 不全域 return。重跑後 `v_search_model_latest` MLX 0 → 200 筆。同步更新 `runner.ScrapeParams.max_records` / `cli --max-records` 註解語意。
 
 ### Added

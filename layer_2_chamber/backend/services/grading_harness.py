@@ -223,6 +223,9 @@ def harness_progress(conn: sqlite3.Connection) -> dict:
             "WHERE is_active=1 GROUP BY event_type"
         ).fetchall():
             gold[et] = n
-    except sqlite3.OperationalError:
-        pass  # gold 表尚未建立（freeze 從未跑過）→ 視為 0
+    except sqlite3.OperationalError as e:
+        # 只吞「gold 表尚未建立」（freeze 從未跑過）→ 視為 0（gold 留空 dict）；
+        # 其餘 OperationalError（DB locked / malformed）非預期，re-raise 不靜默吞。
+        if "no such table" not in str(e).lower():
+            raise
     return {"training_samples": ts, "gold": gold}
