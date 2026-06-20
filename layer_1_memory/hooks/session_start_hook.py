@@ -212,6 +212,9 @@ def main() -> None:
         top_n = rag_config.get("top_n", 3)
         token_budget = rag_config.get("token_budget", 500)
         debug_echo = bool(rag_config.get("debug_echo", False))
+        # Option 3（2026-06-20）：預設不把本地召回/路由結果注入 Claude context，
+        # 改 echo 給使用者參考；feed_model=true 才回復舊的注入行為（可回滾）。
+        feed_model = bool(rag_config.get("feed_model", False))
 
         # 執行 RAG 檢索（callee 顯式回傳召回路徑，避免 caller 字串 sniff）
         memory_context, rag_source = get_rag_context(
@@ -245,28 +248,45 @@ def main() -> None:
         if combined_context:
             session_id = payload.get("session_id", "")
             router_label = "local" if router_context else "rag-only"
-            logger.info(
-                "context prepared %d 字元（session=%s，router=%s）",
-                len(combined_context),
-                session_id,
-                router_label,
-            )
-            output = {
-                "hookSpecificOutput": {
-                    "hookEventName": "UserPromptSubmit",
-                    "additionalContext": combined_context,
+
+            # feed_model 旗標決定 stdout：true=注入 Claude context（舊行為）；
+            # false（Option 3 預設）=輸出空物件，召回內容不進 model、只走 stderr echo。
+            # stdout 無論如何都須輸出恰好一個合法 JSON（hook 契約）。
+            if feed_model:
+                logger.info(
+                    "context injected %d 字元（session=%s，router=%s）",
+                    len(combined_context), session_id, router_label,
+                )
+                output = {
+                    "hookSpecificOutput": {
+                        "hookEventName": "UserPromptSubmit",
+                        "additionalContext": combined_context,
+                    }
                 }
-            }
-            # 先保證主契約 stdout JSON 落地，再做 best-effort stderr echo；
-            # 避免 echo blocking / 例外連坐毀掉 additionalContext。
-            print(json.dumps(output, ensure_ascii=False))
+                print(json.dumps(output, ensure_ascii=False))
+            else:
+                logger.info(
+                    "context withheld from model（feed_model=false）%d 字元 → echo only（session=%s，router=%s）",
+                    len(combined_context), session_id, router_label,
+                )
+                print(empty_output)
             sys.stdout.flush()
-            logger.info("context emitted（session=%s）", session_id)
 
             # debug_echo：把召回內容以 ANSI 色塊寫到 stderr，只給使用者看
-            # （Claude Code 對 exit 0 的 stderr 不會回灌 model context，不計 token）
+            # （Claude Code 對 exit 0 的 stderr 不會回灌 model context，不計 token）。
+            # echo 前先 scrub（IP/email/user handle）；scrub 不可用則 fail-closed 不 echo，
+            # 避免未脫敏的歷史記憶外洩到終端 / shell log。
             if debug_echo:
-                _echo_to_stderr(combined_context, router_context, rag_source)
+                try:
+                    from layer_2_chamber.backend.services.grading_harness import (
+                        scrub_for_export,
+                    )
+                    safe_context = scrub_for_export(combined_context)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("scrub 不可用，fail-closed 跳過 echo：%s", exc)
+                    safe_context = ""
+                if safe_context:
+                    _echo_to_stderr(safe_context, router_context, rag_source)
         else:
             logger.debug("無 context，輸出空物件")
             print(empty_output)

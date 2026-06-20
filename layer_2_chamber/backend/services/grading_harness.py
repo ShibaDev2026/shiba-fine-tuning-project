@@ -15,7 +15,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .refiner_service import scrub_pii
-from .teacher_service import _update_sample_score
 
 # event_type 平衡選樣集合（對齊 freeze_golden_set.EVENT_TYPES）
 EVENT_TYPES = [
@@ -174,6 +173,10 @@ def ingest_grades(conn: sqlite3.Connection, graded: dict) -> dict:
     每筆呼叫 _update_sample_score(conn, sid, score, reason, status)（非 commit）；
     tier=='B' 且帶 expected_output → 同步寫 expected_answer。
     """
+    # teacher_service 改 function-local import：避免 module 頂層拉重依賴，
+    # 讓 Layer 1 hook 能輕量重用本模組的 scrub_for_export（每則訊息都會跑、import 須輕）。
+    from .teacher_service import _update_sample_score
+
     tier = graded.get("tier", "A")
     grades = graded.get("grades", [])
     applied = 0
