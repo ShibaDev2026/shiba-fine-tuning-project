@@ -1,0 +1,594 @@
+[
+  {
+    "review_id": 1,
+    "sid": 40,
+    "event_type": "fine_tuning_ops",
+    "instruction": "修復以下工具執行錯誤：\n工具：AskUserQuestion\n指令：{\"questions\": [{\"question\": \"yaml schema 想做到多細？這決定 Layer 3 訓練 base 切換能不能也納入這次。\", \"header\": \"yaml 欄位\", \"multiSelect\": false, \"options\": [{\"label\": \"完整版（含 Layer 3 訓練 base）（Recommended）\", \"description\": \"role/roles + num_ctx + temperature + think + system_prompt + timeout + tags(自家/第三方) + (若 role=trainer) hf_repo + lora_target_modules。一次到位，未來換 Qwen → Gemma 訓練 base 也是改 yaml。多 1 天工作量。\", \"preview\": \"# config/models/qwen3-30b-a3b.yaml\\nollama_tag: qwen3:30b-a3b\\nroles: [responder]\\ngroup: third_party     # third_party | trained_by_us\\nparams:\\n  num_ctx: 4096\\n  temperature: 0.7\\n  think: false\\n  num_predict: 512\\ntimeout_s: 30\\nsystem_prompt: |\\n  你是本地助手...\\n\\n# config/models/qwen25-7b-mlx.yaml （Layer 3 訓練 base）\\nhf_repo: mlx-community/Qwen2.5-7B-Instruct-4bit\\nroles: [trainer]\\nlora:\\n  target_modules: [q_proj, k_proj, v_proj]\\n  num_layers: 16\"}, {\"label\": \"推論最小版（只做 Layer 0）\", \"description\": \"只含 ollama_tag + role + 推論參數（num_ctx/temp/think/system_prompt/timeout）。Layer 3 BASE_MODELS dict 維持硬寫，下次再做。少 1 天工作量但分兩次改 schema。\", \"preview\": \"# config/models/qwen3-30b-a3b.yaml\\nollama_tag: qwen3:30b-a3b\\nrole: responder       # classifier | compressor | responder\\nparams:\\n  num_ctx: 4096\\n  temperature: 0.7\\n  think: false\\nsystem_prompt: |\\n  你是本地助手...\\ntimeout_s: 30\"}]}, {\"question\": \"一個模型可以同時擔任多個 Layer 0 角色嗎？目前 gemma3:4b 同時當 classifier 與 compressor。\", \"header\": \"角色綁定\", \"multiSelect\": false, \"options\": [{\"label\": \"roles 陣列（Recommended）\", \"description\": \"yaml 內 `roles: [classifier, compressor]`。一份 yaml 對應一顆模型，前端 dropdown 依角色 filter。符合現況（gemma3:4b 一份 yaml 涵蓋兩角色）。\"}, {\"label\": \"單一 role + 多份 yaml\", \"description\": \"gemma3:4b 寫成 gemma3-4b-classifier.yaml 與 gemma3-4b-compressor.yaml 兩份。schema 簡單但要維護重複資料。\"}]}, {\"question\": \"Online/Offline toggle 的語意要如何定義？\", \"header\": \"Offline 語意\", \"multiSelect\": false, \"options\": [{\"label\": \"Offline = 停用 local，全走 Claude（Recommended）\", \"description\": \"kill switch 用途。local model 出問題時一鍵停用，請求改全部送 Claude。比較符合「Claude 不會掛、local 會掛」的現實。\"}, {\"label\": \"Offline = 強制走 local，不問 Claude\", \"description\": \"完全脫網模式。Claude 用量歸零、純 local 運作。風險較高（local 品質還沒到）。\"}, {\"label\": \"兩種都做：三段切換\", \"description\": \"Auto（現況）/ Force-Local / Force-Claude 三選一。彈性最大但前端 UI 複雜。\"}]}]}\n錯誤：",
+    "input": "",
+    "output": "你想先釐清哪一個問題？我先說明每題的決策影響，你再告訴我想怎麼問或想先聊哪題：\n\n1. **yaml schema 範圍** — 決定 Layer 3 訓練 base（mlx_trainer.py 的 `BASE_MODELS` dict）這次要不要一起 yaml 化。差別是 1 天工作量 vs 分兩次改 schema。\n2. **角色綁定方式** — `roles: [classifier, compressor]` 一份 yaml 多角色，vs 同模型多份 yaml（每份單一角色）。前者貼近現況，後者管理單純。\n3. **Offline toggle 語意** — 「停用 local 全走 Claude」（kill switch）/「強制走 local 不問 Claude」/「三段切換」三選一。\n\n哪題你想先確認、或想換個問法？或者你有其他卡點想先聊（例如 model 切換 hot-reload 行為、模型清單 caching 策略、yaml 改完是否需 restart backend、自家訓練模型 `shiba-block1:*` 怎麼自動進入下拉選單）也都可以提。"
+  },
+  {
+    "review_id": 2,
+    "sid": 8,
+    "event_type": "knowledge_qa",
+    "instruction": "修復以下工具執行錯誤：\n工具：ExitPlanMode\n指令：{\"allowedPrompts\": [{\"tool\": \"Bash\", \"prompt\": \"run pytest tests\"}, {\"tool\": \"Bash\", \"prompt\": \"run uvicorn to start FastAPI server\"}, {\"tool\": \"Bash\", \"prompt\": \"query SQLite database to verify schema\"}, {\"tool\": \"Bash\", \"prompt\": \"curl API endpoints to trigger refiner job\"}], \"plan\": \"# 計劃：Qwen 精煉器（Refiner Service）\\n\\n## Context\\n\\nLayer 2 extraction pipeline 直接把 Layer 1 原始對話塞進 `training_samples`，存在兩個問題：\\n1. **機敏資訊洩漏**：instruction/input 含有本機路徑、hostname、密碼等 PII\\n2. **問題無自包含性**：「我的專案哪裡有問題？」之類的問題師父無法回答，訓練無意義\\n\\n本計劃在 extraction → teacher scoring 之間插入 Qwen 本地精煉器，解決以上問題。\\n\\n參考技術：Self-Refine（MIT/CMU）、Evol-Instruct（WizardLM）、SEAL（自動篩選迴圈）\\n\\n---\\n\\n## 新流程\\n\\n```\\npipeline.py → status='raw'\\n  ↓ 每 30 分鐘（新 background job）\\nrefiner_service.py:\\n  Step 1: regex PII scrub（instruction / input / output）\\n  Step 2: Qwen 判斷自包含性 + 必要時改寫 + 草擬 expected_answer\\n  ↓ status='pending'\\nteacher_service.py scoring（每 6 小時，不變）\\n  ↓\\napproved / rejected / needs_review\\n```\\n\\n---\\n\\n## 涉及檔案\\n\\n| 動作 | 路徑 |\\n|------|------|\\n| 新增 | `layer_2_chamber/backend/services/refiner_service.py` |\\n| 修改 | `layer_2_chamber/backend/db/schema_layer2.sql` |\\n| 修改 | `layer_2_chamber/backend/core/config.py` |\\n| 修改 | `layer_2_chamber/backend/extraction/pipeline.py` |\\n| 修改 | `layer_2_chamber/backend/core/background.py` |\\n| 新增 | `tests/layer2/test_refiner_service.py` |\\n\\n---\\n\\n## Step 1：Schema 變更（`schema_layer2.sql` + `config.py` migration）\\n\\n### 新增欄位（ADD COLUMN，幂等）\\n\\n```sql\\nALTER TABLE training_samples ADD COLUMN refined_instruction TEXT;\\nALTER TABLE training_samples ADD COLUMN expected_answer TEXT;\\nALTER TABLE training_samples ADD COLUMN pii_scrubbed INTEGER NOT NULL DEFAULT 0;\\n```\\n\\n### status CHECK constraint：加入 `'raw'`\\n\\nSQLite 不支援 ALTER COLUMN，需做 table rename 遷移：\\n\\n```sql\\nCREATE TABLE training_samples_new ( ... status CHECK IN ('raw','pending','approved','rejected','needs_review') ... );\\nINSERT INTO training_samples_new SELECT id,source,...,status,... FROM training_samples;\\nDROP TABLE training_samples;\\nALTER TABLE training_samples_new RENAME TO training_samples;\\n```\\n\\n### Migration guard（`config.py`）\\n\\n```python\\ndef _column_exists(conn, table, column) -> bool:\\n    rows = conn.execute(f\\\"PRAGMA table_info({table})\\\").fetchall()\\n    return any(r[\\\"name\\\"] == column for r in rows)\\n\\ndef _run_refiner_migration(conn):\\n    if not _column_exists(conn, \\\"training_samples\\\", \\\"pii_scrubbed\\\"):\\n        # ADD COLUMN × 3\\n        # table rename dance for status CHECK\\n```\\n\\n在 `init_layer2_db()` 最後呼叫 `_run_refiner_migration(conn)`。\\n\\n---\\n\\n## Step 2：Config 新增常數（`config.py`）\\n\\n```python\\n<REDACTED>       = \\\"qwen3:30b-a3b\\\"   # 可覆寫\\n<REDACTED>     = 120               # seconds\\n```\\n\\n---\\n\\n## Step 3：`refiner_service.py`\\n\\n### PII Scrubbing（regex，不呼叫 LLM）\\n\\n```python\\n_<REDACTED>    (re.compile(r'<PROJECT_PATH>\"\\\\']{3,}'), '<PROJECT_PATH>'),\\n    (re.compile(r'\\\\b(?:192\\\\.168|127\\\\.\\\\d+)\\\\.\\\\d+\\\\.\\\\d+\\\\b'), '<LOCAL_IP>'),\\n    (re.compile(r'(?:password|passwd|api[_-]?key|secret|token)\\\\s*[=:]\\\\s*\\\\S+', re.I), '<REDACTED>'),\\n    (re.compile(r'(?:export\\\\s+)?[A-Z][A-Z0-9_]{3,}\\\\s*=\\\\s*\\\\S+'), '<REDACTED>'),\\n    (re.compile(r'\\\\b[a-z][a-z0-9-]{2,}\\\\.local\\\\b', re.I), '<MACHINE_NAME>'),\\n]\\n\\ndef scrub_pii(text: str) -> str: ...\\ndef scrub_sample_fields(instruction, input_text, output) -> tuple[str, str, str, bool]: ...\\n```\\n\\n### Qwen 呼叫\\n\\n```python\\ndef _is_ollama_available(base_url) -> bool: ...  # HEAD /api/tags, timeout=3s\\ndef _call_qwen(prompt, base_url, model, timeout) -> str | None: ...\\ndef _parse_qwen_response(raw) -> dict | None: ...  # 處理 markdown code fence\\n```\\n\\n### 精煉 Prompt（送 Qwen 前已完成 PII scrub）\\n\\n```\\n你是一個訓練資料預處理助手。分析以下 instruction，判斷它是否「自包含」\\n（新的語言模型在沒有額外上下文的情況下，能理解並回答）。\\n\\n【Instruction】\\n{instruction}\\n\\n【Input（上下文，可為空）】\\n{input}\\n\\n判斷規則：\\n- 含「我的專案」「這個錯誤」「剛才的程式碼」等隱含指稱 → 不自包含\\n- 本身是完整技術問題或任務 → 自包含\\n- 含 <PROJECT_PATH> 等佔位符但問題可理解 → 自包含\\n\\n若不自包含：改寫為自包含版本（保留技術意圖，抽象化專案細節，不加新假設）。\\n草擬 expected_answer（≤100字）作為評分參考。\\n\\n只回覆 JSON，不加任何其他文字：\\n{\\n  \\\"is_self_contained\\\": true/false,\\n  \\\"rewritten_instruction\\\": \\\"改寫後或 null\\\",\\n  \\\"expected_answer\\\": \\\"簡短預期答案\\\"\\n}\\n```\\n\\n### 主入口\\n\\n```python\\ndef refine_sample(instruction, input_text, output, base_url, model) -> dict:\\n    \\\"\\\"\\\"\\n    1. scrub_sample_fields\\n    2. _call_qwen（若不可用跳過）\\n    3. _parse_qwen_response\\n    回傳: {instruction, input, output, refined_instruction, expected_answer,\\n           pii_scrubbed, qwen_available}\\n    \\\"\\\"\\\"\\n\\ndef refine_pending_raw_samples(conn_factory) -> dict:\\n    \\\"\\\"\\\"\\n    批次處理 status='raw' 樣本（LIMIT REFINER_BATCH_LIMIT）。\\n    Ollama 不可用時：直接 UPDATE status='pending'（fallback）。\\n    回傳: {refined: int, fallback: int, failed: int}\\n    \\\"\\\"\\\"\\n```\\n\\n---\\n\\n## Step 4：`pipeline.py` 一行修改\\n\\n```python\\n# _insert_sample() 內 VALUES 中：\\n# 'pending' → 'raw'\\n```\\n\\n---\\n\\n## Step 5：`background.py` 修改\\n\\n```python\\n# 新增 refiner job（每 30 分鐘）\\nscheduler.add_job(\\n    lambda: _run_refiner_job(conn_factory),\\n    trigger=\\\"interval\\\", minutes=30,\\n    id=\\\"refiner\\\", replace_existing=True,\\n)\\n\\n# score_pending_samples 的 SELECT 改用 COALESCE：\\nSELECT id,\\n       COALESCE(refined_instruction, instruction) AS instruction,\\n       input, output\\nFROM training_samples WHERE status='pending'\\nORDER BY id LIMIT 20\\n```\\n\\n---\\n\\n## Step 6：測試（3 個）\\n\\n**test_pii_scrubbing**\\n- 輸入含路徑 `<PROJECT_PATH> 與 `<LOCAL_IP>`\\n- 驗證輸出含 `<PROJECT_PATH>`、`<LOCAL_IP>`，原始值消失\\n\\n**test_self_contained_passthrough**\\n- monkeypatch `_call_qwen` 回傳 `is_self_contained: true`\\n- 驗證 `refined_instruction` 為 None，instruction 不變\\n\\n**test_fallback_when_ollama_down**\\n- monkeypatch `_is_ollama_available` 回傳 False\\n- in-memory DB 插入 2 筆 `raw` 樣本\\n- 驗證兩筆都變 `pending`，`refined_instruction` 為 NULL\\n\\n---\\n\\n## 驗證流程\\n\\n```bash\\n# 1. 跑 migration（啟動 FastAPI 即自動執行）\\ncd layer_2_chamber/backend\\nuvicorn main:app --reload --port 8000\\n\\n# 2. 確認新欄位存在\\nsqlite3 ~/.local-brain/shiba-brain.db \\\\\\n  \\\"PRAGMA table_info(training_samples);\\\" | grep -E \\\"refined|expected|pii\\\"\\n\\n# 3. 手動觸發精煉\\ncurl -X POST http://localhost:8000/api/dataset/refine\\n\\n# 4. 跑測試\\npython -m pytest tests/layer2/test_refiner_service.py -v\\n\\n# 5. 確認 raw→pending→scored 流程\\nsqlite3 ~/.local-brain/shiba-brain.db \\\\\\n  \\\"SELECT status, count(*) FROM training_samples GROUP BY status;\\\"\\n```\\n\\n---\\n\\n## 副作用清單\\n\\n- 現有 `pending` 樣本不受影響（已在 DB 中，不會被重新精煉）\\n- 新抽取的樣本初始 status 改為 `raw`，teacher scoring 不會碰到未精煉樣本\\n- Ollama 離線時自動 fallback，師父評分流程不中斷\\n- Qwen 精煉為非同步批次（30 分鐘間隔），不影響 API 回應速度\\n\", \"planFilePath\": \"<PROJECT_PATH>\"}\n錯誤：",
+    "input": "",
+    "output": "參數找到了，更新計劃。"
+  },
+  {
+    "review_id": 3,
+    "sid": 32,
+    "event_type": "git_ops",
+    "instruction": "<command-name>/model</command-name>\n            <command-message>model</command-message>\n            <command-args></command-args>",
+    "input": "",
+    "output": "$ grep -n \"local-brain\" <PROJECT_PATH>"
+  },
+  {
+    "review_id": 4,
+    "sid": 54,
+    "event_type": "git_ops",
+    "instruction": "修復以下工具執行錯誤：\n工具：AskUserQuestion\n指令：{\"questions\": [{\"question\": \"C.1 要怎麼跑（Free Tier RPD=20 限制下）？\", \"header\": \"C.1 策略\", \"multiSelect\": false, \"options\": [{\"label\": \"分 3 天，每日 9 筆\", \"description\": \"最穩。今天先跑 --limit 9（含驗收），明後天各跑 9 筆。完整生成+驗收都有，3 天內完成 26 筆。\"}, {\"label\": \"今天跑 19 筆只生成\", \"description\": \"--skip-scoring 跳過驗收，今天衝 19 筆生成（19/20 RPD），剩 7 筆 + 全部 26 筆驗收明天再跑。較快但要拆兩階段。\"}, {\"label\": \"驗收改用 Flash（RPD 25）\", \"description\": \"生成 Flash-Lite（20 RPD）、驗收 Flash（25 RPD），分流後當日可跑 20 筆（卡在 Flash-Lite RPD）。需小改腳本，仍要分 2 天。\"}]}]}\n錯誤：",
+    "input": "",
+    "output": "好，先別動。你想釐清哪部分？例如：\n\n- 配額表的數字（左/右各代表什麼）我解讀對不對？\n- 三個方案的細節（呼叫次數、時間、風險）？\n- 還是有其他想法想直接提？\n\n請說明你想釐清的點，我重新整理。"
+  },
+  {
+    "review_id": 5,
+    "sid": 41,
+    "event_type": "architecture",
+    "instruction": "修復以下工具執行錯誤：\n工具：Edit\n指令：{\"replace_all\": false, \"file_path\": \"<PROJECT_PATH>\", \"old_string\": \"- [Session 開場觸發詞](feedback_session_trigger.md) — Shiba 說 Hi 時主動讀 memory 報告現況與下一步\", \"new_string\": \"- [Session 開場觸發詞](feedback_session_trigger.md) — Shiba 說 Hi 時主動讀 memory 報告現況與下一步\\n- [Plan 檔擺放規範](feedback_plan_placement.md) — 新 plan→docs/design/，過時→docs/archive/plans/，命名加日期前綴\"}\n錯誤：",
+    "input": "",
+    "output": "三件事已補：\n\n1. **Plan 搬到正確位置** — `docs/archive/plans/2026-05-07-...` → `docs/design/2026-05-07-...`（plan 仍在執行中，符合 active 路徑）\n2. **新增 memory** — `feedback_plan_placement.md`，記錄擺放規則與這次踩坑\n3. **MEMORY.md 索引補一行**\n\n下次開新 plan 我會直接寫到 `docs/design/`，不會再跑去 `~/.claude/plans/` 或 archive。\n\n要不要也把這條規則同步進 `CLAUDE.md` 的「Plan」章節？或留 memory 即可？"
+  },
+  {
+    "review_id": 6,
+    "sid": 2,
+    "event_type": "terminal_ops",
+    "instruction": "修復以下工具執行錯誤：\n工具：Edit\n指令：{\"replace_all\": false, \"file_path\": \"<PROJECT_PATH>\", \"old_string\": \"from datetime import datetime\", \"new_string\": \"from datetime import datetime, timezone\"}\n錯誤：",
+    "input": "",
+    "output": "**C2**：db.py config 模組級快取。"
+  },
+  {
+    "review_id": 7,
+    "sid": 60,
+    "event_type": "architecture",
+    "instruction": "修復以下工具執行錯誤：\n工具：Edit\n指令：{\"replace_all\": false, \"file_path\": \"<PROJECT_PATH>\", \"old_string\": \"name: wrap\", \"new_string\": \"name: finish\"}\n錯誤：",
+    "input": "",
+    "output": "已更名：目錄 `wrap/` → `finish/`，SKILL.md frontmatter `name: wrap` → `name: finish`。"
+  },
+  {
+    "review_id": 8,
+    "sid": 47,
+    "event_type": "git_ops",
+    "instruction": "繼續 C.1 收尾後續：檢查批次結果、commit、寫 reference memory",
+    "input": "User: 等下一個usage 在2h 46m後\nAssistant: $ gh api repos/googleapis/python-genai/readme --jq '.content' | base64 -d | head -300\n$ .venv/bin/python3 -m evaluation.c1_generate_answers --dry-run --limit 2 2>&1 | tail -20\n$ tail -40 /private/tmp/claude-501/-Users-<USER>-Developer-01-project-shiba-fine-tuning-project/726461d4-aa4e-41aa-8c00-28c8cc52dcda/tasks/bdnvfcwy1.output\n$ grep -n \"launchd\\|plist\\|schedule\\|cron\" <PROJECT_PATH> 2>/dev/null | head -20; cat <PROJECT_PATH> | head -40\n# Edit: <PROJECT_PATH>\n$ sqlite3 <PROJECT_PATH> \"SELECT id, name, vendor, is_active, model_id FROM teachers ORDER BY id;\"\n$ cat /private/tmp/claude-501/-Users-<USER>-Developer-01-project-shiba-fine-tuning-project/726461d4-aa4e-41aa-8c00-28c8cc52dcda/tasks/bwbmtwrrp.output\n$ echo \"=== 啟動載入三檔 ===\" && wc -lc ~/.claude/CLAUDE.md <PROJECT_PATH> <PROJECT_PATH> && echo \"=== memory dir ===\" && ls <PROJECT_PATH> | wc -l\n# Edit: <PROJECT_PATH>\n$ git add README.md layer_0_router/telemetry.py layer_1_memory/hooks/session_start_hook.py layer_1_memory/hooks/session_stop_hook.py layer_1_memory/lib/classifier.py layer_1_memory/lib/exchanges.py layer_1_memory/setup.sh layer_2_chamber/backend/core/background.py layer_2_chamber/backend/services/multi_judge.py scripts/e2e_pr2_smoke.py && git commit -m \"$(cat <<'EOF'\nrefactor(layer1): rename stop_hook.py → session_stop_hook.py + 同步所有引用\n\n語意更精確：與 session_start_hook.py 命名對齊，明確表達「session 結束時觸發」。\n\n- `git mv layer_1_memory/hooks/stop_hook.py → session_stop_hook.py`\n- 新檔內部：docstring、安裝範例、A/B/C/D 段 logger.error、stdin/觸發 log\n- `layer_1_memory/setup.sh`：stop_cmd 指向新檔\n- `~/.claude/settings.json`（user 個人設定，未入版控）：command 路徑同步\n- `README.md`：Layer 1 描述 + 資料流圖兩處\n- 跨 layer 引用註解一致化：\n  - `layer_0_router/telemetry.py`\n  - `layer_1_memory/hooks/session_start_hook.py`\n  - `layer_1_memory/lib/{classifier,exchanges}.py`\n  - `layer_2_chamber/backend/core/background.py`\n  - `layer_2_chamber/backend/services/multi_judge.py`\n  - `scripts/e2e_pr2_smoke.py`\n\n歷史文件（CHANGELOG、docs/archive、docs/design）保留原檔名以反映當時事實。\n\nSanity：新檔 `ast.parse` OK，settings.json `json.load` OK。\n\nCo-Authored-By: Claude Opus 4.7 <<EMAIL>>\nEOF\n)\" && git push origin main && echo \"---\" && git log --oneline -3\n\nUser: <local-command-stdout>Set model to \u001b[1mOpus 4.7\u001b[22m for this session</local-command-stdout>\nAssistant: $ .venv/bin/python3 -m evaluation.c1_generate_answers 2>&1 | tee /tmp/c1_run_$(date +%s).log\n$ git diff CLAUDE.md | head -50 && echo \"---ragas_runner---\" && git diff evaluation/ragas_runner.py | head -30 && echo \"---golden_set_builder---\" && git diff evaluation/golden_set_builder.py | head -30\n$ git add evaluation/golden_set_builder.py evaluation/ragas_runner.py && git commit -m \"$(cat <<'EOF'\nrefactor(pr-d-ragas-anthropic-refactor): golden_set_builder Anthropic 改用 teacher_service 基礎設施 + ragas_runner Flash 速率保護\n\n- golden_set_builder.annotate_with_claude：改走 teacher_service._call_anthropic + get_api_key\n  - 移除 langchain-anthropic 依賴，統一從 Keychain（fallback env）取 key\n  - 加 keychain_ref/api_base/effort 參數，與 teacher 同條設定路徑\n- ragas_runner._judge_gemini 後加 sleep(12)：Flash 評分節點即使 Paid Tier 也預留間隔，避免連續送單批 31 query 短時間貼近上限\n\nCo-Authored-By: Claude Opus 4.7 <<EMAIL>>\nEOF\n)\"\n$ system_profiler SPHardwareDataType 2>/dev/null | grep -E \"Chip|Memory|Cores\" && echo \"---\" && df -h /System/Volumes/Data 2>/dev/null | tail -1 && echo \"---disk---\" && df -h ~ | tail -1\n# Edit: <PROJECT_PATH>\n$ python3 -c \"from evaluation import c2_e2e_evaluation; print('import OK'); from clients.ollama import OllamaClient; print('OllamaClient OK')\"\n$ source .venv/bin/activate && python -m evaluation.c2_e2e_evaluation run 2>&1 | tee /tmp/c2_qwen_full.log | tail -60\n$ find <PROJECT_PATH> -name \"*.plist\" -o -name \"setup_*launchd*\" 2>/dev/null | head -10\n$ source .venv/bin/activate && python -c \"\nimport sqlite3\nfrom layer_2_chamber.backend.core.config import DB_PATH\nfrom layer_2_chamber.backend.services.teacher_service import _call_teacher\n\nconn = sqlite3.connect(str(DB_PATH), timeout=10)\nconn.row_factory = sqlite3.Row\nconn.execute('PRAGMA journal_mode=WAL;')\n\nqwen = conn.execute('SELECT * FROM teachers WHERE id=4').fetchone()\nprint('=== Qwen3.6 via OpenAICompatClient ===')\nr = _call_teacher(qwen, 'list files in dir', '', 'ls', conn, sample_id=999997)\nprint('Qwen:', r)\n\nlog = conn.execute(\\\"\\\"\\\"\n    SELECT vendor, source_type, model_id, http_status, status,\n           input_tokens, output_tokens, latency_ms, caller_module, teacher_id, sample_id, api_base\n    FROM ai_api_call_logs\n    WHERE teacher_id=4\n    ORDER BY id DESC LIMIT 1\n\\\"\\\"\\\").fetchone()\nprint('Log row:', dict(log) if log else 'NONE')\n\"\n$ git add clients/anthropic/__init__.py clients/anthropic/client.py clients/openai_compat/__init__.py clients/openai_compat/client.py layer_2_chamber/backend/services/teacher_service.py layer_2_chamber/backend/core/config.py && git status\n$ python3 -c \"\nfrom shiba_db import get_connection\nfrom models_loader import load_model_config\nfrom layer_2_chamber.backend.services import teacher_service\nfrom layer_2_chamber.backend.core import config\nfrom clients.anthropic import AnthropicClient\nfrom clients.openai_compat import OpenAICompatClient\nfrom clients.gemini import GeminiClient\nprint('post-merge import OK: shiba_db / models_loader / teacher_service / config / 3 clients')\n\" 2>&1 | tail -3\necho \"\"\necho \"=== Layer 0 tests（merge 帶進來的）===\"\npython3 -m pytest tests/layer0/ -q --no-header 2>&1 | tail -10\n$ git branch -r | grep -E \"(yaml-schema|sqlite-race-hardening|blissful-austin)\"\n$ git ls-files evaluation/ 2>&1 | head -10\necho \"---\"\necho \"main 有沒 evaluation 目錄：\"\nls -d evaluation 2>&1\nls evaluation/*.py 2>/dev/null | head -5\n# Write: <PROJECT_PATH>\n$ rm -v \\\n  data/recover-import.err data/recover.err \\\n  data/recover2-import.err data/recover2.err data/recover3.err \\\n  data/recovered.sql data/recovered2.sql data/recovered3.sql \\\n  data/shiba-brain.db.broken-2026-05-09 \\\n  data/shiba-brain.db.broken-2026-05-09-shm \\\n  data/shiba-brain.db.broken-2026-05-09-wal \\\n  data/shiba-brain.db.broken-2026-05-09b \\\n  data/shiba-brain.db.broken-3 \\\n  data/shiba-brain.db.broken-orig && echo \"---\" && ls -lh data/ | grep -E \"shiba-brain|recover|2026-05-20\"\n# Write: <PROJECT_PATH>\n# Edit: <PROJECT_PATH>\n$ git log --oneline -5\n\nUser: <local-command-caveat>Caveat: The messages below were generated by the user while running local commands. DO NOT respond to these messages or otherwise consider them in your response unless the user explicitly asks you to.</local-command-caveat>\nAssistant: # Edit: <PROJECT_PATH>\n# Edit: <PROJECT_PATH>\n$ sqlite3 <PROJECT_PATH> \"SELECT COUNT(*) AS total FROM judge_agreement_logs;\" 2>/dev/null || echo \"table not found\"\nsqlite3 <PROJECT_PATH> \"SELECT COUNT(*) FROM training_samples WHERE status='approved';\" 2>/dev/null\nls <PROJECT_PATH> | grep -E \"agreement|layer2\"\n$ sqlite3 <PROJECT_PATH> \"SELECT id, sample_id, votes_json FROM judge_agreement_logs;\"\n$ grep -n \"available\\|is_active\\|_collect_votes\\|SELECT\" <PROJECT_PATH> | head -30\n$ grep -n \"def score_pending_samples\" <PROJECT_PATH>\n$ grep -n \"log_api_call\\|from clients\" <PROJECT_PATH> | head -20\n$ for b in sqlite-race-hardening-pr1 yaml-schema-1-yaml-2-4-glimmering-candy-step1 yaml-schema-1-yaml-2-4-glimmering-candy-step2 claude/blissful-austin-735420 ragas-evaluation; do\n  ahead=$(git rev-list --count main..$b 2>/dev/null)\n  behind=$(git rev-list --count $b..main 2>/dev/null)\n  merged=$(git branch --merged main | grep -c \"^  $b$\")\n  echo \"$b: ahead=$ahead behind=$behind merged_into_main=$merged\"\ndone\n\nUser: <command-name>/effort</command-name>\n            <command-message>effort</command-message>\n            <command-args></command-args>\nAssistant: $ grep -n \"_call_gemini_rest\\|def get_api_key\\|def _strip_markdown\\|def _consume_rpm\\|gemini\\|def _handle_429\\|class\\|^def \" layer_2_chamber/backend/services/teacher_service.py | head -80\n$ .venv/bin/python3 -m pip install pyyaml 2>&1 | tail -3\n$ git log --oneline -6 && echo \"---\" && git status --short | grep -v \"^??\"\n# Edit: <PROJECT_PATH>\n$ .venv/bin/python3 -m evaluation.c2_e2e_evaluation run 2>&1 | tee /tmp/c2_qwen_full.log\n$ ollama list 2>/dev/null && echo \"---\" && cat ~/.ollama/config.json 2>/dev/null || echo \"no config\"\n# Write: <PROJECT_PATH>\n$ curl -s -o /dev/null -w \"%{http_code}\\n\" http://localhost:11434/api/tags\n$ sqlite3 ./data/shiba-brain.db <<'EOF'\n.headers on\n.mode column\nSELECT\n  CASE WHEN metric_value >= 7 THEN 'A (>=7)'\n       WHEN metric_value >= 4 THEN 'B (4-6.9)'\n       ELSE 'C (<4)' END AS tier,\n  COUNT(*) AS n\nFROM evaluation_results\nWHERE run_id='e2e-ollama-20260520T040819' AND metric_name='answer_quality'\nGROUP BY tier\nORDER BY tier;\n\nSELECT 'mean' AS k, ROUND(AVG(metric_value),2) AS v FROM evaluation_results\nWHERE run_id='e2e-ollama-20260520T040819' AND metric_name='answer_quality';\n\nSELECT source_type, COUNT(*) AS n, ROUND(AVG(latency_ms)/1000.0,1) AS avg_sec\nFROM ai_api_call_logs\nWHERE created_at >= datetime('now','-2 hour')\nGROUP BY source_type;\nEOF\n$ source .venv/bin/activate && python -m evaluation.c2_e2e_evaluation compare e2e-ollama-20260520T040819 e2e-claude-20260520T044310 2>&1\n$ cat <PROJECT_PATH>\n$ sqlite3 <PROJECT_PATH> \"SELECT id, name, priority, requests_today, daily_request_limit, rpm_limit, api_base FROM teachers WHERE is_active=1 ORDER BY priority;\"\n$ grep -n \"keychain_ref\\|get_api_key\\|api_key\\|local\\|vendor\" <PROJECT_PATH> | grep -A2 -B2 \"keychain\\|local\" | head -40\n$ source .venv/bin/activate && pip show openai 2>&1 | head -3; pip install openai -q && echo \"installed OK\"\n$ git commit -m \"$(cat <<'EOF'\nfeat(pr-h-vendor-clients): 新增 AnthropicClient + OpenAICompatClient + Claude 配額對齊\n\n- clients/anthropic/：AnthropicClient（urllib，無 SDK），對齊 GeminiClient 三類錯誤分類與 ai_api_call_logs；retry-after ≥ 300s 視為 day\n- clients/openai_compat/：OpenAICompatClient，依 api_base 自動判定 source_type（localhost / <LOCAL_IP> / host.docker.internal / *.local → local，其餘 remote）\n- teacher_service：_call_anthropic / _call_openai_compat 改 thin wrapper；新增 _vendor_of helper；移除 _parse_anthropic_429（邏輯下沉至 AnthropicClient）\n- _call_teacher / call_teacher_for_test：兩條分支補 caller_module / teacher_id / sample_id，openai-compat 補 vendor，全部寫入 ai_api_call_logs 可追溯\n- config.py：Anthropic migration 將 daily_limit / daily_request_limit 統一設 999999（Anthropic 無 RPD 概念，token-based monthly quota）\n\n驗證：Claude smoke test 寫入 ai_api_call_logs ✓（vendor=anthropic / source_type=remote）；Qwen3.6 smoke test 寫入 ✓（vendor=local / source_type=local）；import + source_type 判定 assertions 全通過\n\nCo-Authored-By: Claude Opus 4.7 <<EMAIL>>\nEOF\n)\"\n# Edit: <PROJECT_PATH>\n$ grep -E \"^def |^class \" models_loader.py | head -20\necho \"---\"\npython3 -c \"\nimport models_loader, shiba_db\nprint('models_loader exports:', [x for x in dir(models_loader) if not x.startswith('_')][:15])\nprint('shiba_db exports:', [x for x in dir(shiba_db) if not x.startswith('_')])\n\"\n$ rm -v <PROJECT_PATH>\n# Write: <PROJECT_PATH>\n$ wc -lc README.md && echo \"---\" && git diff --stat README.md\n$ wc -lc README.md\n$ git add README.md && git commit -m \"$(cat <<'EOF'\ndocs(readme): 對齊 main 實際狀態 + 新增資料流架構圖\n\n- Layer 1 RAG 修正：BGE-M3 → nomic-embed-text 768d（bge-m3 升級評估中）\n- 模型設定補 yaml 路徑欄位；Judge 改為 Paid Tier RPM=500\n- Teacher 評分池表重寫為當前 DB 4 active（Flash 500/250、Qwen3.6 Local、\n  Claude Sonnet RPM=50/999999、Flash-Lite 2000/1000）；舊 4 池（Grok/\n  GPT-4o/Mistral/Qwen-7B）移為歷史附註；標註 daily_limit 待 backfill\n- 主要資料表清單補齊：model_registry / router_config / teachers /\n  teacher_usage_logs / ai_api_call_logs / RAGAS 3 表 / Layer 2 評分 4 表 /\n  內部記錄表\n- 「自我進化閉環」段升級為完整資料流 ASCII 圖\n  hook → stop_hook（4 段事務）→ Layer 1（sessions/exchanges/FTS5/embeddings）\n  → Layer 2（extraction → multi_judge 三方投票 → approved/rejected/pending）\n  → Layer 3（trigger_policy → mlx_trainer LoRA → gguf → gatekeeper → ollama）\n  → Output（shiba-block1/block2 → router 採納率回饋）\n\nCo-Authored-By: Claude Opus 4.7 <<EMAIL>>\nEOF\n)\" && git log --oneline -3",
+    "output": "$ # 查 GPU/Metal 記憶體與目前 VRAM 使用\nsystem_profiler SPDisplaysDataType 2>/dev/null | grep -E \"VRAM|Metal|Chipset\" | head -10\necho \"---\"\n# 測 Ollama 實際記憶體使用\nps aux | grep ollama | grep -v grep | awk '{printf \"ollama RSS=%.1fGB\\n\", $6/1024/1024}'"
+  },
+  {
+    "review_id": 9,
+    "sid": 64,
+    "event_type": "git_ops",
+    "instruction": "修復以下工具執行錯誤：\n工具：Bash\n指令：{\"command\": \"echo \\\"=== 0.35 散落處 ===\\\" && grep -rn \\\"0\\\\.35\\\" layer_1_memory/ evaluation/ 2>/dev/null && echo \\\"=== retrieval eval / golden set 接口 ===\\\" && grep -rln \\\"retrieval_golden\\\\|uuid_recall\\\\|uuid_precision\\\\|def.*retrieve_for_eval\\\" evaluation/ layer_1_memory/ 2>/dev/null && echo \\\"=== evaluation 目錄 ===\\\" && ls -1 evaluation/ 2>/dev/null | head -40\", \"description\": \"Locate threshold usages and retrieval eval interface\"}\n錯誤：",
+    "input": "",
+    "output": "0.35 **只在 rag.py:400 一处**(单次异动只改这一行,但要有数据支撑)。grep 链因无匹配中断了,补查 evaluation 接口:"
+  },
+  {
+    "review_id": 10,
+    "sid": 65,
+    "event_type": "terminal_ops",
+    "instruction": "修復以下工具執行錯誤：\n工具：Bash\n指令：{\"command\": \"docker inspect openclaw 2>/dev/null | python3 -c \\\"import json,sys; d=json.load(sys.stdin)[0]; env=[e for e in d['Config']['Env'] if 'PASSWORD' in e or 'TOKEN' in e]; print('Env vars with PASSWORD/<REDACTED> [print('  '+e[:60]) for e in env]\\\" 2>/dev/null || echo \\\"Container not running or inspect failed\\\"\", \"description\": \"Check running container env vars for password/token presence\"}\n錯誤：",
+    "input": "",
+    "output": "現在情況清楚了。容器內 `OPENCLAW_GATEWAY_PASSWORD` 是 9 個字元，Keychain 儲存也是 9 個字元，兩者吻合。\n\n**診斷：最可能的原因**\n\nOpenClaw 每次啟動時，會將 `OPENCLAW_GATEWAY_PASSWORD` 環境變數 **覆寫**（reset）進它的內部儲存。如果任何一次啟動時 Keychain 的值變了，密碼就跟著變了。\n\n常見觸發路徑：\n\n| 情境 | 結果 |\n|------|------|\n| `./up.sh` 啟動（Keychain 值相同）| 密碼不變，正常 |\n| Docker 自動 restart（`unless-stopped`）| 沿用 compose-up 時的 env，密碼不變 |\n| `docker compose down && docker compose up`（沒跑 `up.sh`）| env 為空 → 密碼被重設為空 |\n| `./up.sh`，但 Keychain 值已被改過 | 密碼被重設為新 Keychain 值，舊密碼失效 |\n\n---\n\n**修復步驟**\n\n**Step 1 — 確認目前正確密碼**\n\n目前生效的密碼就是 Keychain 裡 `OPENCLAW_GATEWAY_PASSWORD` 的值。你可以用這個指令複製到剪貼簿（不顯示）：\n\n```zsh\nsecurity find-generic-password -s \"openclaw\" -a \"OPENCLAW_GATEWAY_PASSWORD\" -w | pbcopy\necho \"✓ 密碼已複製到剪貼簿\"\n```\n\n然後用貼上方式試登入 OpenClaw。\n\n**Step 2（若 Keychain 值與期望不符）— 更新 Keychain**\n\n```zsh\n# 設定新密碼（互動輸入，不落 shell history）\nread -s \"NEW_PASS?新密碼: \"\nsecurity add-generic-password -U -s \"openclaw\" -a \"OPENCLAW_GATEWAY_PASSWORD\" -w \"$NEW_PASS\"\nunset NEW_PASS\necho \"\\n✓ Keychain 已更新\"\n```\n\n**Step 3 — 重啟容器讓 env 生效**\n\n```zsh\ncd <PROJECT_PATH>\n./up.sh\n```\n\n---\n\n**根本問題：`restart: unless-stopped` 不重讀 Keychain**\n\n容器被 Docker 自動 restart 時，沿用的是 `docker compose up` 那次 bake 進去的 env，**不會**重新查 Keychain。只有跑 `./up.sh`（= `docker compose up`）才會重新注入。\n\n要先確認：「模型重啟」是指 LM Studio（gpt-oss-20b），還是 OpenClaw 容器本身被重啟了？如果是容器被重啟，用哪種方式重啟的？"
+  },
+  {
+    "review_id": 11,
+    "sid": 11,
+    "event_type": "git_ops",
+    "instruction": "修復以下工具執行錯誤：\n工具：Bash\n指令：{\"command\": \"sqlite3 ~/.local-brain/shiba-brain.db \\\"SELECT COUNT(*) as sessions FROM sessions; SELECT COUNT(*) as exchanges FROM exchanges;\\\" 2>&1\"}\n錯誤：",
+    "input": "",
+    "output": "現況：\n\n| 項目 | 數量 |\n|------|------|\n| `exchange_embeddings`（向量 RAG）| **3 筆** |\n| sessions | 15 |\n| messages | 2,784 |\n| tool_executions | 600 |\n| training_samples | 10（0 approved）|\n\n**問題**：3 筆向量全是昨天手動驗證時塞入的，stop_hook 正式捕捉的還沒進來。\n\n可能原因：\n1. stop_hook 的 `_write_exchange_embedding()` 只對符合條件的 exchange 執行（`has_tool_use=true`、`exchange_count ≥ 2`），但目前 session 沒有被判定符合\n2. 或 stop_hook 寫入時 Ollama `nomic-embed-text` model 沒跑起來\n\n要我查一下 stop_hook 的條件邏輯，還是先確認 Ollama 有沒有跑？"
+  },
+  {
+    "review_id": 12,
+    "sid": 25,
+    "event_type": "debugging",
+    "instruction": "正常在做像我們現在截取人類與ai對話行為 應該如何將自然語言與ai理解後的動作關聯再一起",
+    "input": "User: <command-name>/plugin</command-name>\n            <command-message>plugin</command-message>\n            <command-args></command-args>\nAssistant: 開始執行。先完成 Step 0 + Step 1.1，到 Step 1.2 前停下。\n\nUser: 現在外部如何透過dbeaver存取此專案db\nAssistant: DB 是 **0 bytes**（空檔案），所以 DBeaver 看不到任何資料表。\n\n問題：DB 尚未初始化。需要先啟動後端服務或手動執行 schema 建立。\n\nUser: <local-command-caveat>Caveat: The messages below were generated by the user while running local commands. DO NOT respond to these messages or otherwise consider them in your response unless the user explicitly asks you to.</local-command-caveat>\nAssistant: Step 0 完成。進 Step 1.1：schema.sql 新增 exchanges + exchange_messages。\n\nUser: <command-name>/effort</command-name>\n            <command-message>effort</command-message>\n            <command-args></command-args>\nAssistant: Step 2 完成。確認插入位置正確：",
+    "output": "關鍵發現：現行 `_extract_valid_exchanges` 用 `role='user' AND content非空` 當邊界，無法區分真 user 與 tool_result_user，且要再用 `_get_error_tool_ids` 整 session 級判定錯誤（過於粗糙）。新 exchanges 表已預先區分這些並標記 `has_error`。\n\n繼續探索測試與其他依賴："
+  },
+  {
+    "review_id": 13,
+    "sid": 63,
+    "event_type": "git_ops",
+    "instruction": "修復以下工具執行錯誤：\n工具：Bash\n指令：{\"command\": \"cd 01_init && docker compose build --pull > ../03_backup/.docker-build.log 2>&1; echo \\\"<REDACTED> tail -3 ../03_backup/.docker-build.log\", \"description\": \"Retry openclaw image build now daemon is up\", \"run_in_background\": true}\n錯誤：",
+    "input": "",
+    "output": "Bash 安全分類器暫時不可用,稍候重試。Ollama 拉取仍在背景進行。重試 build:"
+  },
+  {
+    "review_id": 14,
+    "sid": 58,
+    "event_type": "architecture",
+    "instruction": "修復以下工具執行錯誤：\n工具：Edit\n指令：{\"replace_all\": false, \"file_path\": \"<PROJECT_PATH>\", \"old_string\": \"def reset_registry() -> None:\\n    \\\"\\\"\\\"清空 registry — 僅供測試使用，避免污染 module-level singleton。\\\"\\\"\\\"\\n    _REGISTRY.clear()\", \"new_string\": \"def reset_registry() -> None:\\n    \\\"\\\"\\\"清空 registry — 僅供測試使用，避免污染 module-level singleton。\\\"\\\"\\\"\\n    _REGISTRY.clear()\\n\\n\\n# ── Hook 機制（核心透過抽象介面取得 feature 實作）─────────────────\\n# 核心 layer (layer_0~3 / core) 不得 import modules.*；\\n# 改透過 register_hook / get_hook 取得 feature 提供的可呼叫物件。\\n# 例：modules/gatekeeper/__init__.py 在 init_fn 內呼叫\\n#     register_hook(\\\"gate\\\", run_gate)，runner.py 用 get_hook(\\\"gate\\\")。\\n# DIP 落地：核心依賴抽象 hook 名稱，不依賴具體 module 路徑。\\n_HOOKS: dict[str, Callable] = {}\\n\\n\\ndef register_hook(name: str, fn: Callable, *, allow_override: bool = False) -> None:\\n    \\\"\\\"\\\"註冊一個跨模組擴展點 hook。\\n\\n    name 為 hook 的抽象介面名（\\\"gate\\\" / \\\"multi_judge_strategy\\\" / ...）；\\n    allow_override=False 時重複註冊直接拋錯，避免靜默覆寫。\\n    \\\"\\\"\\\"\\n    if not allow_override and name in _HOOKS:\\n        raise ValueError(f\\\"hook {name!r} 已註冊，禁止重複（設 allow_override=True 顯式覆寫）\\\")\\n    _HOOKS[name] = fn\\n\\n\\ndef get_hook(name: str) -> Optional[Callable]:\\n    \\\"\\\"\\\"取得 hook；未註冊回 None。呼叫端負責 fallback 行為（通常代表該 feature off）。\\\"\\\"\\\"\\n    return _HOOKS.get(name)\\n\\n\\ndef reset_hooks() -> None:\\n    \\\"\\\"\\\"測試用；清空 hook registry。\\\"\\\"\\\"\\n    _HOOKS.clear()\"}\n錯誤：",
+    "input": "",
+    "output": "**Step 2-5**：建 `modules/gatekeeper/` 並搬程式。"
+  },
+  {
+    "review_id": 15,
+    "sid": 38,
+    "event_type": "terminal_ops",
+    "instruction": "修復以下工具執行錯誤：\n工具：Bash\n指令：{\"command\": \"curl -s -X POST http://localhost:8000/api/v1/dataset/extract | python3 -m json.tool\", \"description\": \"Trigger extraction pipeline\"}\n錯誤：",
+    "input": "",
+    "output": "Extraction 完成：path_a=0，path_b=1，skipped=0。接著觸發評分和壓縮："
+  },
+  {
+    "review_id": 16,
+    "sid": 1,
+    "event_type": "terminal_ops",
+    "instruction": "修復以下工具執行錯誤：\n工具：Skill\n指令：{\"skill\": \"superpowers:code-reviewer\"}\n錯誤：",
+    "input": "",
+    "output": "I'm using the executing-plans skill to implement this plan.\n\n先確認現有專案結構。"
+  },
+  {
+    "review_id": 17,
+    "sid": 31,
+    "event_type": "git_ops",
+    "instruction": "修復以下工具執行錯誤：\n工具：Bash\n指令：{\"command\": \"docker compose ps 2>/dev/null\", \"description\": \"Check current docker compose status\"}\n錯誤：",
+    "input": "",
+    "output": "Docker daemon 沒有在跑。有兩個選項：\n\n1. **啟動 Docker Desktop** 後再執行 `docker compose up -d`\n2. **直接本機跑**（不用 Docker）：後端 `uvicorn`、前端 `npm run dev`\n\n請問要用哪種方式？或是要我先嘗試啟動 Docker Desktop？"
+  },
+  {
+    "review_id": 18,
+    "sid": 49,
+    "event_type": "fine_tuning_ops",
+    "instruction": "[Request interrupted by user]",
+    "input": "User: 你建議要做嗎？還是照當前進度前進 如果做了能否保留原有結構 根據message跟tool指令的schema 再萃取成你所謂的key如何？就hook保持原有持續收集對話 用獨立排程去撈取db內資訊 再進一步讓gamma蒸餾成結構prompt 記錄下來再往下處理 等於這段是獨立的排程任務\nAssistant: 確認 P0 走 git_ops + 目標 1（驗證 pipeline）。再收斂一個範圍問題就能進入整體設計。\n\n## P0 範圍邊界（git_ops 子集要多寬？）\n\ngit 即使只算 block1，子命令也有十幾種。一上來不收斂，模板化規則會爆炸、評估指標不收斂、無法判斷 pipeline 是設計對還是規則漏。\n\n從 DB 看一下你實際在 Claude CLI 中用 git 的命令分佈：",
+    "output": "30 unique, diverse gold (git 9, grep 5, ls/sudo/python 2 each, plus brew/rm/cd/for/pkill/launchctl/env/uvx/uv). Clean and well-distributed — a real improvement over ablation's n=6.\n\nNow the honest re-run. I'll run all three configs (A/B/C) on this clean set so the result is a fully self-contained clean ablation table replacing the contaminated one — A confirms the structural 0%, B/C give the real adoption. Running in background (90 inferences at qwen3:30b)."
+  },
+  {
+    "review_id": 19,
+    "sid": 59,
+    "event_type": "fine_tuning_ops",
+    "instruction": "修復以下工具執行錯誤：\n工具：Read\n指令：{\"file_path\": \"<PROJECT_PATH>\"}\n錯誤：",
+    "input": "",
+    "output": "**側作用清單：**\n1. 現有 MEMORY.md 僅一筆 `net_monitor` 索引；新模板無 Project section，將以 reference 形式併入 **Architecture Invariants**。\n2. **與預設 auto-memory 格式衝突**：系統提示要 MEMORY.md 為單行索引、無 frontmatter；改為結構化模板會覆寫此預設行為。未來自動寫入新 memory 時，工具可能不知道往哪個區塊塞，需 Claude 手動分流。\n3. `/resume` skill 將寫入 `~/.claude/skills/resume/SKILL.md`（同 shiba-dev-cycle 慣例），讀取 MEMORY.md 前三節（Active Plan / Recent Decisions / Open Questions）。\n4. 「Last Session」初值依 `recent.md` 2026-05-20 Ollama 評估填入。\n\n執行："
+  },
+  {
+    "review_id": 20,
+    "sid": 35,
+    "event_type": "git_ops",
+    "instruction": "修復以下工具執行錯誤：\n工具：Bash\n指令：{\"command\": \"rm -v -- <PROJECT_PATH> && echo \\\"\\\" && echo \\\"=== verify ===\\\" && grep -c \\\"project_local_plugin\\\" <PROJECT_PATH> && ls <PROJECT_PATH> 2>&1 | tail -1\", \"description\": \"Remove memory file and verify both index and file are gone\"}\n錯誤：",
+    "input": "",
+    "output": "刪除完成（`grep -c` 回 `0` = MEMORY.md 不再引用；`rm -v` 印出檔案路徑 = 確實刪除；exit 1 是 chain 末尾 `ls` 預期失敗，正是驗證）。\n\nCLAUDE.md L16/L92 + memory `project_local_plugin.md` + MEMORY.md L8 全部清完。"
+  },
+  {
+    "review_id": 21,
+    "sid": 30,
+    "event_type": "git_ops",
+    "instruction": "修復以下工具執行錯誤：\n工具：AskUserQuestion\n指令：{\"questions\": [{\"question\": \"Shiba，你說『go』但我這邊還沒看到具體要規劃的任務目標。請問你希望我針對哪一項做計畫？\", \"header\": \"規劃目標\", \"multiSelect\": false, \"options\": [{\"label\": \"Layer 2 Phase 1 接續執行\", \"description\": \"依 memory 中 project_layer2_phase1.md 的 Task 1-7 接續往下做\"}, {\"label\": \"處理 codex_suggestion.md\", \"description\": \"閱讀 2026-04-25_codex_suggestion.md 並依其建議規劃修改\"}, {\"label\": \"整理未追蹤檔案\", \"description\": \"處理 git status 顯示的 AGENTS.md / docs/ / data/shiba-brain.db?immutable=1 等未追蹤檔案\"}, {\"label\": \"其他任務（請說明）\", \"description\": \"上述都不是，我會用 Other 補充說明\"}]}]}\n錯誤：",
+    "input": "",
+    "output": "了解，Shiba 已提供完整計畫。我把它寫入 plan 檔後就 ExitPlanMode 等核可。"
+  },
+  {
+    "review_id": 22,
+    "sid": 3,
+    "event_type": "terminal_ops",
+    "instruction": "修復以下工具執行錯誤：\n工具：AskUserQuestion\n指令：{\"questions\": [{\"question\": \"改善 RAG 的範圍與優先順序，你傾向哪個方向？\", \"header\": \"改善範圍\", \"multiSelect\": false, \"options\": [{\"label\": \"FTS5 trigram（推薦）\", \"description\": \"將 sessions_fts tokenizer 改為 trigram，SQLite 3.41+ 內建，不需外部套件，中文字元以 3-char 滑窗索引，大幅提升中文召回率。需要 schema migration + rebuild index。\", \"preview\": \"-- 新 schema\\nCREATE VIRTUAL TABLE sessions_fts USING fts5(\\n    ...,\\n    tokenize = 'trigram'\\n);\\n\\n-- 查詢不變，中文自動被分解\\nWHERE sessions_fts MATCH 'webpack打包失敗'\\n-- 等同比對 'web', 'ebp', 'bpa', 'pac', 'ack', ...\"}, {\"label\": \"Hybrid fallback\", \"description\": \"FTS5 零結果時改用時序選取（claudest 策略）：取最近 N 個有意義 session。不動 schema，低風險，但語意召回仍弱。\", \"preview\": \"# rag.py 新增邏輯\\nresults = fts5_search(query)\\nif not results:\\n    # fallback: 取最近 3 個 exchange_count > 2 的 session\\n    results = get_recent_sessions(project_path, limit=3)\"}, {\"label\": \"兩者都做\", \"description\": \"先做 trigram schema migration（根本修），再加 hybrid fallback（保底）。工作量較大但最完整。\"}]}, {\"question\": \"query 前處理要不要一起改？目前是直接用 raw prompt[:150]，可改為先萃取高信號詞彙（tool names、檔名、技術詞）\", \"header\": \"Query 前處理\", \"multiSelect\": false, \"options\": [{\"label\": \"一起改（推薦）\", \"description\": \"從 prompt 中提取技術詞彙（tool_names、檔名、error keywords），比整段 prompt 丟入 FTS5 精準。\"}, {\"label\": \"先不動\", \"description\": \"只改 tokenizer，query 前處理下一個 iteration 再評估。\"}]}]}\n錯誤：",
+    "input": "",
+    "output": "沒有，我沒有閱讀過那四份論文的實際內容。之前 memory 裡記錄的「各論文對應設計」是我根據論文標題與你在 CLAUDE.md 的描述推測的，不是真正閱讀過論文後得出的結論。\n\n如果你想讓我實際閱讀，我可以用 WebFetch 抓取 arXiv 頁面內容。要現在讀嗎？"
+  },
+  {
+    "review_id": 23,
+    "sid": 5,
+    "event_type": "code_gen",
+    "instruction": "請幫我看 <PROJECT_PATH> 的問題，連線到 <LOCAL_IP> 失敗",
+    "input": "",
+    "output": "可能是網路問題或防火牆設定"
+  },
+  {
+    "review_id": 24,
+    "sid": 17,
+    "event_type": "terminal_ops",
+    "instruction": "修復以下工具執行錯誤：\n工具：Edit\n指令：{\"replace_all\": false, \"file_path\": \"<PROJECT_PATH>\", \"old_string\": \"    new_samples = _fetch_new_samples(conn, adapter_block, since_id)\\n    replay_samples = _fetch_ebbinghaus_replay(conn, adapter_block, since_id)\\n\\n    # 70/20 比例（weight 加權展開 new_samples；10% 通用指令集由外部注入，此處不處理）\\n    new_count = len(new_samples)\\n    replay_target = _calc_replay_target(new_count)\\n    replay_samples = replay_samples[:replay_target]\\n\\n    # P1-3：依 weight 展開 new_samples（weight=1.5 → 出現 1-2 次；weight=2.0 → 出現 2 次）\\n    expanded_new = _expand_by_weight(new_samples)\\n\\n    all_samples = expanded_new + replay_samples\\n    random.shuffle(all_samples)\", \"new_string\": \"    new_samples = _fetch_new_samples(conn, adapter_block, since_id)\\n    replay_samples = _fetch_ebbinghaus_replay(conn, adapter_block, since_id)\\n\\n    # 70/20/10 比例計算\\n    new_count = len(new_samples)\\n    replay_target = _calc_replay_target(new_count)\\n    replay_samples = replay_samples[:replay_target]\\n\\n    expanded_new = _expand_by_weight(new_samples)\\n\\n    # F3：10% 槽位注入外部通用指令集（Alpaca JSONL）\\n    external_samples = _load_external_dataset(new_count)\\n\\n    all_samples = expanded_new + replay_samples + external_samples\\n    random.shuffle(all_samples)\"}\n錯誤：",
+    "input": "",
+    "output": "在 dataset_formatter.py 末尾加入 `_load_external_dataset` 函式："
+  },
+  {
+    "review_id": 25,
+    "sid": 48,
+    "event_type": "knowledge_qa",
+    "instruction": "2. 不處理",
+    "input": "",
+    "output": "在跑：`e2e-claude-20260521T110552` 已寫 13/16 筆，剩 3 筆。tee buffer 沒 flush 不影響執行。等 3-4 分鐘完成。"
+  },
+  {
+    "review_id": 26,
+    "sid": 74,
+    "event_type": "fine_tuning_ops",
+    "instruction": "修復以下工具執行錯誤：\n工具：Bash\n指令：{\"command\": \"python -m model_api_tools.cli --dry-run 2>&1\", \"description\": \"Dry-run to confirm default params\"}\n錯誤：",
+    "input": "",
+    "output": "參數正確（both source、365d 窗、per-lane 無限）。執行實際爬取更新 DB。"
+  },
+  {
+    "review_id": 27,
+    "sid": 29,
+    "event_type": "git_ops",
+    "instruction": "修復以下工具執行錯誤：\n工具：ExitPlanMode\n指令：{\"plan\": \"# 資料流梳理與改善點清單\\n\\n## Context（為什麼做這件事）\\n\\nShiba 要對 shiba-fine-tuning-project（Layer 0~3 自我進化記憶系統）做完整資料流梳理，並找出可改善的節點。最近三次 commit（`ba0ec43` Path A v2、`ff7b04b` migration/runner 靜默失效、`43a7b56` W2-W5 review）已修正部分問題，但仍有：\\n\\n1. Codex 在 `2026-04-25_codex_suggestion.md` 點出 **8 個跨 layer 資料契約斷點**\\n2. 我直接讀 code 後另外發現 **死碼、token 浪費、排程時序衝突等 5 個非契約類問題**\\n\\n本 plan 不直接動程式碼，只輸出：**(a) 資料流節點對應表 (b) 改善點分類清單 (c) 驗證方法建議**，由 Shiba 決定下一步要動哪幾項。\\n\\n---\\n\\n## 一、資料流節點對應表（已驗證）\\n\\n```\\n[Claude session 結束]\\n        │\\n        ▼ (Stop Hook stdin JSON)\\n┌──────────────────────────────────────────────┐\\n│ Layer 1 — layer_1_memory/                     │\\n│  hooks/stop_hook.py::main()  L472-512          │\\n│   └─ sync_session()  L125-284                  │\\n│      ├─ upsert_session/branch/messages/tool   │\\n│      ├─ rebuild_exchanges_for_session         │ ← exchanges.py:148\\n│      ├─ upsert_sessions_fts (trigram)         │\\n│      └─ _write_exchange_embeddings (Ollama)   │\\n│                                                │\\n│  hooks/session_start_hook.py::L61              │\\n│   └─ rag.get_rag_context() → vec→FTS5 fallback│\\n└──────────────────────────────────────────────┘\\n        │\\n        ▼ (SQLite ~/.local-brain/shiba-brain.db)\\n┌──────────────────────────────────────────────┐\\n│ Layer 2 — layer_2_chamber/backend/            │\\n│                                                │\\n│ APScheduler (core/background.py::setup_…) 7 jobs│\\n│  ├─ 15min  _run_extraction_job                │\\n│  │    └─ extraction/pipeline.py::run_extraction_v2│\\n│  │       └─ _extract_path_a_v2 (exchanges 語意層)│\\n│  │       └─ _extract_path_b (error_repair)    │\\n│  │    → training_samples(status='raw')        │\\n│  ├─ 10min  _run_refiner_job                   │\\n│  │    └─ services/refiner_service.py          │\\n│  │    → training_samples(status='pending', refined_*)│\\n│  ├─ 1h     score_pending_samples              │\\n│  │    └─ services/multi_judge.py::multi_judge_score│\\n│  │       └─ teacher_service.py::_call_teacher (Gemini REST)│\\n│  │       └─ get_api_key (Keychain → env fallback) │\\n│  │    → training_samples(status='approved'|'rejected', weight)│\\n│  ├─ 15min  _run_paraphrase_job                │\\n│  ├─ 6h     _run_finetune_check                │\\n│  │    └─ httpx POST → Layer 3 /trigger/{block}│\\n│  ├─ 02:00  compress_cold_data (90d 未存取)    │\\n│  └─ 00:05  _reset_daily_limits (UTC 配額重置) │\\n└──────────────────────────────────────────────┘\\n        │\\n        ▼ (HTTP /trigger/{block})\\n┌──────────────────────────────────────────────┐\\n│ Layer 3 — layer_3_pipeline/                   │\\n│  server.py::trigger_finetune                  │\\n│   └─ runner.py::run_finetune_if_ready         │\\n│      ├─ trigger_policy.should_trigger         │\\n│      │   ├─ Signal A: Ebbinghaus {1,2,4,7,15,30}d ±0.5│\\n│      │   ├─ Signal B: 採納退化 −10pp / 7d 基線│\\n│      │   └─ Signal C: embedding centroid drift>0.35│\\n│      ├─ dataset_formatter.export_dataset       │\\n│      │   (70% new + 20% replay + 10% external)│\\n│      ├─ mlx_trainer.train_lora                │\\n│      ├─ gguf_converter.convert_to_gguf        │\\n│      ├─ gatekeeper.run_gate (shadow)          │\\n│      └─ ollama_updater.push_to_ollama         │\\n│   → finetune_runs(status='done', finished_at) │\\n└──────────────────────────────────────────────┘\\n```\\n\\n**DB 寫入分佈**：\\n- Layer 1：`sessions / branches / messages / tool_executions / exchanges / exchange_messages / sessions_fts / exchange_embeddings`\\n- Layer 2：`training_samples / teachers / teacher_usage_log`\\n- Layer 3：`finetune_runs`\\n- 跨層：`router_decisions`（Layer 0 寫，Layer 2/3 讀）\\n\\n---\\n\\n## 二、改善點清單（重新分類）\\n\\n### 🔴 A 級：資料契約斷點（風險最高，不修無法穩定運行）\\n\\n| # | 問題 | 位置 | 影響 |\\n|---|------|------|------|\\n| A1 | **`router_decisions` / `finetune_runs` 缺正式 schema migration** | layer_1_memory/db/schema.sql、layer_2_chamber/.../config.py | 全新 DB 部署時兩表不存在 → Layer 3 啟動 crash、Layer 0 telemetry 無法寫 |\\n| A2 | **`exchange_embeddings.embedding` 寫入/讀取格式不一致** | 寫：`json.dumps(list[float])`；讀（trigger_policy.py:191）：`np.frombuffer(blob, float32)` | Signal C drift 永遠失真 → 漂移觸發完全失效 |\\n| A3 | **bridge 條件 spec ≠ 實作** | pipeline.py:33 `_BRIDGE_EVENT_TYPES` 包含 block1+block2 全部 | spec 寫只 block1，實作把 debugging/architecture 也橋進來 → training_samples 來源分佈與設計哲學偏離 |\\n| A4 | **Judge 雙軌並存** | teacher_service.py 有 `score_sample`（雙裁判），multi_judge.py 有 `multi_judge_score`（三方投票） | 排程實際呼叫 multi_judge，但 spec 寫雙裁判，dashboard/手動評分可能用錯路徑 |\\n| A5 | **`_extract_path_a` v1 死碼仍存在** | pipeline.py:120-178 | 維護成本+風險：誤呼叫舊版會產出 `source='layer1_bridge'`（非 v2），下游去重邏輯只看 v2 |\\n\\n### 🟡 B 級：靜默失效 / 訓練可信度\\n\\n| # | 問題 | 位置 | 影響 |\\n|---|------|------|------|\\n| B1 | **`finetune_runs.finished_at` 字串化問題（codex #6b）** | runner.py 已修為 `datetime.now().isoformat()`（commit ff7b04b）— **codex 提到的舊問題已解** | 需驗證 codex 報告日期之後的 commit 是否完整修正 |\\n| B2 | **`get_last_run_id()` 不能精確標記訓練邊界** | dataset_formatter.py | 增量 export 基準不穩 → 重複取樣或漏取 |\\n| B3 | **`threshold` 參數名存實亡** | server.py 傳 threshold=0 給 runner，但 runner 只看 should_trigger | API 語意誤導後人 |\\n| B4 | **APScheduler 內 try/except 吞錯太廣** | background.py:175-176（weight sync 失敗只 debug log）；L226-227（finetune_check 任意 Exception 只 error log） | 真正的 bug 被吞，難偵測 |\\n| B5 | **冷資料壓縮永遠不會清掉評分失敗 session** | background.py:67-71 條件「training_samples.status IN approved/rejected/needs_review」 | 評分配額耗盡的 session 永遠保留 decay_score>0，DB 膨脹 |\\n| B6 | **exchanges 重建在 transaction 外** | stop_hook.py:272-276 | sessions 已 commit 但 exchanges 失敗 → Layer 2 撈到 session 卻無 exchange 資料 |\\n| B7 | **W4/W5 警告只 log** | background.py:158-159（raw 逾 24h）、其他 W2-W5 | 無 alert / 自動 escalation |\\n\\n### 🟢 C 級：效能 / 可演進性（不急但值得排）\\n\\n| # | 問題 | 位置 | 影響 |\\n|---|------|------|------|\\n| C1 | **multi_judge 無 early exit，浪費 Gemini 配額** | multi_judge.py:105 `for teacher in available_teachers[:3]` 一律打滿 | 已有 ≥2/3 一致時，第 3 個 teacher 仍呼叫 — Gemini Flash 250req/day 早耗盡 |\\n| C2 | **Ebbinghaus ±0.5 天 + 6h 排程時序衝突** | trigger_policy.py:20 `<REDACTED> + background.py:133 `hours=6` | 6h 排程最壞錯 12h，視窗 24h，邊緣 miss 整個 1d 間隔（可能 7d/15d/30d 都漏掉） |\\n| C3 | **extraction 錯誤過濾過嚴（codex #7）** | path_a `_has_error_tool` 整個 session 只要有 error 就過度排除 | block1 訓練資料減少，部分成功 exchange 也被汙染 |\\n| C4 | **acceptance heuristic 過粗（codex #8）** | telemetry.py 否定關鍵字判定 | weight 信號雜訊高，影響 fine-tune 品質 |\\n| C5 | **APScheduler 7 jobs 同 event loop** | background.py | 高峰期 DB 鎖競爭（尤其 extraction + scoring + paraphrase 同時跑 sqlite）|\\n| C6 | **`teachers.keychain_ref NOT NULL` vs 程式允許 None（codex #4）** | schema 定義 NOT NULL，但 service 邏輯允許本地 teacher 無 key | 規模化引入本地 teacher 時 schema 衝突 |\\n\\n---\\n\\n## 三、建議行動方向（三選一）\\n\\n### 方向 1：分析報告 only\\n本 plan 已涵蓋，無需動程式。後續由 Shiba 自行決定哪幾項先動，分批排程。\\n\\n### 方向 2：先動 A 級（資料契約閉環）\\n建議順序：A1 → A2 → A3/A4（決策後再動）→ A5\\n- A1 影響最大（部署風險），先補 schema migration（在 layer_2_chamber 啟動時 idempotent CREATE TABLE）\\n- A2 是純 bug，補 numpy.tobytes()/frombuffer 對齊（或改回 JSON 雙向解析）\\n- A3/A4 需 Shiba 先決策：bridge 要不要嚴格回 block1-only？judge 要不要刪一條？\\n- A5 是 dead code 移除，commit 級小改\\n\\n### 方向 3：A 級 + B/C 級各挑 1-2 項\\nA1+A2 必修；B1 純驗證；C1（multi_judge early exit）token 立即見效。\\n\\n---\\n\\n## 四、驗證方法\\n\\n| 改善點 | 驗證方式 |\\n|--------|---------|\\n| A1 | 刪 `data/shiba-brain.db?immutable=1` 後重啟 Layer 2/3，確認兩表自動建立 |\\n| A2 | 寫 unit test：mock embedding 寫入 → trigger_policy._signal_distribution_drift 能正確讀回 |\\n| A3/A4 | 文件 + 程式同步檢查（修 spec 或修 code 二選一） |\\n| A5 | grep 確認無呼叫端，刪除 + tests 全綠 |\\n| B1 | `sqlite3 shiba-brain.db \\\"SELECT finished_at, typeof(finished_at) FROM finetune_runs\\\"` 確認都是 ISO timestamp |\\n| B5 | 跑 compress_cold_data 後 SELECT decay_score>0 AND last_accessed<-90d 應為 0 |\\n| C1 | log 加上「early exit at vote N」counter，配額消耗應 30-50% 降 |\\n| C2 | 拉長 EBBINGHAUS_WINDOW 到 1.0 或縮短排程到 hours=2，測試 7d/15d 觸發成功率 |\\n\\n---\\n\\n## 五、未追蹤檔案處理建議\\n\\n- `2026-04-25_codex_suggestion.md`：Codex 完整分析報告，建議移到 `docs/reviews/` 保存（而非根目錄）\\n- `AGENTS.md`：Codex 用版規範（內容同 CLAUDE.md 但稱呼換成 Codex）。如果要兩個 agent 共用就保留；若不再用 Codex 可刪\\n- `docs/`：已有 `references-blog / references-git / references-paper / superpowers` 子目錄，建議納入 git track（可能是知識參考庫）\\n\\n---\\n\\n## 六、待 Shiba 決策的問題\\n\\n1. **方向選擇**：方向 1（純報告）／方向 2（A 級全做）／方向 3（A1+A2+C1）？\\n2. **A3 bridge 規則**：嚴守 spec 改回 block1-only，還是更新 spec/AGENTS.md 接受目前寬鬆實作？\\n3. **A4 judge 主流程**：保留 multi_judge 三方投票（更新 spec），還是回到雙裁判刪 multi_judge？\\n4. **未追蹤檔案**：`docs/` 是否納入 git？`AGENTS.md` 是否保留？\\n\\n關鍵檔案位置：\\n- `<PROJECT_PATH> `<PROJECT_PATH> `<PROJECT_PATH> `<PROJECT_PATH> `<PROJECT_PATH> `<PROJECT_PATH>\", \"planFilePath\": \"<PROJECT_PATH>\"}\n錯誤：",
+    "input": "",
+    "output": "我把 model/effort 建議加進 plan 檔。"
+  },
+  {
+    "review_id": 28,
+    "sid": 34,
+    "event_type": "git_ops",
+    "instruction": "<command-name>/model</command-name>\n            <command-message>model</command-message>\n            <command-args></command-args>",
+    "input": "",
+    "output": "# Write: <PROJECT_PATH>"
+  },
+  {
+    "review_id": 29,
+    "sid": 56,
+    "event_type": "fine_tuning_ops",
+    "instruction": "修復以下工具執行錯誤：\n工具：Bash\n指令：{\"command\": \"curl -s \\\"https://ollama.com/api/generate\\\" -H \\\"Content-Type: application/json\\\" -d '{\\n  \\\"model\\\": \\\"qwen3.6:35b-a3b-nvfp4_custom-by-shiba\\\",\\n  \\\"prompt\\\": \\\"test\\\",\\n  \\\"stream\\\": false,\\n  \\\"options\\\": {\\n    \\\"num_thread\\\": 8,\\n    \\\"num_ctx\\\": 4096\\n  }\\n}' 2>/dev/null | python3 -c \\\"import sys,json; d=json.load(sys.stdin); print('total_duration:', d.get('total_duration')); print('eval_count:', d.get('eval_count'))\\\" 2>&1\", \"description\": \"Test with explicit num_thread parameter\"}\n錯誤：",
+    "input": "",
+    "output": "根據調查結果，以下是關於 Ollama 與 MLX 的關係及調校方式：\n\n## Ollama 與 MLX 的關係\n\n從你的 Ollama runner 進程可以看到：\n\n```bash\nollama runner --mlx-engine --model qwen3.6:35b-a3b-nvfp4_custom-by-shiba\n```\n\n這表示 Ollama 在 macOS 上使用 **MLX Engine**（Apple 的機器學習框架）來加速推理。\n\n## 可調校的參數\n\n### 1. 透過 Modelfile 設定的參數\n\n你的模型 `qwen3.6:35b-a3b-nvfp4_custom-by-shiba` 目前設定：\n\n| 參數 | 當前值 | 說明 |\n|------|-------|------|\n| `min_p` | 0 | 最小概率過濾 |\n| `presence_penalty` | 1.5 | 存在懲罰 |\n| `repeat_penalty` | 1 | 重複懲罰 |\n| `temperature` | 1 | 溫度（創意性） |\n| `top_k` | 20 | Top-K 採樣 |\n| `top_p` | 0.95 | Top-P 採樣 |\n\n### 2. 可透過 API 動態調整的參數\n\n```json\n{\n  \"options\": {\n    \"num_thread\": 8,        // CPU 線程數\n    \"num_ctx\": 4096,        // 上下文窗口大小\n    \"temperature\": 0.7      // 創意性 (0.1-1.5)\n  }\n}\n```\n\n### 3. MLX Engine 專屬參數（需修改 Modelfile）"
+  },
+  {
+    "review_id": 30,
+    "sid": 6,
+    "event_type": "code_gen",
+    "instruction": "我的專案 <PROJECT_PATH> 在 <LOCAL_IP> 這台機器上跑，請問為什麼 FastAPI 的 CORS 設定沒有生效？",
+    "input": "",
+    "output": "CORS 沒生效通常是因為 middleware 順序錯誤，CORSMiddleware 必須放在最前面。"
+  },
+  {
+    "review_id": 31,
+    "sid": 68,
+    "event_type": "terminal_ops",
+    "instruction": "修復以下工具執行錯誤：\n工具：Bash\n指令：{\"command\": \"echo \\\"=== 1) HTML 首頁 ===\\\"; curl -s -o /dev/null -w \\\"HTTP %{http_code}\\\\n\\\" http://<LOCAL_IP>:8990/\\necho \\\"=== 2) JSON 搜尋 (format=json) ===\\\"; curl -s -o /dev/null -w \\\"HTTP %{http_code}\\\\n\\\" \\\"http://<LOCAL_IP>:8990/search?q=test&format=json\\\"\\necho \\\"=== 3) JSON 搜尋實際內容(前 600 字) ===\\\"; curl -s \\\"http://<LOCAL_IP>:8990/search?q=openclaw&format=json\\\" | head -c 600\", \"description\": \"Test SearXNG home and JSON search endpoint\"}\n錯誤：",
+    "input": "",
+    "output": "關鍵證據：端點回 HTTP 200，但 `number_of_results: 0`、`results: []`，只有 Wikipedia infobox。代表**引擎查詢全數失敗或回空**。檢查容器日誌找出哪個引擎報錯。"
+  },
+  {
+    "review_id": 32,
+    "sid": 72,
+    "event_type": "fine_tuning_ops",
+    "instruction": "修復以下工具執行錯誤：\n工具：AskUserQuestion\n指令：{\"questions\": [{\"question\": \"評估看過了。接下來怎麼走？\", \"header\": \"下一步\", \"multiSelect\": false, \"options\": [{\"label\": \"走最小驗證 (a) 起手\", \"description\": \"按第六節，先做零召回風險的「回傳內容換描述」實驗，復用 D2 scan + golden，用 RAGAS 測 grounding 是否由負轉正。證實了再談 (b) 與管線。這是我推薦的路。\"}, {\"label\": \"先要完整 4-layer roadmap\", \"description\": \"你想先看一份涵蓋 Layer 0/1/2/3 全部的逐層描述蔑髌ount roadmap 評估文件（寫進 docs/），再決定動哪層。偏規劃不偏動手。\"}, {\"label\": \"我要調整方向\", \"description\": \"你對我的評估有異議（例如你真的要走 fine-tuning 而非檢索、或描述的定義跟我想的不同），先讓你說清楚我再重評。\"}]}]}\n錯誤：",
+    "input": "",
+    "output": "好，我先不丟選項。Shiba，你想澄清或補充什麼？可能是這幾類，你直接講：\n\n- 對我的**評估內容**有疑問或不同意（例如 FT vs 檢索的判斷、描述蒸餾的風險、roadmap 改結構）\n- 我給的**選項本身**沒對到你要的（範圍、形式、或你心裡的下一步跟我列的不一樣）\n- 你對「描述」「逐 layer」的**定義**跟我理解的不同，要先對齊\n\n你說，我聽完再調整。"
+  },
+  {
+    "review_id": 33,
+    "sid": 14,
+    "event_type": "git_ops",
+    "instruction": "修復以下工具執行錯誤：\n工具：Bash\n指令：{\"command\": \"python -c \\\"\\nfrom layer_0_router.telemetry import record_decision, get_acceptance_rate, update_acceptance\\n# 寫入測試決策\\ndid = record_decision(\\n    session_id='test-session-001',\\n    prompt='git commit 怎麼寫',\\n    classification='local',\\n    reason='git_ops',\\n    local_output='建議使用 git commit -m ...',\\n    latency_ms=123,\\n    tokens_prompt=50,\\n    tokens_response=80,\\n)\\nprint(f'decision_id={did}')\\n# 更新採納\\nupdate_acceptance(did, accepted=True, source='manual')\\nrate = get_acceptance_rate(days=7)\\nprint(f'acceptance_rate={rate}')\\n\\\"\", \"description\": \"端到端驗證 telemetry 寫入與採納率查詢\"}\n錯誤：",
+    "input": "",
+    "output": "寫入與查詢驗證通過。接著驗證 auto 採納判定與 router.py 語法："
+  },
+  {
+    "review_id": 34,
+    "sid": 23,
+    "event_type": "git_ops",
+    "instruction": "修復以下工具執行錯誤：\n工具：Write\n指令：{\"file_path\": \"<PROJECT_PATH>\", \"content\": \"/** @type {import('tailwindcss').Config} */\\nexport default {\\n  content: ['./index.html', './src/**/*.{vue,ts,tsx}'],\\n  theme: {\\n    extend: {\\n      colors: {\\n        // Surface（深炭系）\\n        surface: {\\n          0: '#0a0c0f',\\n          1: '#111318',\\n          2: '#191d24',\\n          3: '#21262f',\\n          4: '#2c333e',\\n          5: '#3a4454',\\n        },\\n        // Text\\n        text: {\\n          primary:   '#edf0f4',\\n          secondary: '#8a97a8',\\n          muted:     '#505c6e',\\n          inverse:   '#111318',\\n        },\\n        // Brand / Silver\\n        silver: {\\n          light: '#dce6ee',\\n          mid:   '#a8b8c8',\\n          dark:  '#6e8098',\\n        },\\n        // Tech Accent\\n        accent: {\\n          cyan:     '#06c8e8',\\n          'cyan-dim': '#033848',\\n          teal:     '#10b981',\\n          indigo:   '#6366f1',\\n        },\\n        // Routing\\n        local:  '#f5c518',\\n        claude: '#c084fc',\\n        // Status\\n        success: { DEFAULT: '#00e676', dim: '#00251a' },\\n        warning: { DEFAULT: '#ffab40', dim: '#2c1800' },\\n        error:   { DEFAULT: '#ff5252', dim: '#2c0000' },\\n        info:    { DEFAULT: '#40c4ff', dim: '#00293d' },\\n        // Layer accents\\n        layer: {\\n          0: '#f5c518',\\n          1: '#40c4ff',\\n          2: '#c084fc',\\n          3: '#ffab40',\\n        },\\n      },\\n      fontFamily: {\\n        display: ['-apple-system', 'BlinkMacSystemFont', '\\\"SF Pro Display\\\"', '\\\"Noto Sans TC\\\"', 'sans-serif'],\\n        body:    ['-apple-system', 'BlinkMacSystemFont', '\\\"SF Pro Text\\\"', '\\\"Noto Sans TC\\\"', '\\\"Source Han Sans TC\\\"', 'sans-serif'],\\n        mono:    ['\\\"SF Mono\\\"', '\\\"IBM Plex Mono\\\"', '\\\"Fira Code\\\"', 'monospace'],\\n      },\\n      fontSize: {\\n        'xs':   '11px',\\n        'sm':   '12px',\\n        'base': '13px',\\n        'md':   '14px',\\n        'lg':   '16px',\\n        'xl':   '20px',\\n        '2xl':  '24px',\\n        '3xl':  '32px',\\n      },\\n      spacing: {\\n        1:  '4px',\\n        2:  '8px',\\n        3:  '12px',\\n        4:  '16px',\\n        5:  '20px',\\n        6:  '24px',\\n        8:  '32px',\\n        10: '40px',\\n        12: '48px',\\n      },\\n      borderRadius: {\\n        sm:   '5px',\\n        md:   '8px',\\n        lg:   '12px',\\n        xl:   '16px',\\n        full: '9999px',\\n      },\\n      boxShadow: {\\n        card:   '0 2px 8px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.04)',\\n        panel:  '0 8px 32px rgba(0,0,0,0.7)',\\n        silver: '0 1px 3px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.08)',\\n      },\\n      transitionDuration: {\\n        fast: '120ms',\\n        base: '200ms',\\n      },\\n    },\\n  },\\n  plugins: [],\\n}\\n\"}\n錯誤：",
+    "input": "",
+    "output": "現在設定 Tailwind CSS 入口、router、pinia skeleton，並建基本 App 結構："
+  },
+  {
+    "review_id": 35,
+    "sid": 26,
+    "event_type": "git_ops",
+    "instruction": "根據Work1-5提供適合使用的/model與/effort",
+    "input": "User: <task-notification>\n<task-id>r7ns6bici</task-id>\n<task-type>remote_agent</task-type>\n<status>completed</status>\n<summary>Remote review completed</summary>\n</task-notification>\nThe remote review produced the following findings:\n\n[]\nAssistant: # Edit: <PROJECT_PATH>\n# Edit: <PROJECT_PATH>\n$ <PROJECT_PATH> -m tools.compare_extraction --report --db data/shiba-brain.db 2>&1\n$ ls <PROJECT_PATH> && echo \"---\" && ls <PROJECT_PATH> 2>/dev/null\n$ grep -n \"finished_at\\|update_run\\|status.*done\\|status.*failed\" <PROJECT_PATH> | head -20",
+    "output": "$ sqlite3 ~/.local-brain/shiba-brain.db \"SELECT name FROM sqlite_master WHERE type='table' ORDER BY name;\"\n# Edit: <PROJECT_PATH>\n$ rm <PROJECT_PATH> && echo \"deleted\"\n$ cd <PROJECT_PATH> && rm -v \\\n  tidy-humming-donut.md \\\n  tingly-bubbling-sunbeam.md \\\n  dreamy-strolling-snail.md \\\n  fts5-crystalline-cook.md \\\n  golden-leaping-ullman.md \\\n  vivid-scribbling-fairy.md \\\n  ai-codex-merry-lecun.md \\\n  sprightly-marinating-pizza.md \\\n  sunny-squishing-balloon.md \\\n  teacher-api-token-greedy-crystal.md \\\n  ai-zippy-bentley.md \\\n  developer-01-project-shiba-fine-tuning-stateless-bubble.md \\\n  focus-layer0-composed-leaf.md"
+  },
+  {
+    "review_id": 36,
+    "sid": 4,
+    "event_type": "terminal_ops",
+    "instruction": "修復以下工具執行錯誤：\n工具：Glob\n指令：{\"pattern\": \"**/*.py\", \"path\": \"<PROJECT_PATH>\"}\n錯誤：",
+    "input": "",
+    "output": "現在看 `upsert_fts` 與 `rag.py` 查詢邏輯。"
+  },
+  {
+    "review_id": 37,
+    "sid": 53,
+    "event_type": "git_ops",
+    "instruction": "修復以下工具執行錯誤：\n工具：Edit\n指令：{\"replace_all\": false, \"file_path\": \"<PROJECT_PATH>\", \"old_string\": \"pydantic==2.10.5\\napscheduler==3.11.0\\npyyaml==6.0.2\\nopenai==1.59.6\\nhttpx==0.28.1\", \"new_string\": \"pydantic==2.10.5\\napscheduler==3.11.0\\npyyaml==6.0.2\\nopenai==1.59.6\\nhttpx==0.28.1\\nragas==0.4.3\\nlangchain-anthropic\"}\n錯誤：",
+    "input": "",
+    "output": "**Phase 0.2：建立 schemas.py**"
+  },
+  {
+    "review_id": 38,
+    "sid": 61,
+    "event_type": "terminal_ops",
+    "instruction": "修復以下工具執行錯誤：\n工具：Bash\n指令：{\"command\": \"sqlite3 data/shiba-brain.db \\\"SELECT session_uuid, substr(event_types,1,40), substr(ended_at,1,10), snippet(sessions_fts,3,'','','...',32) FROM sessions_fts WHERE sessions_fts MATCH 'PR-O' ORDER BY rank LIMIT 3;\\\" 2>&1\", \"description\": \"Direct FTS5 query test\"}\n錯誤：",
+    "input": "",
+    "output": "Ollama 離線 → vector 失敗 → 應走 FTS5 fallback。直接驗 FTS5。"
+  },
+  {
+    "review_id": 39,
+    "sid": 33,
+    "event_type": "terminal_ops",
+    "instruction": "修復以下工具執行錯誤：\n工具：Bash\n指令：{\"command\": \"sqlite3 ~/.local-brain/shiba-brain.db \\\"SELECT id, instruction, substr(commands,1,80) FROM exchanges WHERE instruction LIKE '%聲明%' OR instruction LIKE '%bypass%' OR instruction LIKE '%权限%' OR instruction LIKE '%防权限%' OR instruction LIKE '%提示%下述%' OR instruction LIKE '%注意事項%下列%' LIMIT 20;\\\"\", \"description\": \"Find suspicious injection-like records in exchanges table\"}\n錯誤：",
+    "input": "",
+    "output": "DB 是 0 bytes！這說明資料不是來自這裡。讓我找真正的 DB 位置："
+  },
+  {
+    "review_id": 40,
+    "sid": 42,
+    "event_type": "fine_tuning_ops",
+    "instruction": "修復以下工具執行錯誤：\n工具：Bash\n指令：{\"command\": \"sqlite3 <PROJECT_PATH> \\\"SELECT key, value, length(snapshot), snapshot_at FROM router_config ORDER BY key;\\\" 2>&1\", \"description\": \"Check router_config table content\"}\n錯誤：",
+    "input": "",
+    "output": "重大偏差！router_config 表**沒 `snapshot` 欄位**，與 plan L147-153 不符。確認實際 schema："
+  },
+  {
+    "review_id": 41,
+    "sid": 7,
+    "event_type": "debugging",
+    "instruction": "剛才那個錯誤是怎麼回事？我的專案有問題",
+    "input": "",
+    "output": "需要更多上下文才能回答"
+  },
+  {
+    "review_id": 42,
+    "sid": 20,
+    "event_type": "knowledge_qa",
+    "instruction": "修復以下工具執行錯誤：\n工具：ExitPlanMode\n指令：{\"plan\": \"# 前端 Vue 3 + Nginx + docker-compose 架構重構\\n\\n## Context（為何做這件事）\\n\\n目前前端用 React 18 CDN + Babel Standalone 即時編譯，`frontend/Shiba Fine-Tuning Design System/ui_kits/dashboard/index.html` 唯一進入點，改 JSX 要手動 bump `?v=N` 才能躲快取（已踩過的 feedback memory）。後端 `uvicorn main:app` 手啟、Ollama 外部、SQLite 放 `~/.local-brain/`，冷啟動順序靠肌肉記憶。這次重構要讓：\\n\\n- 前端 = Vue 3 SFC + Vite build + Nginx serve，拋棄 CDN + Babel 的運行時編譯\\n- 後端 = FastAPI 封裝成 docker image，`docker compose up` 一鍵把前後端拉起\\n- Ollama 與 Claude Code hooks **保持 host 外部**（MPS 裝置存取 + hook 路徑穩定性）\\n- Layer 3 MLX 訓練因為需要 Apple Silicon GPU，拆成 host 上獨立 launchd service\\n- SQLite bind-mount 到 host，Claude Code hooks 與 container 讀寫同一顆 DB，並有手動備份路徑\\n\\n## 架構藍圖\\n\\n```\\n┌──────────────────────────────────────────────────────────┐\\n│  Host (macOS)                                            │\\n│                                                          │\\n│  Ollama :11434  ←─────── host.docker.internal:11434 ←──┐ │\\n│  Claude Code hooks (stop_hook) → ~/.local-brain/*.db   │ │\\n│  Layer 3 FastAPI :8001 (launchd)  ←──── :8001 ←────────┤ │\\n│                                                        │ │\\n│  docker-compose                                        │ │\\n│  ┌──────────────────┐      ┌──────────────────────────┐│ │\\n│  │  frontend        │      │  backend                 ││ │\\n│  │  Vue3 + Nginx    │ ───► │  FastAPI (uvicorn)       ││─┘\\n│  │  :9590 → :80     │      │  :8000 (internal only)   ││\\n│  │  /  → SPA        │      │  volumes:                ││\\n│  │  /api/* → proxy  │      │   ~/.local-brain:/data   ││\\n│  │                  │      │   ./backups:/backups     ││\\n│  └──────────────────┘      └──────────────────────────┘│\\n└──────────────────────────────────────────────────────────┘\\n```\\n\\n**對外只暴露 `localhost:9590`**；backend 8000 只在 compose network 內；Ollama 與 Layer 3 在 host，靠 `host.docker.internal` 連回。\\n\\n## 決策摘要（已確認）\\n\\n| 決策 | 選項 |\\n|------|------|\\n| Vue 3 遷移深度 | 完整 SFC 重寫（5 個 Phase + shared 全換 .vue） |\\n| Layer 3 位置 | 分離成 host 獨立 FastAPI service（launchd） |\\n| 對外 port | 沿用 9590（frontend nginx 單一入口） |\\n| SQLite 備份 | 手動 script（`scripts/db_backup.sh`） |\\n| 前端樣式 | Tailwind CSS + 手寫組件（token 移植自 `colors_and_type.css`） |\\n| 舊前端處理 | 改名 `frontend/_legacy_react_cdn/` 封存，驗證完再刪 |\\n\\n## 檔案清單\\n\\n### 新增\\n\\n```\\n/\\n├── docker-compose.yml\\n├── .dockerignore\\n├── .env.example                          # 9590 / 8000 / 8001 / OLLAMA_BASE_URL / DB_PATH\\n├── frontend-vue/\\n│   ├── Dockerfile                        # multi-stage: node:20-alpine → nginx:alpine\\n│   ├── nginx.conf                        # SPA fallback + /api proxy + /static proxy\\n│   ├── package.json                      # vue@3 / vue-router@4 / pinia / axios / tailwindcss\\n│   ├── vite.config.ts\\n│   ├── tailwind.config.js                # 從 colors_and_type.css 翻譯 token\\n│   ├── tsconfig.json\\n│   ├── index.html\\n│   └── src/\\n│       ├── main.ts                       # createApp + router + pinia + Tailwind\\n│       ├── App.vue                       # layout（Sidebar + <router-view/>）\\n│       ├── router/index.ts               # /router /memory /teachers /pipeline\\n│       ├── stores/                       # Pinia（teachers / decisions / sessions）\\n│       ├── api/client.ts                 # fetch wrapper，base = '/api/v1'\\n│       ├── styles/tokens.css             # 從 colors_and_type.css 遷移\\n│       ├── components/\\n│       │   ├── Sidebar.vue\\n│       │   └── shared/\\n│       │       ├── Badge.vue\\n│       │       ├── DataTable.vue\\n│       │       ├── QuotaBar.vue\\n│       │       └── DetailPanel.vue\\n│       └── views/\\n│           ├── PhaseRouter.vue\\n│           ├── PhaseMemory.vue\\n│           ├── PhaseTeachers.vue\\n│           └── PhasePipeline.vue\\n├── layer_2_chamber/backend/\\n│   ├── Dockerfile                        # python:3.11-slim → pip install → uvicorn\\n│   └── requirements.txt                  # freeze: fastapi / uvicorn / apscheduler / pyyaml / requests\\n├── layer_3_pipeline/\\n│   └── server.py                         # FastAPI :8001（POST /trigger/{block}、GET /runs、GET /health）\\n├── scripts/\\n│   ├── db_backup.sh                      # sqlite3 .backup → ./backups/shiba-brain-YYYYMMDD_HHMMSS.db\\n│   ├── setup_layer3_launchd.sh           # 參考既有 setup_launchd.sh\\n│   └── com.shiba.layer3.plist            # launchd 定義\\n└── backups/.gitkeep                      # 內容在 .gitignore 排除\\n```\\n\\n### 修改\\n\\n| 檔案 | 改動 |\\n|------|------|\\n| `layer_2_chamber/backend/core/config.py` | `<REDACTED> 'http://localhost:11434')`；`<REDACTED> str(Path.home()/'.local-brain'/'shiba-brain.db'))` |\\n| `layer_2_chamber/backend/api/routes_finetune.py` | `/trigger/{block}` 從直接呼叫 `layer_3_pipeline.runner` 改為 HTTP POST 到 `LAYER3_BASE_URL`（預設 `http://host.docker.internal:8001`） |\\n| `layer_2_chamber/backend/core/background.py` | `finetune_check` 排程改 HTTP 觸發 |\\n| `layer_3_pipeline/gatekeeper.py` | `OLLAMA_BASE_URL` 讀 env |\\n| `layer_3_pipeline/runner.py` | 被 `server.py` 匯入呼叫；不動核心邏輯 |\\n| `.gitignore` | 加 `backups/*.db`、`frontend-vue/node_modules`、`frontend-vue/dist` |\\n\\n### 保持不變\\n\\n- `layer_1_memory/hooks/`（Claude Code 外部執行，直寫 `~/.local-brain/shiba-brain.db`）\\n- `~/.local-brain/shiba-brain.db`（位置不動，bind mount 到 container `/data/`）\\n- `~/.claude/plugins/local-brain/`（Claude Code plugin 同步機制）\\n\\n### 封存\\n\\n- `frontend/Shiba Fine-Tuning Design System/` → `frontend/_legacy_react_cdn/`（驗證完刪）\\n\\n## 關鍵檔案內容草稿\\n\\n### `docker-compose.yml`\\n\\n```yaml\\nservices:\\n  backend:\\n    build: ./layer_2_chamber/backend\\n    expose: [\\\"8000\\\"]\\n    volumes:\\n      - ~/.local-brain:/data\\n      - ./backups:/backups\\n    environment:\\n      - <REDACTED>      - <REDACTED>      - <REDACTED>    extra_hosts:\\n      - \\\"host.docker.internal:host-gateway\\\"\\n    restart: unless-stopped\\n\\n  frontend:\\n    build: ./frontend-vue\\n    ports:\\n      - \\\"9590:80\\\"\\n    depends_on:\\n      - backend\\n    restart: unless-stopped\\n```\\n\\n### `frontend-vue/nginx.conf`（重點片段）\\n\\n```nginx\\nserver {\\n  listen 80;\\n  root /usr/share/nginx/html;\\n\\n  location / {\\n    try_files $uri $uri/ /index.html;\\n  }\\n\\n  location /api/ {\\n    proxy_pass http://backend:8000/api/;\\n    proxy_set_header Host $host;\\n    proxy_set_header X-Real-IP $remote_addr;\\n  }\\n\\n  location /static/ {\\n    proxy_pass http://backend:8000/static/;\\n  }\\n}\\n```\\n\\n### `frontend-vue/Dockerfile`（multi-stage）\\n\\n```dockerfile\\nFROM node:20-alpine AS build\\nWORKDIR /app\\nCOPY package*.json ./\\nRUN npm ci\\nCOPY . .\\nRUN npm run build\\n\\nFROM nginx:alpine\\nCOPY --from=build /app/dist /usr/share/nginx/html\\nCOPY nginx.conf /etc/nginx/conf.d/default.conf\\nEXPOSE 80\\n```\\n\\n### `layer_2_chamber/backend/Dockerfile`\\n\\n```dockerfile\\nFROM python:3.11-slim\\nWORKDIR /app\\nCOPY requirements.txt .\\nRUN pip install --no-cache-dir -r requirements.txt\\nCOPY . .\\nEXPOSE 8000\\nCMD [\\\"uvicorn\\\", \\\"main:app\\\", \\\"--host\\\", \\\"0.0.0.0\\\", \\\"--port\\\", \\\"8000\\\"]\\n```\\n\\n### `scripts/db_backup.sh`\\n\\n```bash\\n#!/usr/bin/env bash\\n# SQLite 備份：用 .backup 指令確保 WAL 一致性\\nset -euo pipefail\\nDB=\\\"${HOME}/.local-brain/shiba-brain.db\\\"\\n<REDACTED> \\\"$(dirname \\\"$0\\\")/..\\\" && pwd)/backups\\\"\\nmkdir -p \\\"$OUT_DIR\\\"\\nTS=$(date +%Y%m%d_%H%M%S)\\nsqlite3 \\\"$DB\\\" \\\".backup '${OUT_DIR}/shiba-brain-${TS}.db'\\\"\\necho \\\"備份完成：${OUT_DIR}/shiba-brain-${TS}.db\\\"\\n```\\n\\n### `layer_3_pipeline/server.py`（骨架）\\n\\n```python\\n# FastAPI :8001 輕量 wrapper，由 launchd 常駐\\n# POST /trigger/{block} → 呼叫 runner.run_finetune(block)\\n# GET  /runs           → 查最近訓練 run\\n# GET  /health         → Layer 2 心跳檢查\\n```\\n\\n## 執行步驟（分 6 階段，每階段驗證通過才進下一步）\\n\\n1. **後端 docker 化（不動前端）**\\n   - 寫 `requirements.txt`（從現有 import 逐個 pin 版本）\\n   - 寫 `layer_2_chamber/backend/Dockerfile`\\n   - `config.py` / `gatekeeper.py` 改讀 env var\\n   - `docker build` + 單獨 `docker run` + bind mount `~/.local-brain/` 測試 → `curl localhost:8000/api/v1/teachers` 通\\n\\n2. **Vue 3 專案 bootstrap**\\n   - `npm create vite@latest frontend-vue -- --template vue-ts`\\n   - 裝 Tailwind + vue-router + pinia\\n   - `tailwind.config.js` 從 `colors_and_type.css` 翻譯 token\\n   - 驗證 `npm run dev` 起得來\\n\\n3. **組件搬遷**\\n   - shared/Components → Badge.vue / DataTable.vue / QuotaBar.vue / DetailPanel.vue\\n   - Sidebar.vue + 4 個 Phase*.vue（依序：Router → Memory → Teachers → Pipeline）\\n   - `api/client.ts` 以 `/api/v1` 為 base（相對路徑，走 nginx proxy）\\n   - `npm run build` 產 `dist/`\\n\\n4. **docker-compose 整合**\\n   - 寫 `frontend-vue/Dockerfile` + `nginx.conf`\\n   - 寫 `docker-compose.yml`\\n   - `docker compose up --build` → `curl localhost:9590/` 拿到 Vue SPA；`curl localhost:9590/api/v1/teachers` 拿到後端 JSON\\n\\n5. **Layer 3 獨立服務**\\n   - 寫 `layer_3_pipeline/server.py`\\n   - 寫 `com.shiba.layer3.plist` + `setup_layer3_launchd.sh`\\n   - Layer 2 的 `routes_finetune.py` 與 `background.py` 改 HTTP 觸發\\n   - `launchctl load` 後 `curl localhost:8001/health` 通\\n\\n6. **SQLite 備份 + 收尾**\\n   - 寫 `scripts/db_backup.sh`，`chmod +x` + 手動跑一次驗證\\n   - 把 `frontend/Shiba Fine-Tuning Design System/` 改名為 `frontend/_legacy_react_cdn/`\\n   - 補 README.md 啟動章節、更新 CHANGELOG.md 至 v0.9.0\\n   - 每階段結束單獨 commit，最後 tag `v0.9.0`\\n\\n## Verification（端對端驗證）\\n\\n```bash\\n# 1. compose 啟動\\ndocker compose up -d\\n\\n# 2. 前端 SPA\\ncurl -I http://localhost:9590/                # 200，text/html\\ncurl -I http://localhost:9590/router          # 200（SPA fallback）\\n\\n# 3. API proxy\\ncurl http://localhost:9590/api/v1/teachers    # JSON 清單\\n\\n# 4. SQLite 雙向存取\\nsqlite3 ~/.local-brain/shiba-brain.db \\\"SELECT COUNT(*) FROM sessions;\\\"   # host 讀\\ndocker compose exec backend sqlite3 /data/shiba-brain.db \\\"SELECT COUNT(*) FROM sessions;\\\"  # container 讀，數值一致\\n\\n# 5. Ollama 從 container 內可達\\ndocker compose exec backend curl -s http://host.docker.internal:11434/api/tags | head\\n\\n# 6. Claude Code stop_hook 寫入 DB 後立即可查\\n# （觸發一次對話 → hook 寫入 → 下方查詢行數應增加）\\nsqlite3 ~/.local-brain/shiba-brain.db \\\"SELECT COUNT(*) FROM sessions;\\\"\\n\\n# 7. Layer 3 host 服務\\ncurl http://localhost:8001/health             # {\\\"status\\\": \\\"ok\\\"}\\n\\n# 8. Layer 2 透過 host.docker.internal 觸發 Layer 3\\ncurl -X POST http://localhost:9590/api/v1/finetune/trigger/block1\\n\\n# 9. 備份\\nbash scripts/db_backup.sh\\nls -lh backups/shiba-brain-*.db               # 有檔案產生\\n```\\n\\n## 副作用清單\\n\\n- **`frontend/` 目錄大改**：舊 `Shiba Fine-Tuning Design System/` 改名 `_legacy_react_cdn/`，驗證完會刪除\\n- **後端 `config.py` 簽名變**：OLLAMA_BASE_URL 從常數改成讀 env；所有直接 import 的呼叫點不受影響（值仍是字串）\\n- **Layer 3 觸發路徑變**：從 Python subprocess 改 HTTP；failing scenarios 要處理 host service 掛掉 + timeout\\n- **Claude Code hooks 不變**：繼續寫 `~/.local-brain/shiba-brain.db`，但 docker 化後任何寫入時 WAL 在 host 與 container 間同步，macOS 下 Docker Desktop 的 osxfs/virtiofs 有已知延遲（預期 <100ms）\\n- **port 9590 占用**：原本前端用哪個 port 不明（現在沒 dev server），9590 被 docker 占走後 host 不能再用同一 port 跑別的\\n- **`.env.example` 需要 Shiba 填真值後另存 `.env`**：docker-compose 自動讀取，DB_PATH / OLLAMA_BASE_URL / LAYER3_BASE_URL 可在此覆寫\\n\\n## 非目標（本次不做）\\n\\n- Layer 1 hooks docker 化（Claude Code 執行環境綁 host）\\n- Layer 3 docker 化（MLX 需 MPS）\\n- Ollama docker 化（使用者明確要求保持外部）\\n- 前端 UI 設計改版（只做技術棧遷移，視覺維持一致）\\n- CI/CD pipeline（本次只做本地啟動，部署另議）\\n\", \"planFilePath\": \"<PROJECT_PATH>\"}\n錯誤：",
+    "input": "",
+    "output": "澄清一下——目前 plan 的設計其實**就是把 SQLite 放在外部**，不是放 container 內：\n\n| 元件 | 位置 |\n|------|------|\n| SQLite 檔案實體 | **host 上** `~/.local-brain/shiba-brain.db`（不動） |\n| docker-compose 存取方式 | bind mount `~/.local-brain:/data`（把 host 目錄掛進 container） |\n| container 內看到的路徑 | `/data/shiba-brain.db`（env `DB_PATH` 控制） |\n| Claude Code stop_hook（host 外部執行） | 直接寫 `~/.local-brain/shiba-brain.db` |\n\n兩邊操作的是**同一顆檔案**，container 沒有獨立一份。所以「SQLite 放在外部讓 compose 存取」這句話跟我目前的設計是一致的。Plan 裡寫「bind-mount 到 host」是我文字不精準，應該是「bind-mount host 目錄進 container」。\n\n不過順著你這句話，有一個延伸選擇題——**SQLite 的 host 位置**：\n\n1. **維持 `~/.local-brain/`**（現狀）\n    - 優：Claude Code hooks / plugin / layer_1_memory 全部都在抓這個路徑，不用改碼\n    - 缺：DB 實體在 home 目錄底下，跟專案分離\n\n2. **搬到專案下 `./data/shiba-brain.db`**\n    - 優：專案自包含，clone 下來 `docker compose up` 就有\n    - 缺：stop_hook / plugin / layer_1_memory / config.yaml 寫死 `~/.local-brain/` 的地方全部要改；現有 DB 要先搬運\n\n3. **維持 `~/.local-brain/`，但在 `./data/` 建 symlink**\n    - 折衷：專案下看得到 DB，但實體路徑不變\n\n要走哪一個方向？"
+  },
+  {
+    "review_id": 43,
+    "sid": 71,
+    "event_type": "git_ops",
+    "instruction": "修復以下工具執行錯誤：\n工具：Bash\n指令：{\"command\": \"<REDACTED> -u)\\nlaunchctl disable \\\"gui/$UID_N/ai.openclaw.gateway\\\" 2>&1; echo \\\"disable_exit=$?\\\"\\nlaunchctl bootout \\\"gui/$UID_N/ai.openclaw.gateway\\\" 2>&1; echo \\\"bootout_exit=$?\\\"\\nsleep 2\\necho \\\"---launchctl list---\\\"; launchctl list 2>/dev/null | grep -i openclaw || echo \\\"(agent gone)\\\"\\necho \\\"---port 18789---\\\"; lsof -nP -iTCP:18789 -sTCP:LISTEN 2>/dev/null || echo \\\"(port free)\\\"\", \"description\": \"Disable and bootout openclaw launch agent, verify port freed\"}\n錯誤：",
+    "input": "",
+    "output": "系統的自動授權把這步擋下來了(因為 `launchctl disable/bootout` 屬持久性系統設定變更,需你明確逐指令確認)。\n\n你 A 已授權方向,但這兩條指令請由你親自跑(在輸入框用 `!` 前綴即可直接帶回結果):\n\n```\n! launchctl disable \"gui/$(id -u)/ai.openclaw.gateway\" && launchctl bootout \"gui/$(id -u)/ai.openclaw.gateway\"; echo done\n```\n\n**這做什麼**:\n- `disable` — 標記該 LaunchAgent 為停用,**重開機後也不會再自動拉起**(根治 KeepAlive 重啟)\n- `bootout` — 立即停掉現在跑的 PID 898,釋放 `<LOCAL_IP>:18789`\n- **完全可逆**:不刪 plist,日後要復原跑 `launchctl enable` + `launchctl bootstrap` 即可\n\n跑完貼結果給我,我接著驗證埠已釋放,然後幫你把容器(`docker compose up -d`)拉起來、確認 healthy。"
+  },
+  {
+    "review_id": 44,
+    "sid": 24,
+    "event_type": "git_ops",
+    "instruction": "你會怎麼調整",
+    "input": "User: HITL防護層是？\nAssistant: $ pkill -f \"uvicorn layer_2_chamber\" ; sleep 1 && uvicorn layer_2_chamber.backend.main:app --port 8000 &\n$ uv run uvicorn layer_2_chamber.backend.main:app --port 8000 > /tmp/uvicorn.log 2>&1 &\nsleep 4 && curl -s http://localhost:8000/api/v1/dataset/extract -X POST | python3 -m json.tool 2>/dev/null | head -5\n\nUser: 讓我執行 git log --oneline -5\nAssistant: $ git log --oneline -5\n\nUser: 幫我做git stash pop\nAssistant: $ git stash pop\n$ git stash\n\nUser: 那我先休息了\nAssistant: $ ollama pull qwen3:30b-a3b 2>&1\n\nUser: 並行有什麼風險或需要考量的點嗎\nAssistant: $ curl -s http://localhost:11434/api/tags | python3 -c \"import sys,json; d=json.load(sys.stdin); print([m['name'] for m in d.get('models',[])])\" 2>/dev/null || echo \"OLLAMA_OFFLINE\"\n$ sudo powermetrics -n 1 -i 500 --samplers gpu_power 2>&1 | head -30\n\nUser: <bash-input>echo \"$USER ALL=(ALL) NO<REDACTED> | sudo tee /etc/sudoers.d/powermetrics</bash-input>\nAssistant: $ brew install osx-cpu-temp 2>&1 | tail -3 && osx-cpu-temp\n$ sudo powermetrics -n 1 -i 500 --samplers gpu_power 2>&1 | grep \"GPU HW active residency\"\n$ sqlite3 ~/.local-brain/shiba-brain.db \"\nSELECT b.session_id, count(*) AS msg_count \nFROM branches b\nLEFT JOIN branch_messages bm ON bm.branch_id = b.id\nGROUP BY b.session_id\nORDER BY msg_count DESC LIMIT 8;\n\"\n$ find ~/.claude -name \"*.py\" 2>/dev/null | head -10\n# Edit: <PROJECT_PATH>\n$ curl -s http://localhost:8000/docs | head -5\n$ uv run --with fastapi --with uvicorn uvicorn layer_2_chamber.backend.main:app --port 8000 > /tmp/uvicorn.log 2>&1 &\nsleep 5 && curl -s http://localhost:8000/ | head -3",
+    "output": "$ uvx pytest tests/layer2/test_refiner_service.py -v 2>&1\n$ # 用 Swift 直接呼叫 IOReport（在 dyld cache 裡）\ncat > /tmp/temp_read.swift << 'EOF'\nimport Foundation\n\n// IOReport 在 Sequoia 移到 dyld cache，用 dlopen 載入\nguard let handle = dlopen(nil, RTLD_LAZY) else { exit(1) }\n\ntypealias IOReportCopyAllChannels_t = @convention(c) (CFDictionary?, CFDictionary?) -> Unmanaged<CFDictionary>?\ntypealias IOReportCreateSubscription_t = @convention(c) (CFAllocator?, CFDictionary?, UnsafeMutablePointer<Unmanaged<CFDictionary>?>?, Int64, CFDictionary?) -> AnyObject?\ntypealias IOReportChannelGetChannelName_t = @convention(c) (CFDictionary) -> Unmanaged<CFString>?\ntypealias IOReportChannelGetGroupName_t = @convention(c) (CFDictionary) -> Unmanaged<CFString>?\ntypealias IOReportSimpleGetIntegerValues_t = @convention(c) (CFDictionary) -> Int64\n\nlet copyAll = unsafeBitCast(dlsym(handle, \"IOReportCopyAllChannels\"), to: IOReportCopyAllChannels_t.self)\nlet getName = unsafeBitCast(dlsym(handle, \"IOReportChannelGetChannelName\"), to: IOReportChannelGetChannelName_t.self)\nlet getGroup = unsafeBitCast(dlsym(handle, \"IOReportChannelGetGroupName\"), to: IOReportChannelGetGroupName_t.self)\nlet getValue = unsafeBitCast(dlsym(handle, \"IOReportSimpleGetIntegerValue\"), to: IOReportSimpleGetIntegerValues_t.self)\n\nguard let channels = copyAll(nil, nil)?.takeRetainedValue() as? [String: Any],\n      let chanList = channels[\"IOReportChannels\"] as? [[String: Any]] else {\n    print(\"Failed to get channels\"); exit(1)\n}\n\nfor ch in chanList {\n    let d = ch as CFDictionary\n    guard let grp = getGroup(d)?.takeRetainedValue() as String?,\n          grp.contains(\"Temperature\") else { continue }\n    let name = getName(d)?.takeRetainedValue() as String? ?? \"?\"\n    print(\"\\(grp) / \\(name)\")\n}\nEOF\nswiftc /tmp/temp_read.swift -o /tmp/temp_read 2>&1 | head -5 && /tmp/temp_read 2>&1 | head -20\n$ sqlite3 ~/.local-brain/shiba-brain.db \"\nSELECT id, status, pii_scrubbed,\n       instruction,\n       refined_instruction,\n       expected_answer\nFROM training_samples WHERE id=6;\n\" | tr '|' '\\n'\n$ sqlite3 ~/.local-brain/shiba-brain.db \"\nSELECT '總 sessions' AS 項目, count(*) AS 數量 FROM sessions\nUNION ALL\nSELECT '總 messages', count(*) FROM messages\nUNION ALL\nSELECT '今日 sessions', count(*) FROM sessions \n  WHERE date(started_at) = date('now', 'localtime')\nUNION ALL\nSELECT '今日 messages', count(*) FROM messages\n  WHERE date(created_at) = date('now', 'localtime')\nUNION ALL\nSELECT '總 exchanges', sum(exchange_count) FROM sessions;\n\"\n$ ollama pull qwen3.6:35b-a3b-nvfp4\n$ ps -p 15884 -o args=\n$ uvx --with pyyaml pytest tests/memory/test_embedder.py -v 2>&1 | tail -15"
+  },
+  {
+    "review_id": 45,
+    "sid": 36,
+    "event_type": "git_ops",
+    "instruction": "<command-name>/model</command-name>\n            <command-message>model</command-message>\n            <command-args></command-args>",
+    "input": "",
+    "output": "# Write: <PROJECT_PATH>"
+  },
+  {
+    "review_id": 46,
+    "sid": 22,
+    "event_type": "knowledge_qa",
+    "instruction": "在bypass permissions on 模式下你推薦用哪一個模型與/effort?",
+    "input": "",
+    "output": "venv 在 `~/.local-brain/venv/`（這本身將來也該搬，但先不碰，不擴大本次範圍）。用它驗證："
+  },
+  {
+    "review_id": 47,
+    "sid": 43,
+    "event_type": "fine_tuning_ops",
+    "instruction": "修復以下工具執行錯誤：\n工具：Bash\n指令：{\"command\": \"ls layer_0_router/tests/ && echo \\\"---\\\" && ls layer_0_router/*.py\", \"description\": \"List layer_0_router tests and files\"}\n錯誤：",
+    "input": "",
+    "output": "Ollama OK、router_config 齊備。但 `layer_0_router/tests/` 不存在，先找測試實際位置。"
+  },
+  {
+    "review_id": 48,
+    "sid": 19,
+    "event_type": "terminal_ops",
+    "instruction": "修復以下工具執行錯誤：\n工具：Read\n指令：{\"file_path\": \"<PROJECT_PATH>\"}\n錯誤：",
+    "input": "",
+    "output": "---\n\n## Shiba Dev — 透過 Claude AI 自主學習的簡要自傳\n\n### 起點：把環境建起來\n\n一切從本地端的 **Jenkins CI/CD 環境**開始。在 macOS Docker Compose 上，從零架起完整的軟體交付鏈：Jenkins + Nexus（套件代理）+ Harbor（容器倉庫）+ k3s（輕量 Kubernetes），完成 GitHub → 建構 → 掃描 → 推送 → 部署的全自動流程，並加入 JaCoCo 覆蓋率、Trivy 映像掃描、以及針對 CVE-2026-33634 的供應鏈攻擊修復。這個過程讓 Shiba 學會的不只是工具操作，而是**為什麼要這樣設計**——每個決策背後都有一次與 Claude 的推敲。\n\n### 轉折：把 AI 請到本地\n\n環境穩定後，Shiba 開始研究如何在本地端跑大型語言模型。**NemoClaw / OpenClaw** 是 NVIDIA 的 AI Workbench 推論平台，Shiba 逐步摸清 `openshell`、`<MACHINE_NAME>` 代理機制、credential 注入流程，以及 0.0.13 正式版與 0.0.14 開發版之間的實際差異——這些都是文件沒說清楚、只能實測才知道的事。同期也接了 LINE Bot 橋接、SearXNG 搜尋整合，把 AI 能力真正串進日常工作流。\n\n### 創作：為了好玩而寫的玩具\n\n中間有一個截然不同的項目——**「喵喵與汪汪的 Loop Woof Woof」**（`woof-woof-project`）。一個純前端的互動式視覺音樂玩具，點擊動物按鈕觸發音效與同心圓彩虹動畫。iOS 音效限制、librosa 音段分析、XOR 混淆的隱藏彩蛋——細節的密度和認真程度，跟工程類專案完全一樣。這讓 Shiba 的開發旅程多了一個「為了玩而做」的維度。\n\n### 核心：讓自己的 AI 學習自己\n\n最後，也是最能代表這段旅程的，是 **shiba-fine-tuning-project**——一個四層架構的自我進化系統：\n\n| 層 | 功能 |\n|----|------|\n| Layer 0 Router | Gemma 分類每個對話意圖，決定走哪條路徑 |\n| Layer 1 Memory | 自動採集 Claude 互動的 exchange embedding，建構語意記憶庫 |\n| Layer 2 Chamber | 用 Gemini / Qwen 作為 Teacher，對訓練樣本評分、精煉、生成同義變體 |\n| Layer 3 Pipeline | MLX 本地 LoRA 微調，把評分通過的樣本訓練進本地 Qwen，再掛回 Ollama |\n\n這個系統本身，就是 Shiba 透過 Claude 學習的縮影：**不滿足於用工具，而是要理解工具、改造工具、讓工具學習自己。** 從 FTS5 修復、Ebbinghaus 遺忘曲線加權、Router Telemetry 遙測，到 Dashboard UI 全面改版——每一步都是一次「提問→實測→修正」的完整循環。\n\n---\n\n**這不是一份工具使用紀錄，而是一段透過 AI 反覆追問「為什麼這樣設計」的工程師成長史。**"
+  },
+  {
+    "review_id": 49,
+    "sid": 57,
+    "event_type": "knowledge_qa",
+    "instruction": "修復以下工具執行錯誤：\n工具：Bash\n指令：{\"command\": \"sqlite3 data/shiba-brain.db \\\"SELECT created_at, source_type, model_id, status_code, error_type, substr(error_message,1,200) FROM ai_api_call_logs WHERE (status_code=503 OR error_message LIKE '%503%' OR error_message LIKE '%UNAVAILABLE%' OR error_message LIKE '%overload%') ORDER BY created_at DESC LIMIT 10;\\\"\", \"description\": \"Find 503 errors in API logs\"}\n錯誤：",
+    "input": "",
+    "output": "## Gemini 503 排查結論\n\n**根因：Google 端 model-level 過載，非我方配額或程式 bug**\n\n### 證據\n- **觸發點**：`ai_api_call_logs` table，2026-05-20 14:23-14:50 之間\n- **錯誤訊息**：`\"This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.\"` ← Google 官方 model overload 標準回應\n- **範圍**：**僅 `gemini-2.5-flash-lite`**，flash 主模型未受影響\n- **失敗率**：當日 503=16 次 / 200=145 次 ≈ 10%（成功/失敗交錯出現，非整段斷線）\n\n### 為何是「過載」而非「配額」\n- 配額型錯誤 = HTTP **429**（client.py:153 已正確分流）\n- HTTP **503** + `ServerError` 路徑 = Google 端服務瞬時過載（client.py:180）\n- error_category 已正確標 `transient`\n\n### 現有處理機制（`clients/gemini/client.py:101-114`）\n- 5xx 自動重試 **1 次**，固定 sleep **10 秒**\n- 仍失敗 → `_raise_transient` 觸發 `ai_transient_failure` shiba_alert，呼叫端整批熔斷\n- C.2 E2E 在 RAGAS judge 階段呼 flash-lite 多次，連 2 次 503 就整批熔斷\n\n### 建議行動（請挑一個）\n\n1. **等過載恢復後重跑**（最省事，spike 通常分鐘級恢復；剛才 14:50 是最後一筆 503，可現在重試）\n2. **改用主力 `gemini-2.5-flash` 跑 judge**（避開 flash-lite 過載，但成本/速率不同）\n3. **改重試策略**：1 次 +10s 太保守 → 改 exponential backoff (2/5/10s, 3 次)，提升 transient 容忍度\n\n哪一條？"
+  },
+  {
+    "review_id": 50,
+    "sid": 27,
+    "event_type": "debugging",
+    "instruction": "修復以下工具執行錯誤：\n工具：ExitPlanMode\n指令：{\"allowedPrompts\": [{\"tool\": \"Bash\", \"prompt\": \"run python scripts (init_db, backfill_exchanges) inside project venv\"}, {\"tool\": \"Bash\", \"prompt\": \"run sqlite3 read-only queries against data/shiba-brain.db for verification\"}], \"plan\": \"# Layer 1 重構：新增 exchanges 語意層，完整保留四步循環\\n\\n## Context\\n\\n**問題現況**\\n- 我們希望 DB 能完整表達「user（自然語言）→ assistant（決策 + tool_call）→ tool_result（執行結果）→ assistant（最終回應）」這個四步循環\\n- Layer 2 Bridge 抽訓練樣本、Layer 3 fine-tuning、RAG 召回都需要這個結構\\n\\n**重要發現**（探索後修正初步判斷）\\n- 資料**其實已完整保留**：\\n  - `messages.raw_content`（zlib 壓縮 JSON）保有所有 thinking / text / tool_use / tool_result block，6363 筆訊息中 89% 有資料\\n  - `tool_executions` 表 1774 筆完整保有 `input_cmd` 與 `output_log`\\n  - `tool_use.id ↔ tool_result.tool_use_id` 已透過 `parser._extract_tool_executions()` 完成配對\\n- **真正缺的是「四步循環的語意視圖」**：目前要組出一個完整 exchange 必須跑 state machine 掃 `branch_messages JOIN messages JOIN tool_executions`，且需自己解 raw_content 才能分辨 user 訊息是真正使用者輸入還是 tool_result 包裝\\n- 現況下 `pipeline.py:152 _extract_valid_exchanges` 為了這件事做了大量重複邏輯\\n\\n**目標**\\n新增 `exchanges` 與 `exchange_messages` 兩張表作為「語意層」，純衍生自 messages + tool_executions，可從原始資料完整重建。讓未來 Layer 2 / Layer 3 / RAG 用一條 SQL 即可取得完整四步循環。\\n\\n**設計原則**\\n- `messages` 表是「事實層」（對應 JSONL 原始 entry），不變更現有欄位\\n- `exchanges` 是「語意層」（純衍生，可重建），失敗不影響上游\\n- 分階段：本次只建表 + 回填 + stop_hook 整合，**不改動 Layer 2 pipeline.py**（保留向後相容，未來再切換）\\n\\n---\\n\\n## 推薦方案\\n\\n### Exchange 邊界定義\\n\\n採用「**user 訊息（真正使用者輸入）→ 下一個真正 user 訊息之前**」為一個 exchange，包含中間所有 assistant + tool_result_user 訊息。\\n\\n判斷「真正 user 輸入」的方式：\\n- `messages.role = 'user'` 且解開 `raw_content` 後 `content` 為字串 → 真正 user\\n- `messages.role = 'user'` 且 `raw_content` JSON 內有 `type='tool_result'` block → tool_result 包裝（不開新 exchange）\\n\\n`final_assistant_message_id` 取「該段內最後一個有 text block 且 has_tool_use=False 的 assistant」；找不到時取最後一個 assistant；都沒有則 NULL。\\n\\n### Schema 設計\\n\\n新增於 `layer_1_memory/db/schema.sql`（branch_messages 之後、FTS5 之前）：\\n\\n```sql\\n-- exchanges：四步循環語意層\\nCREATE TABLE IF NOT EXISTS exchanges (\\n    id                          INTEGER PRIMARY KEY AUTOINCREMENT,\\n    session_id                  INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,\\n    branch_id                   INTEGER NOT NULL REFERENCES branches(id) ON DELETE CASCADE,\\n    exchange_idx                INTEGER NOT NULL,             -- 該 branch 內第 N 個 exchange (0-based)\\n\\n    user_message_id             INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,\\n    final_assistant_message_id  INTEGER REFERENCES messages(id) ON DELETE SET NULL,\\n\\n    message_count               INTEGER NOT NULL DEFAULT 0,   -- 包含的 messages 總數\\n    assistant_message_count     INTEGER NOT NULL DEFAULT 0,\\n    tool_round_count            INTEGER NOT NULL DEFAULT 0,   -- 含 tool_use 的 assistant 訊息數\\n    tool_use_count              INTEGER NOT NULL DEFAULT 0,   -- tool_executions 配對總數\\n\\n    has_tool_use                INTEGER NOT NULL DEFAULT 0,\\n    has_error                   INTEGER NOT NULL DEFAULT 0,   -- 任一 tool_executions.is_error=1\\n    has_final_text              INTEGER NOT NULL DEFAULT 0,\\n    tool_names                  TEXT NOT NULL DEFAULT '[]',   -- JSON array\\n\\n    user_text_preview           TEXT,                          -- user content 截 300 字\\n    final_text_preview          TEXT,                          -- final assistant content 截 500 字\\n\\n    status                      TEXT NOT NULL DEFAULT 'completed'\\n        CHECK(status IN ('in_progress', 'completed', 'abandoned')),\\n    started_at                  TEXT NOT NULL,                 -- = user_message.message_time\\n    ended_at                    TEXT,                          -- = final_assistant.message_time\\n    created_at                  TEXT NOT NULL DEFAULT (datetime('now')),\\n    UNIQUE(branch_id, exchange_idx)\\n);\\n\\nCREATE INDEX IF NOT EXISTS idx_exchanges_session       ON exchanges(session_id);\\nCREATE INDEX IF NOT EXISTS idx_exchanges_branch        ON exchanges(branch_id, exchange_idx);\\nCREATE INDEX IF NOT EXISTS idx_exchanges_user_msg      ON exchanges(user_message_id);\\nCREATE INDEX IF NOT EXISTS idx_exchanges_final_msg     ON exchanges(final_assistant_message_id);\\nCREATE INDEX IF NOT EXISTS idx_exchanges_status        ON exchanges(status);\\nCREATE INDEX IF NOT EXISTS idx_exchanges_filter        ON exchanges(session_id, status, has_tool_use, has_error);\\n\\n-- exchange_messages：橋接表（同 branch_messages 風格）\\nCREATE TABLE IF NOT EXISTS exchange_messages (\\n    exchange_id      INTEGER NOT NULL REFERENCES exchanges(id) ON DELETE CASCADE,\\n    message_id       INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,\\n    seq              INTEGER NOT NULL,\\n    role_in_exchange TEXT NOT NULL,\\n        -- 'user_open' | 'assistant_tool' | 'tool_result_user' | 'assistant_final' | 'assistant_text'\\n    PRIMARY KEY (exchange_id, message_id)\\n);\\n\\nCREATE INDEX IF NOT EXISTS idx_exchange_messages_msg ON exchange_messages(message_id);\\nCREATE INDEX IF NOT EXISTS idx_exchange_messages_seq ON exchange_messages(exchange_id, seq);\\n```\\n\\n選 `exchange_messages` 橋接表而非在 messages 加 `exchange_id` 欄位，原因：\\n- 同一 message 在多個 branch 中可能屬於不同 exchange（rewind 共用上半段）\\n- 不破壞「事實層不變」原則\\n- 與 `branch_messages` 風格一致\\n\\n### 回填腳本\\n\\n新增檔案：`layer_1_memory/lib/exchanges.py`\\n\\n核心函式：\\n- `_is_tool_result_message(raw_content_str)`：判斷 user 訊息是否為 tool_result 包裝\\n- `build_exchanges_for_branch(conn, session_id, branch_id) -> list[ExchangeRow]`：線性掃描 + 狀態機\\n- `rebuild_exchanges_for_session(conn, session_id)`：DELETE + INSERT，idempotent\\n- `rebuild_exchanges_for_session_standalone(session_id)`：自開連線版本（給 stop_hook 用）\\n\\nCLI 入口：`layer_1_memory/scripts/backfill_exchanges.py`（資料夾需新建）\\n- `--all`：回填全部 sessions（預估 ~600~1200 個 exchange）\\n- `--session-uuid <uuid>`：單一 session\\n- `--dry-run`：只印統計不寫入\\n\\n### Stop Hook 整合\\n\\n修改 `layer_1_memory/hooks/stop_hook.py:269` 之後（`conn.commit()` 完成、`with` block 結束後）：\\n\\n```python\\n# 6.5 重建 exchanges 語意層（事務外，自開連線，失敗不影響主流程）\\ntry:\\n    from layer_1_memory.lib.exchanges import rebuild_exchanges_for_session_standalone\\n    rebuild_exchanges_for_session_standalone(session_uuid)\\nexcept Exception as e:\\n    logger.warning(\\\"exchanges 重建失敗（不影響主流程）：%s\\\", e)\\n```\\n\\n放在 `_write_exchange_embeddings` 之前（`stop_hook.py:272`），`_infer_router_acceptance` 之後不影響。\\n\\n### 不在本次修改的東西\\n- `layer_2_chamber/backend/extraction/pipeline.py`：保留向後相容\\n- `messages` 表現有欄位：完全不動\\n\\n---\\n\\n## 關鍵檔案\\n\\n| 路徑 | 動作 |\\n|------|------|\\n| `layer_1_memory/db/schema.sql` | 編輯：line 110 之後新增 exchanges + exchange_messages CREATE |\\n| `layer_1_memory/lib/exchanges.py` | **新建** |\\n| `layer_1_memory/scripts/backfill_exchanges.py` | **新建**（含 scripts/ 資料夾） |\\n| `layer_1_memory/hooks/stop_hook.py` | 編輯：line 269 之後插入 standalone 重建呼叫 |\\n| `layer_1_memory/lib/db.py` | 不需改（init_db 已用 `executescript(schema_sql)`，`CREATE IF NOT EXISTS` 自動處理新表） |\\n\\n可重用的既有工具（不重新實作）：\\n- `layer_1_memory/lib/db.py:compress_text/decompress_text` — raw_content 解壓\\n- `layer_1_memory/lib/db.py:get_connection` — WAL 連線\\n- `layer_1_memory/lib/parser.py:_extract_tool_executions` — 已配對 tool_use ↔ tool_result，重建時可參考\\n\\n---\\n\\n## 分階段執行（一次只改一處）\\n\\n依 Shiba CLAUDE.md「單次異動原則」拆成三步，每步驗證通過再進下一步：\\n\\n**Step 1：schema.sql + lib/exchanges.py + backfill 腳本**\\n- 動作：新增 schema、實作 exchanges.py、寫 backfill CLI\\n- 驗證：跑 `backfill_exchanges.py --dry-run`，再 `--all`，比對統計\\n- 不動 stop_hook，舊流程完全不受影響\\n\\n**Step 2：stop_hook 整合**\\n- 動作：在 stop_hook.py:269 之後加 standalone 呼叫\\n- 驗證：跑一次測試對話，確認新 session 自動產生 exchange row\\n\\n**Step 3（未來，不在本次計畫）：Layer 2 pipeline 切換**\\n- 在 pipeline.py 新增 `_extract_path_a_v2()` 走新表\\n- A/B 對比舊/新抽法產出的 training_samples\\n- 驗證一致後切換\\n\\n---\\n\\n## 驗證方法\\n\\n### Step 1 驗證\\n\\n```bash\\n# 1. 重新初始化 DB（CREATE IF NOT EXISTS 不影響舊資料）\\ncd <PROJECT_PATH> -c \\\"from layer_1_memory.lib.db import init_db; init_db()\\\"\\n\\n# 2. dry-run 看回填會產生多少 exchange\\npython layer_1_memory/scripts/backfill_exchanges.py --dry-run\\n\\n# 3. 全量回填\\npython layer_1_memory/scripts/backfill_exchanges.py --all\\n\\n# 4. 驗證統計\\nsqlite3 data/shiba-brain.db <<'EOF'\\nSELECT COUNT(*) AS total_exchanges,\\n       SUM(has_tool_use) AS with_tools,\\n       SUM(has_error) AS with_errors,\\n       SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END) AS completed\\nFROM exchanges;\\nEOF\\n\\n# 5. 驗證四步循環查詢\\nsqlite3 data/shiba-brain.db <<'EOF'\\n.headers on\\n.mode column\\nSELECT e.exchange_idx, e.tool_round_count,\\n       SUBSTR(e.user_text_preview,1,40) AS user_says,\\n       SUBSTR(e.final_text_preview,1,40) AS assistant_replies,\\n       e.tool_names\\nFROM exchanges e\\nJOIN branches b ON b.id = e.branch_id\\nWHERE b.is_active=1 AND e.has_tool_use=1\\nORDER BY e.ended_at DESC LIMIT 5;\\nEOF\\n\\n# 6. 抽一個 exchange 看完整四步展開\\nsqlite3 data/shiba-brain.db <<'EOF'\\n.headers on\\nSELECT em.seq, em.role_in_exchange, m.role, m.has_tool_use,\\n       SUBSTR(COALESCE(m.content,te.input_cmd,''),1,80) AS preview\\nFROM exchange_messages em\\nJOIN messages m ON m.id = em.message_id\\nLEFT JOIN tool_executions te ON te.message_id = m.id\\nWHERE em.exchange_id = (SELECT id FROM exchanges WHERE has_tool_use=1 LIMIT 1)\\nORDER BY em.seq, te.id;\\nEOF\\n```\\n\\n### Step 2 驗證\\n\\n```bash\\n# 跑一次測試對話（觸發 stop hook）\\n# 然後檢查新 session 是否自動有 exchange\\nsqlite3 data/shiba-brain.db <<'EOF'\\nSELECT s.uuid, COUNT(e.id) AS exchanges\\nFROM sessions s LEFT JOIN exchanges e ON e.session_id = s.id\\nWHERE s.started_at > datetime('now','-1 hour')\\nGROUP BY s.uuid;\\nEOF\\n```\\n\\n---\\n\\n## 副作用清單\\n\\n| 項目 | 影響 |\\n|------|------|\\n| DB 空間 | +1~1.5 MB（exchanges ~900 KB + exchange_messages ~150 KB） |\\n| init_db 行為 | 自動跑 `CREATE IF NOT EXISTS`，舊資料無影響 |\\n| stop_hook 主流程 | **零影響**：standalone 自開連線 + try/except，新邏輯全在事務外 |\\n| 現有 Layer 2 pipeline | **零影響**：本次完全不動 pipeline.py |\\n| 回填中對 stop_hook 的鎖定 | WAL 模式 + busy_timeout=5000，read 不阻塞 write，回填採批次 transaction（每 N 個 session 一個 commit） |\\n| 失敗恢復 | 任何 session 回填失敗：log error 並繼續；可手動重跑 `--session-uuid` |\\n\", \"planFilePath\": \"<PROJECT_PATH>\"}\n錯誤：",
+    "input": "",
+    "output": "依「架構 Opus high / 樣板 Sonnet medium / 收尾 Haiku low」原則，針對本次三步建議：\n\n| Step | 子任務 | 建議 model / effort | 理由 |\n|------|-------|-------------------|------|\n| **1.1** | `schema.sql` 新增 DDL | **Sonnet 4.6 / medium** | 純樣板 CREATE TABLE，照 plan 抄即可 |\n| **1.2** | `lib/exchanges.py` 核心演算法 | **Opus 4.7 / max** | `_is_tool_result_message`、邊界 state machine、role 判定有細節陷阱（壓縮解壓、tool_use ↔ tool_result 配對、final 找尋邏輯），錯一處整批 exchange 全爛 |\n| **1.3** | `scripts/backfill_exchanges.py` CLI | **Sonnet 4.6 / medium** | argparse + for loop 樣板 |\n| **1.4** | dry-run + 全量回填 + SQL 驗證 | **Haiku 4.5 / low** | 跑指令、看數字，不需推理 |\n| **2** | `stop_hook.py:269` 後加 5 行 standalone 呼叫 | **Sonnet 4.6 / medium** | 純整合，try/except 樣板 |\n\n**切換時機**：\n- 1.1 → 1.2 之間：切 Opus max（前面寫完 schema 再進核心）\n- 1.2 → 1.3 之間：切回 Sonnet medium\n- 1.4：可選降 Haiku 省 token\n- 2：保持 Sonnet medium\n\n**最關鍵的斷點是 1.2**——演算法設計絕對要 Opus high，不要省。\n\n要把這個切換策略寫進 plan 檔嗎？"
+  },
+  {
+    "review_id": 51,
+    "sid": 55,
+    "event_type": "fine_tuning_ops",
+    "instruction": "修復以下工具執行錯誤：\n工具：Bash\n指令：{\"command\": \"ollama ps -json 2>&1\", \"description\": \"Check running Ollama model status\"}\n錯誤：",
+    "input": "",
+    "output": "根據日誌分析，我找到了幾個關鍵瓶頸。以下是完整的診斷與優化方案：\n\n---\n\n## 當前狀態診斷\n\n### 硬件規格\n| 項目 | 數值 |\n|------|------|\n| CPU | M1 Max 10-core (8 Performance + 2 Efficiency) |\n| RAM | 64GB 統一記憶體 |\n| GPU | 內建 GPU（共用記憶體） |\n\n### 模型狀態\n| 項目 | 數值 |\n|------|------|\n| Model Size | 22 GB (NVFP4 量化) |\n| Context Window | **262,144 tokens** (過大!) |\n| GPU Offload | **100% GPU** (正確) |\n| Peak Memory | ~24.14 GB (含 KV Cache 空間) |\n\n### 性能瓶頸分析（從 server.log）\n\n**第一次請求（最慢，約 83 秒）：**\n- Prompt 處理：31,076 tokens / 62 秒 = **~500 tok/s**\n- 這表明 KV cache 過大導致記憶體操作成本極高\n\n**後續請求（較快）：**\n- 365 tokens → 總回應 6.2 秒\n- 2,844 tokens → 總回應 ~10 秒\n\n**根因：`CONTEXT: 262144` (256K) 上下文窗口過大**\n這導致 KV cache 分配巨大的記憶體空間，即使只使用少量 tokens，每次 prompt processing 都需要遍歷整個 cache。\n\n---\n\n## 優化方案\n\n### Step 1：建立優化後的 Model 檔案\n\n主要修改項目：\n1. **降低 `num_ctx`** — 從 262144 降到 8192~16384（最關鍵的優化）\n2. **添加 `num_predict`** — 限制每次生成的 tokens 數量，避免無效推理\n3. **調整 `temperature` / `top_p`** — 平衡速度與質量\n4. **啟用 `min_p`** — 替代 top_k/top_p，Qwen 系列推薦\n5. **添加 `num_batch`** — 優化批次處理\n\n要我現在建立一個優化後的自訂模型嗎？例如命名為 `qwen3.6:35b-a3b-nvfp4-fast`？\n\n```\n# 建議的參數組合（針對 M1 Max + Claude Code API）\nnum_ctx      → 8192   (足夠應對絕大多數對話，大幅降低 KV cache 開銷)\nnum_predict  → 2048   (限制生成長度，避免冗長輸出)\ntemperature  → 0.7    (加速收斂)\ntop_p        → 0.8    (配合 min_p)\nmin_p        → 0.1    (Qwen 系列推薦)\nrepeat_penalty → 1.1  (輕微防重复)\n```\n\n要執行嗎？"
+  },
+  {
+    "review_id": 52,
+    "sid": 62,
+    "event_type": "fine_tuning_ops",
+    "instruction": "修復以下工具執行錯誤：\n工具：Bash\n指令：{\"command\": \"sqlite3 data/shiba-brain.db <<'SQL'\\n.headers on\\n.mode column\\n-- 拆 event_types JSON array 統計各 event_type 的 session 出現次數\\nWITH RECURSIVE et(session_id, event) AS (\\n  SELECT id, json_each.value FROM sessions, json_each(sessions.event_types)\\n)\\nSELECT event AS event_type,\\n       COUNT(*) AS session_hits,\\n       ROUND(COUNT(*) * 100.0 / (SELECT COUNT(*) FROM sessions), 1) AS pct_of_sessions\\nFROM et\\nGROUP BY event\\nORDER BY session_hits DESC;\\nSQL\", \"description\": \"Count event_type frequency across sessions\"}\n錯誤：",
+    "input": "",
+    "output": "Session 層級有了，但這只代表「session 內出現過」，不等於 query 頻率。再從 exchange 層級看實際操作工具分佈："
+  },
+  {
+    "review_id": 53,
+    "sid": 67,
+    "event_type": "terminal_ops",
+    "instruction": "修復以下工具執行錯誤：\n工具：Bash\n指令：{\"command\": \"docker ps --format '{{.Names}}\\\\t{{.Image}}\\\\t{{.Status}}' | grep -i claw; echo \\\"---mounts---\\\"; docker inspect $(docker ps -q --filter \\\"name=claw\\\") --format '{{range .Mounts}}{{.Source}} -> {{.Destination}}{{\\\"\\\\n\\\"}}{{end}}' 2>/dev/null\", \"description\": \"查 openclaw 容器與掛載點\"}\n錯誤：",
+    "input": "",
+    "output": "config 檔在容器內**正確載入了** `provider: \"searxng\"`,但 runtime 仍跑去用 `kimi` — 所以 **`tools.web.search.provider` 這個 key path 是錯的**,OpenClaw 沒認得它,於是 fallback 到預設的 `kimi`。我來找正確的 schema key。"
+  },
+  {
+    "review_id": 54,
+    "sid": 18,
+    "event_type": "terminal_ops",
+    "instruction": "修復以下工具執行錯誤：\n工具：Bash\n指令：{\"command\": \"cd <PROJECT_PATH> && python -c \\\"import ast, sys; [ast.parse(open(f).read()) or print(f'OK: {f}') for f in ['api/routes_router.py','api/routes_memory.py','api/routes_finetune.py','main.py']]\\\" 2>&1\", \"description\": \"Syntax check all modified/new Python files\"}\n錯誤：",
+    "input": "",
+    "output": "語法正確。讀取 index.html 確認結構，然後修改前端："
+  },
+  {
+    "review_id": 55,
+    "sid": 16,
+    "event_type": "git_ops",
+    "instruction": "修復以下工具執行錯誤：\n工具：Bash\n指令：{\"command\": \"cd <PROJECT_PATH> && python -c \\\"from services.teacher_service import _call_teacher, _mark_daily_limit_reached, _log_usage, is_quota_available, _pick_available_teacher; print('teacher_service OK')\\\" 2>&1\", \"description\": \"Verify teacher_service imports\"}\n錯誤：",
+    "input": "",
+    "output": "測試 mock 有可能因為 `_call_teacher` 多了 conn/sample_id 參數而出問題，先確認測試 DB 能正確建立新欄位："
+  },
+  {
+    "review_id": 56,
+    "sid": 51,
+    "event_type": "fine_tuning_ops",
+    "instruction": "1-2",
+    "input": "User: 另外想問 我有特殊需求 是否可讓openclaw映射出來到<PROJECT_PATH> 以及<PROJECT_PATH> 與 <PROJECT_PATH> 這些目錄 可讀可寫 我希望他能夠維護 Developer與.lmstudio與.ollama與llama.cpp這些目錄 讓他做到自我調整模型\nAssistant: 先 1:補 reasoning 發現進 TOOLS.md。",
+    "output": "熱態真實 baseline:**66.4 tok/s、TTFT 0.6s** —— 模型本身吞吐健康(gpt-oss-20b MoE 在 Metal 的正常良好水準)。瓶頸不在模型速度,而在別處。查 LM Studio 當前載入參數(GPU offload / context / TTL)以定位可改善點:"
+  },
+  {
+    "review_id": 57,
+    "sid": 15,
+    "event_type": "terminal_ops",
+    "instruction": "如何驗證與觀察",
+    "input": "",
+    "output": "$ sqlite3 ~/.local-brain/shiba-brain.db \"\nSELECT 'router_decisions' as tbl, COUNT(*) FROM router_decisions\nUNION ALL SELECT 'pending_samples', COUNT(*) FROM training_samples WHERE status='pending'\nUNION ALL SELECT 'approved_samples', COUNT(*) FROM training_samples WHERE status='approved'\nUNION ALL SELECT 'embeddings', COUNT(*) FROM exchange_embeddings;\" 2>&1"
+  },
+  {
+    "review_id": 58,
+    "sid": 52,
+    "event_type": "debugging",
+    "instruction": "<command-name>/model</command-name>\n            <command-message>model</command-message>\n            <command-args></command-args>",
+    "input": "User: <local-command-caveat>Caveat: The messages below were generated by the user while running local commands. DO NOT respond to these messages or otherwise consider them in your response unless the user explicitly asks you to.</local-command-caveat>\nAssistant: CHANGELOG.md 不存在,而且有幾個檔案是**先前工作**留下的未提交修改(`.env.example`/`secrets.map`/`up.sh`/`openclaw.json`)。先看 `docker-compose.yml` 的完整 diff,確認這次 commit 只含本次掛載異動、不誤掃別的:",
+    "output": "你選**全根完全可寫**。我先確認一件會影響「agent 能不能真的在整個根目錄為所欲為」的事——容器是硬牆,但 OpenClaw 自己還有一層 workspace 限制。看一下設定:"
+  },
+  {
+    "review_id": 59,
+    "sid": 12,
+    "event_type": "architecture",
+    "instruction": "好 指令部分太長，可以改成更精簡的格式",
+    "input": "",
+    "output": "接著更新 memory："
+  },
+  {
+    "review_id": 60,
+    "sid": 9,
+    "event_type": "fine_tuning_ops",
+    "instruction": "修復以下工具執行錯誤：\n工具：Bash\n指令：{\"command\": \"python -m pytest tests/layer2/test_refiner_service.py -v 2>&1\", \"description\": \"Run refiner tests\"}\n錯誤：",
+    "input": "",
+    "output": "Test 3 失敗：`conn_factory` 回傳同一個 conn，`refine_pending_raw_samples` 會 `conn.close()` 後測試再查。修正測試讓 conn_factory 每次回新連線："
+  },
+  {
+    "review_id": 61,
+    "sid": 66,
+    "event_type": "git_ops",
+    "instruction": "修復以下工具執行錯誤：\n工具：Bash\n指令：{\"command\": \"P=$(security find-generic-password -s openclaw -a OPENCLAW_GATEWAY_PASSWORD -w 2>/dev/null)\\necho \\\"len=${#P}\\\"\\necho \\\"contains \\\\$ : $(printf '%s' \\\"$P\\\" | grep -c '\\\\$')\\\"\\necho \\\"contains { or } : $(printf '%s' \\\"$P\\\" | grep -c '[{}]')\\\"\\necho \\\"contains : : $(printf '%s' \\\"$P\\\" | grep -c ':')\\\"\\necho \\\"contains # : $(printf '%s' \\\"$P\\\" | grep -c '#')\\\"\\necho \\\"contains backslash : $(printf '%s' \\\"$P\\\" | grep -c '\\\\\\\\\\\\\\\\')\\\"\\necho \\\"contains quote (\\\\\\\" or '): $(printf '%s' \\\"$P\\\" | grep -c \\\"[\\\\\\\"']\\\")\\\"\\necho \\\"contains trailing/leading space: $(printf '[%s]' \\\"$P\\\" | grep -cE '^\\\\[ | \\\\]$')\\\"\\necho \\\"char classes present: $(printf '%s' \\\"$P\\\" | sed 's/[a-z]/L/g; s/[A-Z]/U/g; s/[0-9]/D/g; s/[^LUD]/S/g')\\\"\", \"description\": \"Probe password for compose-hostile characters without printing it\"}\n錯誤：",
+    "input": "",
+    "output": "密碼結構探測被安全分類器擋下了(合理,我不該把密碼字元組成印出來),我換成**不接觸密碼內容**的修法。\n\n**根因已經很明確**:TOKEN(64 hex,全安全字元)進得去、PASSWORD(含特殊字元)被 docker compose 的 `\"${VAR:-}\"` 變數插值處理時吃掉 → 容器內變成 UNSET。這是 compose map 形式 `KEY: \"${VAR}\"` 對含 `$`/`{` 等字元的值的已知坑。\n\n**正解**:改用 compose 的 **list 形式 key 直通**(`- KEY`),compose 會把 host env 的值**原封不動**傳進容器、完全不做插值,對任何特殊字元免疫,而且密鑰一樣只走 Keychain→host env→容器,不落磁。\n\n先看 compose 那段:"
+  },
+  {
+    "review_id": 62,
+    "sid": 37,
+    "event_type": "terminal_ops",
+    "instruction": "修復以下工具執行錯誤：\n工具：AskUserQuestion\n指令：{\"questions\": [{\"question\": \"確認排程：每天 09:00 Asia/Taipei = 01:00 UTC（cron: `0 1 * * *`），讓遠端 agent 對 Claude 說 Hello。使用預設 model claude-sonnet-4-6、環境 mcp_platform、repo shiba-fine-tuning-project。要建立嗎？\", \"header\": \"Confirm\", \"multiSelect\": false, \"options\": [{\"label\": \"確認建立\", \"description\": \"依上述設定建立 routine\"}, {\"label\": \"改 prompt 內容\", \"description\": \"想自訂對 Claude 說的訊息\"}, {\"label\": \"改時間或時區\", \"description\": \"重新設定 cron\"}]}]}\n錯誤：",
+    "input": "",
+    "output": "排程 routine 的本質是：在指定時間，Anthropic 雲端啟動一個遠端 Claude session，並把你設定的 prompt 當作第一則 user message 送給它。\n\n所以「每天早上說 Hello」就是建一個 cron routine，prompt 設為 `\"Hello\"`，agent 就會在每天 01:00 UTC（09:00 台北）收到這則訊息並回覆 — 結果會出現在 `claude.ai/code/routines/{id}` 的執行記錄裡。\n\n實際上你不會「看到」這個 Hello，除非你主動去 routines 頁面查看 run log。\n\n**你的目的是什麼？**\n\n- 測試 remote agent 功能是否正常運作？\n- 想定期觸發某個任務（Hello 只是範例）？\n- 想讓 agent 每天做某件事（例如檢查 DB 狀態、跑某個腳本）？\n\n如果是測試，我直接幫你建；如果背後有實際任務，告訴我，我幫你寫一個有意義的 prompt。"
+  },
+  {
+    "review_id": 63,
+    "sid": 39,
+    "event_type": "terminal_ops",
+    "instruction": "修復以下工具執行錯誤：\n工具：Bash\n指令：{\"command\": \"ls -la /opt/homebrew/Caskroom/ngrok/ 2>/dev/null; echo \\\"---\\\"; ls -la \\\"<PROJECT_PATH>\" 2>/dev/null | grep -i ngrok; echo \\\"---\\\"; which ngrok; ngrok version 2>/dev/null\", \"description\": \"Check current ngrok installations and versions\"}\n錯誤：",
+    "input": "",
+    "output": "第一個 bash 因 `which ngrok` 找不到而 exit 127 導致整批取消。我重新分開查。"
+  },
+  {
+    "review_id": 64,
+    "sid": 10,
+    "event_type": "terminal_ops",
+    "instruction": "已經驗證了 結束一個 Claude session 後，執行：tail -f ~/.local-brain/logs/memory.log 結果為<USER>@<USER>-2 shiba-fine-tuning-project % tail -f ~/.local-brain/logs/memory.log\n2026-04-16 23:19:09 [INFO] __main__: stop_hook 觸發：{\"session_id\": \"test-123\", \"transcript_path\": \"/nonexistent.jsonl\"}\n2026-04-16 23:19:09 [INFO] lib.db: DB 初始化完成：<PROJECT_PATH>\n2026-04-16 23:19:09 [WARNING] __main__: 找不到 jsonl 檔案：session=test-123\n2026-04-16 23:19:13 [INFO] __main__: session_start_hook 觸發：session=test-start\n2026-04-16 23:19:13 [INFO] lib.db: DB 初始化完成：<PROJECT_PATH>\n2026-04-16 23:19:34 [INFO] __main__: stop_hook 觸發：{\"session_id\": \"6fa2012c-6c01-4757-9b1a-9a4757e110ab\", \"transcript_path\": \"<PROJECT_PATH>\n2026-04-16 23:19:34 [INFO] lib.db: DB 初始化完成：<PROJECT_PATH>\n2026-04-16 23:19:34 [INFO] __main__: session=6fa2012c-6c01-4757-9b1a-9a4757e110ab event_types=['terminal_ops'] exchanges=26\n2026-04-16 23:19:34 [INFO] __main__: session 同步完成：6fa2012c-6c01-4757-9b1a-9a4757e110ab",
+    "input": "",
+    "output": "CLAUDE.md 的 Phase 1 驗證有三項，目前只確認了第一項。需要補跑另外兩項："
+  },
+  {
+    "review_id": 65,
+    "sid": 21,
+    "event_type": "terminal_ops",
+    "instruction": "修復以下工具執行錯誤：\n工具：Bash\n指令：{\"command\": \"python3 -c \\\"\\nfrom shiba_config import CONFIG\\nprint('=== host 模式 ===')\\nprint('project_root:', CONFIG.paths.project_root)\\nprint('db:', CONFIG.paths.db)\\nprint('logs_dir:', CONFIG.paths.logs_dir)\\nprint('queue_dir:', CONFIG.paths.queue_dir)\\nprint('backups_dir:', CONFIG.paths.backups_dir)\\nprint('external_dataset:', CONFIG.paths.external_dataset)\\nprint('backend_port:', CONFIG.services.backend_port)\\nprint('frontend_port:', CONFIG.services.frontend_port)\\nprint('layer3_port:', CONFIG.services.layer3_port)\\nprint('ollama:', CONFIG.services.ollama_base_url)\\nprint('layer3:', CONFIG.services.layer3_base_url)\\nprint('runtime:', CONFIG.runtime.environment, 'is_docker:', CONFIG.runtime.is_docker)\\n\\\"\", \"description\": \"Verify host-mode CONFIG load\"}\n錯誤：",
+    "input": "",
+    "output": "系統 `python3` 無 PyYAML。專案有 Layer 2 venv，用它來驗證。"
+  },
+  {
+    "review_id": 66,
+    "sid": 45,
+    "event_type": "git_ops",
+    "instruction": "修復以下工具執行錯誤：\n工具：Read\n指令：{\"file_path\": \"<PROJECT_PATH>\"}\n錯誤：",
+    "input": "",
+    "output": "Shiba，早！\n\n**上次做到：** SQLite race hardening PR1 全部完成（2026-05-09），進入 7 天觀察期至 2026-05-16。\n\n**今天狀態：觀察期已結束（昨天到期）**，可以進入 PR2 了。\n\n---\n\n**下一步 PR2 內容：**\n- **Step 5**：`stop_hook.py:165-269` SAVEPOINT 4 段拆解（Opus high）\n- **Step 6**：`multi_judge.py:77-84` 包外層事務（Sonnet medium）\n\n**另外有一批待清理的垃圾檔案（觀察期結束後）：**\n- `data/shiba-brain.db.broken-*`（origin, 2026-05-09, broken-3）\n- `data/recovered*.sql` / `data/recover*.err`\n- plan 檔 `docs/archive/plans/2026-05-09-sqlite-race-hardening.md`\n\n---\n\n要先跑 DB integrity 快速確認，再開始 PR2？還是你有其他優先事項？"
+  },
+  {
+    "review_id": 67,
+    "sid": 73,
+    "event_type": "fine_tuning_ops",
+    "instruction": "修復以下工具執行錯誤：\n工具：AskUserQuestion\n指令：{}\n錯誤：",
+    "input": "",
+    "output": "已記下：**直接硬切換**。\n\n我接受這個決定，且它其實內部自洽——你的 D1 已把 Layer 2 降為**實驗學習平台（非投產）**，訓練資料不會直接進產線（L3 是 gated 實驗）。在實驗平台上為了自主性硬切換，不需要套產線級嚴謹度。我只保留一個輕量設計細節：**切換後仍記錄本地裁判評分到既有 `teacher_usage_logs` / `ai_api_call_logs`，保留日後想回溯比對的證據**，不額外建量測流程。\n\n接著是交付物的實際機制。**第三題：本地裁判的數量與多樣性。** 現有架構是三方投票（多樣性降單一模型偏見）。"
+  },
+  {
+    "review_id": 68,
+    "sid": 50,
+    "event_type": "git_ops",
+    "instruction": "<command-name>/model</command-name>\n            <command-message>model</command-message>\n            <command-args></command-args>",
+    "input": "User: <command-name>/effort</command-name>\n            <command-message>effort</command-message>\n            <command-args></command-args>\nAssistant: $ cd <PROJECT_PATH> && rm 2026-05-21-conditional-expansion.md 2026-05-21-rag-cross-exchange-context.md && echo \"deleted; remaining:\" && ls -1 | wc -l\n# Edit: <PROJECT_PATH>",
+    "output": "# Edit: <PROJECT_PATH>"
+  },
+  {
+    "review_id": 69,
+    "sid": 28,
+    "event_type": "git_ops",
+    "instruction": "修復以下工具執行錯誤：\n工具：Bash\n指令：{\"command\": \"<PROJECT_PATH> -m pytest tests/layer2/test_pipeline_v2.py -v 2>&1\", \"description\": \"Run v2 unit tests\"}\n錯誤：",
+    "input": "",
+    "output": "`source` CHECK 約束需要加入 `layer1_bridge_v2`，先看 schema："
+  },
+  {
+    "review_id": 70,
+    "sid": 13,
+    "event_type": "architecture",
+    "instruction": "修復以下工具執行錯誤：\n工具：Edit\n指令：{\"replace_all\": false, \"file_path\": \"<PROJECT_PATH>\", \"old_string\": \"    # 只回傳相似度 > 0.5 的結果\\n    return [r for r in scored[:top_n] if r[\\\"score\\\"] > 0.5]\", \"new_string\": \"    # 只回傳相似度 > 0.35 的結果（降低門檻以提高召回率）\\n    return [r for r in scored[:top_n] if r[\\\"score\\\"] > 0.35]\"}\n錯誤：",
+    "input": "",
+    "output": "兩個修改完成。Task 2（Gemini 評分）等配額重置後手動觸發即可。\n\n**已完成：**\n- `stop_hook.py`：新增 session 層級 embedding 補捕——當 per-message 路徑仍有工具指令，且 exchange_count ≥ 2 時，取整個 session 最長 user 訊息 + 彙整所有指令寫入 `exchange_embeddings`，預期 capture 率從 4/15 大幅提升\n- `rag.py`：相似度門檻 0.5 → 0.35，提高 RAG 召回率\n\n**Task 2**：配額重置後執行 `curl -X POST http://localhost:8000/api/dataset/score-pending`"
+  },
+  {
+    "review_id": 71,
+    "sid": 44,
+    "event_type": "terminal_ops",
+    "instruction": "修復以下工具執行錯誤：\n工具：Read\n指令：{\"file_path\": \"<PROJECT_PATH>\"}\n錯誤：",
+    "input": "",
+    "output": "Shiba，報告來了。\n\n---\n\n**上次做到哪**\nPR1（SQLite race hardening）2026-05-09 全部完成，推上 `sqlite-race-hardening-pr1` 分支。觀察期 2026-05-09 → **2026-05-16**，今天 2026-05-17，**觀察期已結束**。\n\n**目前狀態**（需確認）\n\n觀察期結束應做三件事：\n\n1. **健康檢查** — 確認 DB integrity 正常、無 disk I/O error\n2. **清理廢棄檔案** — `data/shiba-brain.db.broken-*`、`data/recovered*.sql`、`data/recover*.err`\n3. **PR2 開工** — Step 5：`stop_hook.py` SAVEPOINT 分段（Opus high）→ Step 6：`multi_judge.py` 外層事務（Sonnet medium）\n\n---\n\n要我先跑觀察期健康檢查，確認 DB 狀態正常後再討論 PR2 方向嗎？"
+  },
+  {
+    "review_id": 72,
+    "sid": 46,
+    "event_type": "git_ops",
+    "instruction": "各RC建議使用的/model與/effort",
+    "input": "",
+    "output": "# Edit: <PROJECT_PATH>\n# Edit: <PROJECT_PATH>\n# Edit: <PROJECT_PATH>\n$ sqlite3 <PROJECT_PATH> \"SELECT id, name, priority FROM teachers ORDER BY priority\""
+  },
+  {
+    "review_id": 73,
+    "sid": 70,
+    "event_type": "debugging",
+    "instruction": "修復以下工具執行錯誤：\n工具：Bash\n指令：{\"command\": \"cd <PROJECT_PATH> && git status --short && echo \\\"---CHANGELOG 是否存在---\\\" && ls CHANGELOG.md 2>/dev/null && echo \\\"---head---\\\" && head -40 CHANGELOG.md 2>/dev/null\", \"description\": \"檢視 git 狀態與 CHANGELOG 現況\"}\n錯誤：",
+    "input": "",
+    "output": "CHANGELOG.md 不存在,而且有幾個檔案是**先前工作**留下的未提交修改(`.env.example`/`secrets.map`/`up.sh`/`openclaw.json`)。先看 `docker-compose.yml` 的完整 diff,確認這次 commit 只含本次掛載異動、不誤掃別的:"
+  },
+  {
+    "review_id": 74,
+    "sid": 69,
+    "event_type": "fine_tuning_ops",
+    "instruction": "修復以下工具執行錯誤：\n工具：Bash\n指令：{\"command\": \"cd <PROJECT_PATH> && echo \\\"=== down ===\\\" && ./down.sh 2>&1 | tail -15\", \"timeout\": 120000}\n錯誤：",
+    "input": "",
+    "output": "檔案已部署到 workspace(cp 完成),但**重啟容器被權限分類器擋下** —— 它認為 \"1-2\" 不足以明確授權重啟/重新部署容器(這是你 CLAUDE.md 與我 README 都設的標準:部署/重啟須明確指示)。\n\n我不繞過。重啟需要你親自確認。兩個方式:\n\n**方式 A**(你自己跑,輸出直接進對話):\n```\n! cd 01_init && ./down.sh && ./up.sh\n```\n\n**方式 B**:你回覆「授權重啟」,我再跑一次。\n\n> 注意:`up.sh` 之前記憶顯示會整合 token、可能自動開 Chrome,你親自跑(方式 A)對互動環節更穩。\n\n重啟並確認容器健康後,我再做 (2) commit。目前狀態:\n- ✅ `04_prompt/` 15 檔已建(可 commit)\n- ✅ 7 個優化 md 已同步到 workspace\n- ⏸ 容器重啟(待你授權)\n- ⏸ commit(待驗證後)\n\n要先 commit `04_prompt/`(不依賴重啟),還是等重啟驗證一起?"
+  }
+]
