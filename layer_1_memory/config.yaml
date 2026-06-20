@@ -7,9 +7,11 @@
 # RAG 設定
 # ============================================================
 rag:
-  top_n: 3                  # 每次注入最多幾筆歷史記憶
-  token_budget: 500         # hookSpecificOutput 最大 token 數
-  debug_echo: false         # true 時將召回內容以 ANSI 區塊 echo 到 stderr（只給使用者看，不進 Claude context、不消 token）；預設 false 避免把含路徑/secret 的歷史記憶外洩到終端 / log / screen recording
+  top_n: 3                  # 每次召回最多幾筆歷史記憶
+  token_budget: 500         # 召回字串最大 token 數
+  # Option 3（2026-06-20 Shiba 決策「RAG 改為使用者參考、不餵我」）：
+  feed_model: false         # false=本地召回 + Layer 0 router 草擬結果「不」注入 Claude context（避免在 Shiba 看不見處混入 Claude 回答）；true=回復舊行為（注入 model context，Layer 0 本地接管才會生效）。可回滾旁路。
+  debug_echo: true          # true=把召回 + router 建議以 ANSI 區塊 echo 到 stderr 給 Shiba 看（exit0 stderr 不進 model context、不消 token）。⚠ echo 前已過 scrub_for_export（IP/email/user handle 脫敏）；key/token 不在 scrub 範圍（罕見於記憶；若曾在對話貼過原始 key 仍可能顯示），且 stderr 可能進 shell log，故僅單機自用；要更嚴設 false
 
 # ============================================================
 # Logging 設定（log 檔路徑由 CONFIG.paths.logs_dir 提供，此處只設 level）

@@ -7,6 +7,11 @@
 
 ### Changed
 
+- **Layer 1 RAG 注入透明化：top-k 改為「使用者參考、不餵 Claude」（2026-06-20，可回滾）** — 解決可見性不對稱（Claude 看得到 UserPromptSubmit 注入的 top-k + Layer 0 router 草擬答案、Shiba 看不到 → 無法分辨 Claude 結論 vs 夾雜的本地建議）：
+  - **`feed_model` 旗標（新增，預設 false）** — `session_start_hook.py` 依此決定 stdout：false=本地召回 + router 草擬結果**不**注入 model context（stdout 輸出空物件 `{}`），改只走 stderr echo 給 Shiba 參考；true=回復舊行為（注入 `additionalContext`，Layer 0 本地接管才生效）。可回滾旁路；route() 仍呼叫故 router_decisions telemetry 不受影響。
+  - **`debug_echo` 翻 true（成為主要使用者通道）** — 召回 + router 建議以 ANSI 區塊 echo 到 stderr（exit0 stderr 不進 model context、不計 token）。
+  - **echo 前 scrub（fail-closed）** — 重用 `grading_harness.scrub_for_export`（IP/email/OS user handle 脫敏）；scrub 不可用則跳過 echo 不外洩原文。⚠ key/token 不在 scrub 範圍（沿用既有 export PII bar），且 stderr 可能進 shell log，故 `debug_echo` 僅單機自用、要更嚴設 false。
+  - **`grading_harness.py`：`teacher_service` import 改 function-local** — 讓 Layer 1 hook 能輕量重用 `scrub_for_export`（每則訊息都跑、import 須輕），避免 PII regex 兩份漂移。
 - **Layer 2 評分裁判：付費 API → 本地 LM Studio 硬切換（2026-06-16，可回滾）** — 自主性／去外部依賴；接受裁判品質些微下降換取完全本地化（L2 屬實驗平台，D1 已決）：
   - **切換**：`setup_teachers.py --cutover` 將 Gemini Flash / Flash-Lite / Claude Sonnet 4.6 設 `is_active=0`（保留 row 可一鍵回滾），新增 5 本地裁判（`keychain_ref=NULL`、`api_base=http://localhost:1234/v1`）：active 三家族 Qwen3.5-35B-A3B（`local-qwen`）+ GLM-4.7-Flash（`local-glm`）+ Gemma-4-e4b（`local-gemma`），bench 2 個（Qwen3.5-9B / GLM-4.6v-Flash）。三家族 vendor 標記滿足 `multi_judge` ≥2 vendor early-exit。回滾 snapshot：`data/teachers_snapshot_pre_cutover_*.json`。
   - **⚠ thinking 控制機制修正（實機證偽原設計）**：原 spec 的 `/no_think` prompt 注入對實際 GGUF（qwen3.5-35b-a3b / glm-4.7-flash via LM Studio）**完全無效**（reasoning_tokens 燒滿、content 空）；`chat_template_kwargs.enable_thinking` 同樣無效。**唯一有效機制 = OpenAI API 參數 `reasoning_effort:"none"`**（rtok→0、直接吐乾淨 JSON），僅 qwen/glm 帶；gemma 不帶（帶了反而碎念），走 `reasoning_content` 分流需 `max_tokens=2048` headroom。

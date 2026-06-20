@@ -1,0 +1,372 @@
+[
+  {
+    "sid": 1,
+    "panel_status": "rejected",
+    "shiba_gt": null
+  },
+  {
+    "sid": 2,
+    "panel_status": "rejected",
+    "shiba_gt": null
+  },
+  {
+    "sid": 3,
+    "panel_status": "rejected",
+    "shiba_gt": null
+  },
+  {
+    "sid": 4,
+    "panel_status": "rejected",
+    "shiba_gt": null
+  },
+  {
+    "sid": 5,
+    "panel_status": "rejected",
+    "shiba_gt": null
+  },
+  {
+    "sid": 6,
+    "panel_status": "rejected",
+    "shiba_gt": null
+  },
+  {
+    "sid": 7,
+    "panel_status": "rejected",
+    "shiba_gt": null
+  },
+  {
+    "sid": 8,
+    "panel_status": "rejected",
+    "shiba_gt": null
+  },
+  {
+    "sid": 9,
+    "panel_status": "rejected",
+    "shiba_gt": null
+  },
+  {
+    "sid": 10,
+    "panel_status": "rejected",
+    "shiba_gt": null
+  },
+  {
+    "sid": 11,
+    "panel_status": "rejected",
+    "shiba_gt": null
+  },
+  {
+    "sid": 12,
+    "panel_status": "rejected",
+    "shiba_gt": null
+  },
+  {
+    "sid": 13,
+    "panel_status": "rejected",
+    "shiba_gt": null
+  },
+  {
+    "sid": 14,
+    "panel_status": "rejected",
+    "shiba_gt": null
+  },
+  {
+    "sid": 15,
+    "panel_status": "rejected",
+    "shiba_gt": null
+  },
+  {
+    "sid": 16,
+    "panel_status": "rejected",
+    "shiba_gt": null
+  },
+  {
+    "sid": 17,
+    "panel_status": "rejected",
+    "shiba_gt": null
+  },
+  {
+    "sid": 18,
+    "panel_status": "rejected",
+    "shiba_gt": null
+  },
+  {
+    "sid": 19,
+    "panel_status": "rejected",
+    "shiba_gt": null
+  },
+  {
+    "sid": 20,
+    "panel_status": "rejected",
+    "shiba_gt": null
+  },
+  {
+    "sid": 21,
+    "panel_status": "rejected",
+    "shiba_gt": null
+  },
+  {
+    "sid": 22,
+    "panel_status": "rejected",
+    "shiba_gt": null
+  },
+  {
+    "sid": 23,
+    "panel_status": "rejected",
+    "shiba_gt": null
+  },
+  {
+    "sid": 24,
+    "panel_status": "rejected",
+    "shiba_gt": null
+  },
+  {
+    "sid": 25,
+    "panel_status": "rejected",
+    "shiba_gt": null
+  },
+  {
+    "sid": 26,
+    "panel_status": "rejected",
+    "shiba_gt": null
+  },
+  {
+    "sid": 27,
+    "panel_status": "rejected",
+    "shiba_gt": null
+  },
+  {
+    "sid": 28,
+    "panel_status": "rejected",
+    "shiba_gt": null
+  },
+  {
+    "sid": 29,
+    "panel_status": "rejected",
+    "shiba_gt": null
+  },
+  {
+    "sid": 30,
+    "panel_status": "rejected",
+    "shiba_gt": null
+  },
+  {
+    "sid": 31,
+    "panel_status": "approved",
+    "shiba_gt": "good"
+  },
+  {
+    "sid": 32,
+    "panel_status": "rejected",
+    "shiba_gt": null
+  },
+  {
+    "sid": 33,
+    "panel_status": "rejected",
+    "shiba_gt": null
+  },
+  {
+    "sid": 34,
+    "panel_status": "rejected",
+    "shiba_gt": null
+  },
+  {
+    "sid": 35,
+    "panel_status": "rejected",
+    "shiba_gt": null
+  },
+  {
+    "sid": 36,
+    "panel_status": "rejected",
+    "shiba_gt": null
+  },
+  {
+    "sid": 37,
+    "panel_status": "rejected",
+    "shiba_gt": null
+  },
+  {
+    "sid": 38,
+    "panel_status": "rejected",
+    "shiba_gt": "bad"
+  },
+  {
+    "sid": 39,
+    "panel_status": "rejected",
+    "shiba_gt": null
+  },
+  {
+    "sid": 40,
+    "panel_status": "rejected",
+    "shiba_gt": null
+  },
+  {
+    "sid": 41,
+    "panel_status": "rejected",
+    "shiba_gt": null
+  },
+  {
+    "sid": 42,
+    "panel_status": "rejected",
+    "shiba_gt": null
+  },
+  {
+    "sid": 43,
+    "panel_status": "approved",
+    "shiba_gt": "good"
+  },
+  {
+    "sid": 44,
+    "panel_status": "rejected",
+    "shiba_gt": null
+  },
+  {
+    "sid": 45,
+    "panel_status": "approved",
+    "shiba_gt": "good"
+  },
+  {
+    "sid": 46,
+    "panel_status": "approved",
+    "shiba_gt": null
+  },
+  {
+    "sid": 47,
+    "panel_status": "approved",
+    "shiba_gt": null
+  },
+  {
+    "sid": 48,
+    "panel_status": "approved",
+    "shiba_gt": "good"
+  },
+  {
+    "sid": 49,
+    "panel_status": "approved",
+    "shiba_gt": "good"
+  },
+  {
+    "sid": 50,
+    "panel_status": "rejected",
+    "shiba_gt": null
+  },
+  {
+    "sid": 51,
+    "panel_status": "rejected",
+    "shiba_gt": null
+  },
+  {
+    "sid": 52,
+    "panel_status": "rejected",
+    "shiba_gt": null
+  },
+  {
+    "sid": 53,
+    "panel_status": "approved",
+    "shiba_gt": null
+  },
+  {
+    "sid": 54,
+    "panel_status": "approved",
+    "shiba_gt": null
+  },
+  {
+    "sid": 55,
+    "panel_status": "rejected",
+    "shiba_gt": null
+  },
+  {
+    "sid": 56,
+    "panel_status": "rejected",
+    "shiba_gt": null
+  },
+  {
+    "sid": 57,
+    "panel_status": "approved",
+    "shiba_gt": "good"
+  },
+  {
+    "sid": 58,
+    "panel_status": "rejected",
+    "shiba_gt": "bad"
+  },
+  {
+    "sid": 59,
+    "panel_status": "rejected",
+    "shiba_gt": null
+  },
+  {
+    "sid": 60,
+    "panel_status": "approved",
+    "shiba_gt": "good"
+  },
+  {
+    "sid": 61,
+    "panel_status": "rejected",
+    "shiba_gt": null
+  },
+  {
+    "sid": 62,
+    "panel_status": "approved",
+    "shiba_gt": "good"
+  },
+  {
+    "sid": 63,
+    "panel_status": "rejected",
+    "shiba_gt": null
+  },
+  {
+    "sid": 64,
+    "panel_status": "rejected",
+    "shiba_gt": null
+  },
+  {
+    "sid": 65,
+    "panel_status": "rejected",
+    "shiba_gt": null
+  },
+  {
+    "sid": 66,
+    "panel_status": "rejected",
+    "shiba_gt": null
+  },
+  {
+    "sid": 67,
+    "panel_status": "rejected",
+    "shiba_gt": null
+  },
+  {
+    "sid": 68,
+    "panel_status": "rejected",
+    "shiba_gt": null
+  },
+  {
+    "sid": 69,
+    "panel_status": "rejected",
+    "shiba_gt": null
+  },
+  {
+    "sid": 70,
+    "panel_status": "rejected",
+    "shiba_gt": null
+  },
+  {
+    "sid": 71,
+    "panel_status": "approved",
+    "shiba_gt": null
+  },
+  {
+    "sid": 72,
+    "panel_status": "approved",
+    "shiba_gt": "good"
+  },
+  {
+    "sid": 73,
+    "panel_status": "rejected",
+    "shiba_gt": null
+  },
+  {
+    "sid": 74,
+    "panel_status": "rejected",
+    "shiba_gt": null
+  }
+]
