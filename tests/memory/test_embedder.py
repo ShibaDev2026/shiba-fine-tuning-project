@@ -44,3 +44,51 @@ def test_vector_search_fallback_to_fts5(monkeypatch):
     context, source = get_rag_context("幫我列出目錄")
     assert isinstance(context, str)  # 不 crash，回傳字串（空或有內容皆可）
     assert source in {"vector", "fts5", "none"}
+
+
+def test_vector_search_leave_one_out(monkeypatch):
+    """LOO 排除 source session：在 top_n 截斷前過濾、支援多 uuid、空池不 fallback。
+
+    用 mock embedding + mock DB rows，使 cosine 排序固定 A>B>C，純驗 exclude 邏輯。
+    """
+    import json
+    import layer_1_memory.lib.rag as rag
+
+    # query 向量 [1,0,0]；三筆 row 設計成 cosine A(1.0) > B(0.8) > C(0.6)，皆 > 0.35 門檻
+    monkeypatch.setattr(rag, "get_embedding", lambda *a, **kw: [1.0, 0.0, 0.0])
+    rows = [
+        {"session_uuid": "A", "instruction": "a", "commands": "x",
+         "embedding": json.dumps([1.0, 0.0, 0.0]), "exchange_id": 1},
+        {"session_uuid": "B", "instruction": "b", "commands": "y",
+         "embedding": json.dumps([0.8, 0.6, 0.0]), "exchange_id": 2},
+        {"session_uuid": "C", "instruction": "c", "commands": "z",
+         "embedding": json.dumps([0.6, 0.8, 0.0]), "exchange_id": 3},
+    ]
+
+    class _FakeCur:
+        def fetchall(self):
+            return rows
+
+    class _FakeConn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def execute(self, *a, **kw):
+            return _FakeCur()
+
+    monkeypatch.setattr(rag, "get_connection", lambda *a, **kw: _FakeConn())
+
+    def uuids(**kw):
+        return [r["session_uuid"] for r in rag._vector_search("q", **kw)]
+
+    # 無排除：top_n=2 取最相關兩筆
+    assert uuids(top_n=2) == ["A", "B"]
+    # 盲點1：排除最相關的 A 後，top_n=2 仍補到 B、C（exclude 在截斷前，不會少召回）
+    assert uuids(top_n=2, exclude_session_uuids={"A"}) == ["B", "C"]
+    # 盲點2：多 uuid 全部排除
+    assert uuids(top_n=2, exclude_session_uuids={"A", "B"}) == ["C"]
+    # 盲點3：全排除→空池，不得 fallback 含回 source
+    assert uuids(top_n=2, exclude_session_uuids={"A", "B", "C"}) == []

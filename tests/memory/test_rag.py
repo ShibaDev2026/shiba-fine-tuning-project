@@ -10,7 +10,12 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "layer_1_memory"))
 
 from lib.db import get_connection, init_db
-from lib.rag import build_rag_output, get_rag_context, retrieve_relevant_sessions
+from lib.rag import (
+    build_rag_output,
+    get_rag_context,
+    get_rag_context_with_hits,
+    retrieve_relevant_sessions,
+)
 
 
 def _seed_db(tmp_db: Path) -> None:
@@ -108,3 +113,32 @@ def test_get_rag_context_returns_none_source_when_no_hits(tmp_path):
 
     assert context == ""
     assert source == "none"
+
+
+def test_get_rag_context_with_hits_returns_triple(tmp_path):
+    """擴充版多回 hits：fts5 命中時回 (ctx, 'fts5', 非空 hits)，含結構化欄位"""
+    db_file = tmp_path / "test.db"
+    _seed_db(db_file)
+    with patch("lib.db.get_db_path", return_value=db_file), \
+         patch("lib.rag.get_embedding", return_value=None):
+        context, source, hits = get_rag_context_with_hits("address_parser", top_n=3)
+
+    assert context and source == "fts5"
+    assert isinstance(hits, list) and len(hits) > 0
+
+
+def test_get_rag_context_with_hits_empty_when_no_hits(tmp_path):
+    """無命中：hits 為空 list，與 ('', 'none') 一致"""
+    db_file = tmp_path / "empty.db"
+    import sqlite3 as _sqlite3
+    schema_path = Path(__file__).parent.parent.parent / "layer_1_memory" / "db" / "schema.sql"
+    conn = _sqlite3.connect(str(db_file))
+    conn.executescript(schema_path.read_text(encoding="utf-8"))
+    conn.commit()
+    conn.close()
+
+    with patch("lib.db.get_db_path", return_value=db_file), \
+         patch("lib.rag.get_embedding", return_value=None):
+        context, source, hits = get_rag_context_with_hits("不存在的關鍵字", top_n=3)
+
+    assert context == "" and source == "none" and hits == []

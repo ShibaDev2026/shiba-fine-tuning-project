@@ -139,6 +139,37 @@ def build_rag_output(
     return header + body
 
 
+def _retrieve(
+    query: str,
+    project_path: str | None,
+    top_n: int,
+    token_budget: int,
+) -> tuple[str, RagSource, list[dict]]:
+    """核心召回：回 (context, source, hits)。
+
+    hits 為命中的原始結構化結果（vector 帶 cosine `score`+instruction/commands；
+    fts5 帶 `snippet`/`session_uuid`、無 cosine 分數）。ctx 為空時 hits 一律回 []，
+    讓「有召回」判斷（len(hits)>0）與顯示內容一致。get_rag_context（不破壞既有簽章）
+    與 get_rag_context_with_hits 皆委派此函式（DRY）。
+    """
+    # 嘗試語意向量召回
+    vector_results = _vector_search(query, top_n=top_n)
+    if vector_results:
+        ctx = _build_exchange_context(vector_results, token_budget=token_budget)
+        return (ctx, "vector", vector_results) if ctx else ("", "none", [])
+
+    # Fallback：FTS5 關鍵字召回
+    sessions = retrieve_relevant_sessions(
+        query=query,
+        project_path=project_path,
+        top_n=top_n,
+    )
+    if not sessions:
+        return ("", "none", [])
+    ctx = build_rag_output(sessions, token_budget=token_budget)
+    return (ctx, "fts5", sessions) if ctx else ("", "none", [])
+
+
 def get_rag_context(
     query: str,
     project_path: str | None = None,
@@ -155,22 +186,21 @@ def get_rag_context(
 
     caller 拿 source 用於觀測 / debug echo / metrics，不再用字串 sniff 推斷。
     """
-    # 嘗試語意向量召回
-    vector_results = _vector_search(query, top_n=top_n)
-    if vector_results:
-        ctx = _build_exchange_context(vector_results, token_budget=token_budget)
-        return (ctx, "vector" if ctx else "none")
+    ctx, source, _hits = _retrieve(query, project_path, top_n, token_budget)
+    return (ctx, source)
 
-    # Fallback：FTS5 關鍵字召回
-    sessions = retrieve_relevant_sessions(
-        query=query,
-        project_path=project_path,
-        top_n=top_n,
-    )
-    if not sessions:
-        return ("", "none")
-    ctx = build_rag_output(sessions, token_budget=token_budget)
-    return (ctx, "fts5" if ctx else "none")
+
+def get_rag_context_with_hits(
+    query: str,
+    project_path: str | None = None,
+    top_n: int = 3,
+    token_budget: int = 500,
+) -> tuple[str, RagSource, list[dict]]:
+    """get_rag_context 的擴充版：額外回結構化 hits 供 recall_log 記「召回原因」。
+
+    既有 get_rag_context 簽章不變（向後相容）；新呼叫端（session_start_hook）改用本函式。
+    """
+    return _retrieve(query, project_path, top_n, token_budget)
 
 
 def retrieve_for_eval_with_context(
@@ -315,12 +345,16 @@ def retrieve_for_eval(
     query: str,
     project_path: str | None = None,
     top_n: int = 3,
+    exclude_session_uuids: set[str] | None = None,
 ) -> dict:
     """
     評估專用 read-only 召回 API（不動 hot path）。
     回傳結構化三元組供 RAGAS 計算 Context Precision / Recall。
+
+    exclude_session_uuids：leave-one-out 評估用，兩條召回路徑（vector / FTS5）
+    都會排除 source session，避免「召回到答案自身來源」灌水。
     """
-    vector_results = _vector_search(query, top_n=top_n)
+    vector_results = _vector_search(query, top_n=top_n, exclude_session_uuids=exclude_session_uuids)
     if vector_results:
         return {
             "query": query,
@@ -332,8 +366,10 @@ def retrieve_for_eval(
             "retrieved_session_uuids": list({r["session_uuid"] for r in vector_results}),
         }
 
-    # Fallback：FTS5
+    # Fallback：FTS5（同樣套用 leave-one-out 排除）
     sessions = retrieve_relevant_sessions(query=query, project_path=project_path, top_n=top_n)
+    if exclude_session_uuids:
+        sessions = [s for s in sessions if s.get("session_uuid") not in exclude_session_uuids]
     if not sessions:
         return {"query": query, "source": "fts5", "retrieved_contexts": [], "retrieved_session_uuids": []}
 
@@ -350,10 +386,19 @@ def retrieve_for_eval(
     }
 
 
-def _vector_search(query: str, top_n: int = 3) -> list[dict]:
+def _vector_search(
+    query: str,
+    top_n: int = 3,
+    exclude_session_uuids: set[str] | None = None,
+) -> list[dict]:
     """
     向量召回：取得 query embedding → cosine similarity 掃描 exchange_embeddings。
     Ollama 不可用或表為空時回傳空 list。
+
+    exclude_session_uuids：leave-one-out 評估用——排除指定 source session
+    （在 top_n 截斷「之前」過濾，避免靜默 under-retrieve）。排除後候選池若空，
+    回傳空 list 即可，**不得 fallback 含回 source**——空池本身就是「此答案只能從
+    自身來源召回」的 finding，fallback 會遮蔽正在測的東西。
     """
     query_vec = get_embedding(query)
     if query_vec is None:
@@ -398,6 +443,9 @@ def _vector_search(query: str, top_n: int = 3) -> list[dict]:
             continue
 
     scored.sort(key=lambda x: x["score"], reverse=True)
+    # leave-one-out：排除 source session 必須在 top_n 截斷「前」，否則會靜默 under-retrieve
+    if exclude_session_uuids:
+        scored = [r for r in scored if r["session_uuid"] not in exclude_session_uuids]
     # 只回傳相似度 > 0.35 的結果（降低門檻以提高召回率）
     return [r for r in scored[:top_n] if r["score"] > 0.35]
 

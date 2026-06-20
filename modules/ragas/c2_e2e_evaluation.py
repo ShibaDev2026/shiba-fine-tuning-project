@@ -36,7 +36,7 @@ from clients.ollama import OllamaClient
 from layer_1_memory.lib.db import get_connection
 from layer_1_memory.lib.rag import retrieve_for_eval, retrieve_for_eval_with_context
 from layer_2_chamber.backend.services.teacher_service import (
-    _call_gemini_rest, _call_anthropic, get_api_key, _strip_markdown,
+    _call_gemini_rest, _call_anthropic, _call_openai_compat, get_api_key, _strip_markdown,
 )
 
 _SCORE_THRESHOLD = 7.0
@@ -232,6 +232,69 @@ def _judge_answer(query: str, expected: str, generated: str) -> tuple[float | No
         return None, "解析失敗"
 
 
+# ── 本地 panel judge（leave-one-out kill-switch 用，no-paid-API）────────────────
+#
+# kill-switch 只需 within-judge delta（static vs dynamic_loo 同一裁判），單模型偏差
+# 在相減中大致抵消 → 不跑三裁判 panel（JIT 循序載入 35B 會讓 195×3 次評分爆死），
+# 用單一本地 qwen3.5-35b 常駐評分。參考式 prompt 沿用 _E2E_JUDGE_PROMPT。
+
+def _resolve_local_judge() -> dict | None:
+    """從 DB active teachers 取本地 qwen 裁判（含 reasoning_effort=none 映射的 vendor）。
+
+    回傳 {'model_id','api_base','vendor'}；找不到回 None（preflight 會擋下）。
+    """
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT model_id, api_base FROM teachers "
+            "WHERE is_active=1 AND keychain_ref IS NULL AND model_id LIKE '%qwen%' "
+            "ORDER BY priority LIMIT 1"
+        ).fetchone()
+    if not row:
+        return None
+    # vendor 直接帶 model_id：_thinking_extra_body 只判子字串 'qwen'/'glm'，
+    # model_id 'qwen/qwen3.5-35b-a3b' 含 'qwen' → reasoning_effort='none' 生效。
+    return {"model_id": row["model_id"], "api_base": row["api_base"], "vendor": row["model_id"]}
+
+
+def _judge_answer_local(query: str, expected: str, generated: str, judge: dict) -> tuple[float | None, str]:
+    """本地裁判評分（參考式，generated vs expected）；max_tokens=512 留 JSON headroom。"""
+    prompt = _E2E_JUDGE_PROMPT.format(
+        query=query.strip(), expected=expected.strip(), generated=generated.strip(),
+    )
+    text, _, _, status = _call_openai_compat(
+        api_key="none",
+        api_base=judge["api_base"],
+        model_id=judge["model_id"],
+        prompt=prompt,
+        max_tokens=512,            # 本地 thinking 模型即使關 thinking 也留足 JSON 預算，避免截斷成空
+        vendor=judge["vendor"],
+        disable_thinking=True,     # → reasoning_effort='none'（qwen/glm 唯一有效關法）
+        caller_module="c2_e2e_evaluation.judge_local",
+    )
+    if status != "success" or not text:
+        return None, f"本地裁判呼叫失敗（{status}）"
+    try:
+        data = json.loads(_strip_markdown(text))
+        return float(data["score"]), str(data.get("reason", ""))
+    except Exception:
+        return None, "解析失敗"
+
+
+def _build_static_context(top_n: int = 3) -> list[str]:
+    """static arm 對照組：固定高品質範例（不依 query），取 gatekeeper 凍結樣本 top-N 高分。
+
+    跨題共用同一組 → 排除 per-query 召回變因，只當 baseline。回傳的筆數對齊 top_n，
+    與 dynamic 召回的 context 量一致，避免「context 量」混淆 delta。
+    """
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT expected_output FROM gatekeeper_golden_samples "
+            "WHERE is_active=1 ORDER BY score DESC, id LIMIT ?",
+            (top_n,),
+        ).fetchall()
+    return [r["expected_output"] for r in rows]
+
+
 # ── 主流程 ────────────────────────────────────────────────────────────────────
 
 def run(
@@ -242,24 +305,45 @@ def run(
     top_n: int = 3,
     rag_window: int = 0,
     n_runs: int = 1,
+    arm: str = "dynamic",
+    judge_backend: str = "local",
 ) -> str:
     """執行 E2E 評估，回傳 run_id。
 
-    rag_window=0 → retrieve_for_eval（單 exchange，baseline）
-    rag_window≥1 → retrieve_for_eval_with_context（±K 鄰居擴展）
-    n_runs≥2 → 每題重複跑 judge K 次，metric_value 寫 mean，
-              raw_scores 寫進 metadata（用於量化 LLM judge noise floor）
+    arm（leave-one-out kill-switch 三臂對照，同模型同裁判，只差召回方式）：
+      "static"      → 固定 gatekeeper 高分範例（不依 query），baseline
+      "dynamic"     → 依 query 召回（含答案自身來源），上界
+      "dynamic_loo" → 依 query 召回但排除當題 expected_session_uuids（受測）
+      delta(dynamic_loo − static)=召回 generalizable value；delta(dynamic − dynamic_loo)=source 污染量
+    judge_backend："local"（本地 qwen 裁判，no-paid-API）/ "gemini"（付費，保歷史可比）。
+    rag_window≥1 → retrieve_for_eval_with_context（±K 鄰居擴展，僅 arm='dynamic' 時生效）。
+    n_runs≥2 → 每題重複跑 judge K 次，metric_value 寫 mean。
     """
     _ensure_runs_table()
 
+    if arm not in {"static", "dynamic", "dynamic_loo"}:
+        raise ValueError(f"未知 arm：{arm}")
+
+    # preflight：本地裁判須在進迴圈前解析成功，否則整批評分全空 → 假 delta（advisor 標的 blocker）
+    judge = None
+    if judge_backend == "local" and not skip_scoring:
+        judge = _resolve_local_judge()
+        if judge is None:
+            raise RuntimeError("找不到 active 本地 qwen 裁判（teachers is_active=1 & model_id LIKE %qwen%）")
+
+    # static arm 的固定 context 只建一次（跨題共用）
+    static_ctx = _build_static_context(top_n=top_n) if arm == "static" else []
+    if arm == "static" and not static_ctx:
+        raise RuntimeError("static arm 取不到 gatekeeper_golden_samples（is_active=1）")
+
     vendor, model_id = model_spec.split(":", 1)
     ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
-    run_id = f"e2e-{vendor}-{ts}"
+    run_id = f"e2e-{vendor}-{arm}-{ts}"
     started_at = datetime.now(timezone.utc).isoformat()
 
     with get_connection() as conn:
         sql = """
-            SELECT id, query, expected_answer
+            SELECT id, query, expected_answer, expected_session_uuids
             FROM ragas_retrieval_golden_set
             WHERE expected_answer IS NOT NULL
               AND is_active = 1
@@ -273,6 +357,9 @@ def run(
 
     scores: list[float] = []
     ok = 0
+    gen_dropped = 0    # 生成失敗 / Ollama 永久錯誤被 skip 的樣本數
+    judge_failed = 0   # 生成成功但 judge 全失敗（解析/呼叫失敗）的樣本數
+    loo_fallback = 0   # dynamic_loo：expected_session_uuids 解析失敗→未套 LOO 的樣本數
     aborted = False
 
     try:
@@ -281,13 +368,24 @@ def run(
             query = row["query"]
             expected = row["expected_answer"]
 
-            # RAG 召回：rag_window=0 走 baseline 單 exchange；≥1 走擴展上下文
-            if rag_window > 0:
+            # arm 決定召回來源（kill-switch 三臂只差這裡）
+            if arm == "static":
+                contexts, source = static_ctx, "static"
+            elif arm == "dynamic_loo":
+                # leave-one-out：排除當題 expected_session_uuids 指向的答案來源 session
+                try:
+                    exclude = set(json.loads(row["expected_session_uuids"] or "[]"))
+                except (json.JSONDecodeError, TypeError):
+                    exclude = set()
+                    loo_fallback += 1  # 未套 LOO，此筆退化成 dynamic（會稀釋污染訊號，須計數）
+                rag = retrieve_for_eval(query, top_n=top_n, exclude_session_uuids=exclude)
+                contexts, source = rag.get("retrieved_contexts", []), rag.get("source", "?")
+            elif rag_window > 0:
                 rag = retrieve_for_eval_with_context(query, top_n=top_n, window_k=rag_window)
+                contexts, source = rag.get("retrieved_contexts", []), rag.get("source", "?")
             else:
                 rag = retrieve_for_eval(query, top_n=top_n)
-            contexts = rag.get("retrieved_contexts", [])
-            source = rag.get("source", "?")
+                contexts, source = rag.get("retrieved_contexts", []), rag.get("source", "?")
             n_ctx = len(contexts)
 
             print(f"[{i:2d}/{len(rows)}] id={qid} src={source} ctx={n_ctx} q={query[:50]}")
@@ -306,6 +404,7 @@ def run(
             except AIClientError as e:
                 if e.vendor == "ollama" and e.category.value == "permanent":
                     print(f"  ⚠ Ollama 永久錯誤 skip：{e.message[:80]}", file=sys.stderr)
+                    gen_dropped += 1
                     continue
                 raise
             if vendor == "ollama":
@@ -317,6 +416,7 @@ def run(
 
             if not generated:
                 print(f"  ⚠ 生成失敗，跳過")
+                gen_dropped += 1
                 continue
 
             print(f"  → {generated[:80]}...")
@@ -331,13 +431,19 @@ def run(
                 raw_reasons = []
                 for k in range(n_runs):
                     judge_start = time.perf_counter()
-                    s_k, r_k = _judge_answer(query, expected, generated)
+                    if judge_backend == "local":
+                        if judge is None:  # preflight 已保證；顯式 raise（避免 -O 下 assert 被剝成靜默）
+                            raise RuntimeError("local judge 未解析，preflight 應已擋下")
+                        s_k, r_k = _judge_answer_local(query, expected, generated, judge)
+                    else:
+                        s_k, r_k = _judge_answer(query, expected, generated)
                     judge_elapsed = time.perf_counter() - judge_start
                     if s_k is not None:
                         raw_scores.append(s_k)
                         raw_reasons.append(r_k)
-                    # Flash 速率保護：動態 sleep（API 已耗時則扣除，下限 0.5s）
-                    time.sleep(max(0.5, 4.0 - judge_elapsed))
+                    # 本地裁判無速率限制；僅付費 Gemini 需動態 sleep（下限 0.5s）
+                    if judge_backend != "local":
+                        time.sleep(max(0.5, 4.0 - judge_elapsed))
                 if raw_scores:
                     score = sum(raw_scores) / len(raw_scores)
                     reason = raw_reasons[0]  # 顯示第一條 reason 即可
@@ -365,10 +471,12 @@ def run(
                     run_id=run_id,
                     metric_name="answer_quality",
                     metric_value=score,
-                    evaluator_model=_JUDGE_MODEL,
+                    evaluator_model=judge["model_id"] if (judge_backend == "local" and judge) else _JUDGE_MODEL,
                     sample_id=qid,
                     metadata=meta,
                 )
+            elif not skip_scoring:
+                judge_failed += 1  # 生成成功但 judge 全失敗 → 此筆不進 mean（須計數，否則存活者偏差）
             ok += 1
 
     except AIClientError as e:
@@ -384,6 +492,10 @@ def run(
     mean_score = round(sum(scores) / len(scores), 4) if scores else None
     status_tag = "中止" if aborted else "完成"
 
+    # drop 會計：存活者偏差是 kill-switch 頭號威脅，drop 計數須大聲、且寫進 metadata 供交集判讀
+    total = len(rows)
+    scored = len(scores)
+    drop_rate = (total - scored) / total if total else 0.0
     _write_run_summary(
         run_id=run_id,
         model_spec=model_spec,
@@ -391,8 +503,17 @@ def run(
         mean_score=mean_score,
         started_at=started_at,
         finished_at=finished_at,
-        metadata={"top_n": top_n, "rag_window": rag_window, "n_runs": n_runs, "aborted": aborted},
+        metadata={"top_n": top_n, "rag_window": rag_window, "n_runs": n_runs,
+                  "arm": arm, "judge_backend": judge_backend, "aborted": aborted,
+                  "total": total, "scored": scored,
+                  "gen_dropped": gen_dropped, "judge_failed": judge_failed,
+                  "loo_fallback": loo_fallback},
     )
+    print(f"\n  drop 會計：scored={scored}/{total}  gen_dropped={gen_dropped}  "
+          f"judge_failed={judge_failed}  loo_fallback={loo_fallback}")
+    if drop_rate > 0.3:
+        print(f"  ⚠⚠ drop_rate={drop_rate:.0%} > 30% → 此臂 mean 不可靠，delta 判讀須存疑（存活者偏差）",
+              file=sys.stderr)
 
     print(f"\n── {status_tag} {ok}/{len(rows)}  mean_score={mean_score}  run_id={run_id} ──")
     return run_id
@@ -457,6 +578,87 @@ def compare(run_id_1: str, run_id_2: str) -> None:
     print(f"  mean: A={m1['mean_score']}  B={m2['mean_score']}")
 
 
+def _killswitch_verdict(run_ids: dict[str, str]) -> None:
+    """在三臂【共同存活】sample_id 交集上算 delta，杜絕跨臂存活者偏差污染判讀。
+
+    各臂 drop 數不同（dynamic_loo 召回較薄→更易空生成/判失敗），若各用自身 mean，
+    delta 會是 survivorship artifact。故 headline delta 一律在交集上算，並印各臂 drop 會計。
+    """
+    per_arm: dict[str, dict[int, float]] = {}
+    meta_arm: dict[str, dict] = {}
+    with get_connection() as conn:
+        for arm, rid in run_ids.items():
+            rows = conn.execute(
+                "SELECT sample_id, metric_value FROM ragas_evaluation_results "
+                "WHERE run_id=? AND metric_name='answer_quality'",
+                (rid,),
+            ).fetchall()
+            per_arm[arm] = {r["sample_id"]: r["metric_value"] for r in rows}
+            m = conn.execute(
+                "SELECT mean_score, metadata FROM evaluation_runs WHERE run_id=?", (rid,)
+            ).fetchone()
+            meta_arm[arm] = (json.loads(m["metadata"]) if m and m["metadata"] else {}) if m else {}
+            meta_arm[arm]["_full_mean"] = m["mean_score"] if m else None
+
+    common = set.intersection(*[set(d) for d in per_arm.values()]) if per_arm else set()
+    print(f"\n{'=' * 72}\n[KILL-SWITCH VERDICT]  交集 N={len(common)}（避免跨臂存活者偏差）\n{'=' * 72}")
+    for arm in run_ids:
+        md = meta_arm[arm]
+        inter_mean = (sum(per_arm[arm][s] for s in common) / len(common)) if common else float("nan")
+        print(f"  {arm:>12}: scored={len(per_arm[arm]):>2}  full_mean={md.get('_full_mean')}  "
+              f"inter_mean={inter_mean:.3f}  "
+              f"drop(gen={md.get('gen_dropped','?')},judge={md.get('judge_failed','?')},"
+              f"loo_fb={md.get('loo_fallback','?')})")
+
+    if len(common) < 10:
+        print(f"  ⚠ 共同存活 N={len(common)} < 10，統計力過低，delta 僅供參考、不下結論")
+    if not common:
+        print("  ⚠ 三臂無共同存活樣本，無法判讀")
+        return
+
+    im = {arm: sum(per_arm[arm][s] for s in common) / len(common) for arm in per_arm}
+    d_main = im["dynamic_loo"] - im["static"]
+    d_contam = im["dynamic"] - im["dynamic_loo"]
+    print(f"\n  ■ 主判讀  Δ(dynamic_loo − static)   = {d_main:+.3f}  （召回 generalizable value）")
+    print(f"  ■ 污染量  Δ(dynamic − dynamic_loo) = {d_contam:+.3f}  （answer 自身 source 灌水量）")
+    verdict = ("召回有 generalizable value → 路線活" if d_main > 0.3
+               else "召回無可測 generalizable value（Δ≈0）→ 此 golden set 測不出，B 路線喊停 / 須重建獨立標註 golden")
+    print(f"\n  判讀：{verdict}")
+
+
+def killswitch(
+    model_spec: str = "ollama:qwen3:30b-a3b",
+    limit: int | None = None,
+    top_n: int = 3,
+    judge_backend: str = "local",
+) -> dict:
+    """B 組 retrieval-delta kill-switch：三臂同模型同裁判，一次跑完並印兩組 delta。
+
+    主判讀 delta(dynamic_loo − static)：召回的 generalizable value
+      ≈0 → answer 只能從自身來源召回 → 此 golden set 測不出 generalizable retrieval value
+           → B 組 recall 路線喊停 / 須重建獨立標註 golden（flat 本身就是有效 kill 結果）
+      ≫0 → 召回有 generalizable value，路線活，才進放大乾淨 golden + few-shot 技術
+    污染量 delta(dynamic − dynamic_loo)：answer 自身 source session 對分數的灌水量。
+    """
+    arms = ["static", "dynamic", "dynamic_loo"]
+    run_ids: dict[str, str] = {}
+    for a in arms:
+        print(f"\n{'=' * 72}\n[KILL-SWITCH] arm={a}  judge={judge_backend}\n{'=' * 72}")
+        run_ids[a] = run(
+            model_spec=model_spec, limit=limit, top_n=top_n,
+            arm=a, judge_backend=judge_backend,
+        )
+    # headline：交集判讀（杜絕存活者偏差）；compare() 留作逐筆細節
+    _killswitch_verdict(run_ids)
+    print(f"\n{'#' * 72}\n# 逐筆細節（per-sample，mean 為各臂自身存活集，僅供觀察）\n{'#' * 72}")
+    print("\n■ A=dynamic_loo  B=static")
+    compare(run_ids["dynamic_loo"], run_ids["static"])
+    print("\n■ A=dynamic  B=dynamic_loo")
+    compare(run_ids["dynamic"], run_ids["dynamic_loo"])
+    print(f"\nrun_ids={run_ids}")
+    return run_ids
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description="C.2/C.3 E2E RAG 品質評估")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -473,10 +675,20 @@ def main() -> None:
                         "用於量化 LLM judge noise floor）")
     r.add_argument("--dry-run", action="store_true")
     r.add_argument("--skip-scoring", action="store_true")
+    r.add_argument("--arm", default="dynamic", choices=["static", "dynamic", "dynamic_loo"],
+                   help="召回臂（kill-switch 對照）")
+    r.add_argument("--judge-backend", default="local", choices=["local", "gemini"],
+                   help="評分裁判：local 本地 qwen（no-paid）/ gemini 付費")
 
     c = sub.add_parser("compare", help="C.3 雙模型比較")
     c.add_argument("run_id_1")
     c.add_argument("run_id_2")
+
+    k = sub.add_parser("killswitch", help="B 組 retrieval-delta 三臂一鍵 kill-switch")
+    k.add_argument("--model", default="ollama:qwen3:30b-a3b")
+    k.add_argument("--limit", type=int, default=None)
+    k.add_argument("--top-n", type=int, default=3)
+    k.add_argument("--judge-backend", default="local", choices=["local", "gemini"])
 
     args = p.parse_args()
     if args.cmd == "run":
@@ -488,6 +700,15 @@ def main() -> None:
             top_n=args.top_n,
             rag_window=args.rag_window,
             n_runs=args.n_runs,
+            arm=args.arm,
+            judge_backend=args.judge_backend,
+        )
+    elif args.cmd == "killswitch":
+        killswitch(
+            model_spec=args.model,
+            limit=args.limit,
+            top_n=args.top_n,
+            judge_backend=args.judge_backend,
         )
     else:
         compare(args.run_id_1, args.run_id_2)

@@ -58,7 +58,7 @@ sys.path.insert(0, str(_PROJECT_ROOT))
 import yaml
 from shiba_config import CONFIG
 from lib.db import init_db
-from lib.rag import get_rag_context
+from lib.rag import get_rag_context_with_hits
 
 # ============================================================
 # 設定
@@ -121,49 +121,52 @@ def get_project_path(payload: dict) -> str | None:
 
 
 # ============================================================
-# Debug echo（stderr 區塊，使用者可見、不進 Claude context）
+# Echo 寫檔（使用者側邊 `tail -F` 可見、不進 Claude context）
 # ============================================================
 
-def _echo_to_stderr(
+def _write_echo_file(
+    echo_path: Path,
     combined: str,
     router_context: str | None,
     rag_source: str,
+    count: int,
 ) -> None:
-    """把召回內容以 ANSI 區塊寫到 stderr（exit 0，僅顯示給使用者）。
+    """把召回內容「覆寫」到 echo 檔，供使用者側邊 `tail -F` 查看。
 
-    side-effect only：任何 stderr 寫入失敗（BrokenPipe / 編碼錯誤）都不得
-    冒泡，否則會把 main() 已備好的 additionalContext 一起連坐丟失。
+    取代舊的 stderr echo：Claude Code 2.x 起 exit-0 hook 的 stderr 只進 debug log、
+    正常 UI 與 transcript 皆不顯示（官方 hooks 文件），stderr 通道對使用者已死。
+    改寫檔這條不依賴 Claude Code UI、跨改版穩定。
+
+    覆寫（非追加）：每次 prompt 只保留最新一筆召回，避免檔案無限長大；使用者用
+    `tail -F`（大寫 F，截斷/重建時自動重開）跟看。
+    side-effect only：任何寫檔失敗都不得冒泡，否則會連坐丟失 main() 的 stdout 契約。
     """
     try:
-        # caller 已透過 `if combined_context:` 確保至少一邊有內容，parts 不會為空
+        from datetime import datetime
+
+        # caller 已確保至少一邊有內容（或無召回時顯式傳 none/0）
         parts = []
         if router_context:
             parts.append("router")
         if rag_source != "none":
             parts.append(f"rag={rag_source}")
-        source_label = "+".join(parts)
+        source_label = "+".join(parts) or "none"
 
-        # 非 TTY（pipe / log file / SSH 無 TTY / CI）或 NO_COLOR 環境跳過色碼，
-        # 否則使用者會在 transcript 看到 literal "\033[1;36m..." 雜訊
-        use_color = sys.stderr.isatty() and not os.environ.get("NO_COLOR")
-        header = "\033[1;36m" if use_color else ""
-        reset = "\033[0m" if use_color else ""
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-        # 三段內容組成單一字串、一次 write — 避免並發 hook 進程下三段
-        # syscall 交錯 + 終端機殘留色彩
-        # 用 rstrip("\n") 而非 rstrip()，保留 markdown 內可能有意義的尾隨空白
+        # 首行寫機器可讀 metadata（statusLine 解析 rag_count）；其後為人類可讀區塊。
+        # 用 rstrip("\n") 而非 rstrip()，保留 markdown 內可能有意義的尾隨空白。
         block = (
-            f"{header}[=== 本地RAG召回：{source_label} ===]{reset}\n"
+            f"<!-- rag_count={count} source={source_label} ts={ts} -->\n"
+            f"[=== 本地RAG召回：{source_label} @ {ts} ===]\n"
             f"{combined.rstrip(chr(10))}\n"
-            f"{header}[=== END ===]{reset}\n"
+            f"[=== END ===]\n"
         )
-        # 用 .buffer.write 強制 utf-8 + 'replace' 容錯，避免 ASCII stderr
-        # 環境（LANG=C / launchd / CI runner）遇到中文或 emoji 拋 UnicodeEncodeError
-        sys.stderr.buffer.write(block.encode("utf-8", errors="replace"))
-        sys.stderr.buffer.flush()
+        echo_path.parent.mkdir(parents=True, exist_ok=True)
+        echo_path.write_text(block, encoding="utf-8")
     except Exception as exc:  # noqa: BLE001
-        # debug echo 失敗不得影響主流程；只在 file logger 留痕
-        logging.getLogger(__name__).warning("debug_echo 寫入 stderr 失敗：%s", exc)
+        # echo 寫檔失敗不得影響主流程；只在 file logger 留痕
+        logging.getLogger(__name__).warning("echo 寫檔失敗：%s", exc)
 
 
 # ============================================================
@@ -211,13 +214,24 @@ def main() -> None:
         rag_config = config.get("rag", {})
         top_n = rag_config.get("top_n", 3)
         token_budget = rag_config.get("token_budget", 500)
-        debug_echo = bool(rag_config.get("debug_echo", False))
+        # echo 寫檔開關 + 目標路徑（相對專案根；絕對路徑也可，Path 自動處理）
+        echo_to_file = bool(rag_config.get("echo_to_file", False))
+        echo_path = (
+            _PROJECT_ROOT / rag_config.get("echo_file", ".remember/rag_echo.md")
+        ).resolve()
         # Option 3（2026-06-20）：預設不把本地召回/路由結果注入 Claude context，
         # 改 echo 給使用者參考；feed_model=true 才回復舊的注入行為（可回滾）。
         feed_model = bool(rag_config.get("feed_model", False))
+        # recall_log（每日 append 稽核日誌）+ macOS 通知開關
+        recall_log_enabled = bool(rag_config.get("recall_log", False))
+        recall_log_dir = (
+            _PROJECT_ROOT / rag_config.get("recall_log_dir", "recall_logs")
+        ).resolve()
+        recall_log_retention_days = int(rag_config.get("recall_log_retention_days", 30))
+        notify_macos = bool(rag_config.get("notify_macos", False))
 
-        # 執行 RAG 檢索（callee 顯式回傳召回路徑，避免 caller 字串 sniff）
-        memory_context, rag_source = get_rag_context(
+        # 執行 RAG 檢索（with_hits：額外回結構化 hits 供 recall_log 記「召回原因」）
+        memory_context, rag_source, hits = get_rag_context_with_hits(
             query=query,
             project_path=project_path,
             top_n=top_n,
@@ -244,52 +258,75 @@ def main() -> None:
             parts.append(memory_context)
 
         combined_context = "\n\n".join(parts) if parts else ""
+        session_id = payload.get("session_id", "")
+        # 「有召回」＝memory 真的撈到（len(hits)>0）；Layer 0 router 草擬單獨存在不算。
+        mem_count = len(hits)
+        has_recall = mem_count > 0
 
-        if combined_context:
-            session_id = payload.get("session_id", "")
+        # --- stdout 契約：feed_model 決定是否注入 model（基於 combined_context，含 router）---
+        # stdout 無論如何都須輸出恰好一個合法 JSON。
+        if combined_context and feed_model:
             router_label = "local" if router_context else "rag-only"
-
-            # feed_model 旗標決定 stdout：true=注入 Claude context（舊行為）；
-            # false（Option 3 預設）=輸出空物件，召回內容不進 model、只走 stderr echo。
-            # stdout 無論如何都須輸出恰好一個合法 JSON（hook 契約）。
-            if feed_model:
-                logger.info(
-                    "context injected %d 字元（session=%s，router=%s）",
-                    len(combined_context), session_id, router_label,
-                )
-                output = {
-                    "hookSpecificOutput": {
-                        "hookEventName": "UserPromptSubmit",
-                        "additionalContext": combined_context,
-                    }
+            logger.info(
+                "context injected %d 字元（session=%s，router=%s）",
+                len(combined_context), session_id, router_label,
+            )
+            output = {
+                "hookSpecificOutput": {
+                    "hookEventName": "UserPromptSubmit",
+                    "additionalContext": combined_context,
                 }
-                print(json.dumps(output, ensure_ascii=False))
-            else:
-                logger.info(
-                    "context withheld from model（feed_model=false）%d 字元 → echo only（session=%s，router=%s）",
-                    len(combined_context), session_id, router_label,
-                )
-                print(empty_output)
-            sys.stdout.flush()
-
-            # debug_echo：把召回內容以 ANSI 色塊寫到 stderr，只給使用者看
-            # （Claude Code 對 exit 0 的 stderr 不會回灌 model context，不計 token）。
-            # echo 前先 scrub（IP/email/user handle）；scrub 不可用則 fail-closed 不 echo，
-            # 避免未脫敏的歷史記憶外洩到終端 / shell log。
-            if debug_echo:
-                try:
-                    from layer_2_chamber.backend.services.grading_harness import (
-                        scrub_for_export,
-                    )
-                    safe_context = scrub_for_export(combined_context)
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning("scrub 不可用，fail-closed 跳過 echo：%s", exc)
-                    safe_context = ""
-                if safe_context:
-                    _echo_to_stderr(safe_context, router_context, rag_source)
+            }
+            print(json.dumps(output, ensure_ascii=False))
         else:
-            logger.debug("無 context，輸出空物件")
+            if combined_context:
+                logger.info(
+                    "context withheld from model（feed_model=false）%d 字元 → 使用者通道（session=%s）",
+                    len(combined_context), session_id,
+                )
             print(empty_output)
+        sys.stdout.flush()
+
+        # --- 使用者通道：echo / recall_log / notify。scrub 一次共用；不可用→fail-closed ---
+        scrub_fn = None
+        try:
+            from layer_2_chamber.backend.services.grading_harness import (
+                scrub_for_export,
+            )
+            scrub_fn = scrub_for_export
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("scrub 不可用，fail-closed 跳過 echo / recall_log：%s", exc)
+
+        if has_recall:
+            # echo：覆寫最新召回，給使用者 `tail -F` + statusLine 解析 rag_count
+            if echo_to_file and scrub_fn:
+                safe_context = scrub_fn(combined_context)
+                if safe_context:
+                    _write_echo_file(
+                        echo_path, safe_context, router_context, rag_source, mem_count
+                    )
+            # recall_log：append cause + 寫 pending（供 Stop hook 補回答）
+            if recall_log_enabled and scrub_fn:
+                from lib.recall_log import append_cause
+                append_cause(
+                    recall_log_dir, session_id, query, rag_source, hits,
+                    scrub=scrub_fn, retention_days=recall_log_retention_days,
+                )
+            # macOS 通知（side-effect only，失敗不冒泡）
+            # 格式：標題「yyyy/MM/dd HH:mm RAG 召回次數:N次」、內文＝議題（問題，截 40 字）
+            if notify_macos:
+                from datetime import datetime
+                from lib.notify import macos_notify
+                topic = scrub_fn(query) if scrub_fn else query
+                if len(topic) > 40:
+                    topic = topic[:40] + "…"
+                title = f"{datetime.now():%Y/%m/%d %H:%M} RAG 召回次數:{mem_count}次"
+                macos_notify(title, topic)
+        else:
+            # 無召回：echo 歸零（維持 statusLine 即時歸 0），不寫 recall_log、不通知
+            logger.debug("無召回（mem_count=0），echo 歸零")
+            if echo_to_file:
+                _write_echo_file(echo_path, "（本次無召回）", None, "none", 0)
 
     except json.JSONDecodeError as e:
         logger.error("payload JSON 解析失敗：%s", e)
