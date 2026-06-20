@@ -15,6 +15,13 @@ rag:
   # 故 echo 由「stderr ANSI 區塊」改為「寫檔」——hook 把召回覆寫到 echo_file，Shiba 側邊 `tail -F` 查看（不進 model、不依賴 Claude Code UI、跨改版穩定）。
   echo_to_file: true        # true=每次召回覆寫 echo_file 給 Shiba 看（exit0、不進 model context、不消 token）。⚠ 寫檔前已過 scrub_for_export（IP/email/user handle 脫敏）；key/token 不在 scrub 範圍（罕見於記憶；若曾在對話貼過原始 key 仍可能顯示），echo_file 落在 .remember/（git 已 ignore）僅單機自用；要更嚴設 false
   echo_file: .remember/rag_echo.md  # 召回覆寫目標（相對專案根；.remember/.gitignore=* 不入版控；statusLine 解析首行 rag_count）
+  # 召回稽核日誌（2026-06-21）：有召回才 append 到 recall_logs/<yyyyMMdd>.txt（log4j 風格，
+  # 記「問題 + 召回原因(score) + Claude 回答」；回答由 Stop hook 補、完整保留僅 scrub）。
+  # 與 echo_file 互補：echo=覆寫最新(statusLine 來源)；recall_log=append 歷史(稽核)。
+  recall_log: true                  # true=召回時寫日誌 + 發 macOS 通知；無召回不寫（echo 仍歸零）
+  recall_log_dir: recall_logs       # 相對專案根；已入 .gitignore（含 scrub 後仍屬本機隱私）
+  recall_log_retention_days: 30     # 保留近 N 天日檔，append 時順手刪超期（解析檔名日期）
+  notify_macos: true                # 召回時發 macOS 桌面通知（osascript，side-effect only）
 
 # ============================================================
 # Logging 設定（log 檔路徑由 CONFIG.paths.logs_dir 提供，此處只設 level）

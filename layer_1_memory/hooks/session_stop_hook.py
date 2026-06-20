@@ -487,6 +487,52 @@ def _build_fts_summary(parsed, active_branch, event_types: list[str] | None = No
     return combined[:1500]
 
 
+def _append_recall_answer(payload: dict, config: dict) -> None:
+    """Stop hook 收尾：本 session 若有 pending 召回標記，補 Claude 回答到 recall_log。
+
+    與 DB 同步完全獨立：任何失敗只進 logger、不影響主流程。回答完整保留、僅 scrub。
+    """
+    logger = logging.getLogger(__name__)
+    try:
+        rag_cfg = config.get("rag") or {}
+        if not rag_cfg.get("recall_log", False):
+            return
+        session_id = payload.get("session_id") or payload.get("session_uuid")
+        if not session_id:
+            return
+        log_dir = (_PROJECT_ROOT / rag_cfg.get("recall_log_dir", "recall_logs")).resolve()
+
+        from lib.recall_log import append_answer, has_pending
+        # 無 pending（本輪未召回）→ 不必解析 transcript，直接跳過
+        if not has_pending(log_dir, session_id):
+            return
+
+        transcript_path = payload.get("transcript_path")
+        jsonl_path = Path(transcript_path) if transcript_path else _find_jsonl(session_id)
+        if not jsonl_path or not jsonl_path.exists():
+            return
+        parsed = parse_jsonl(jsonl_path)
+        if not parsed:
+            return
+        # 最後一則非空 assistant 內容 = 剛結束的回答
+        answer = next(
+            (m.content for m in reversed(parsed.all_messages)
+             if m.role == "assistant" and (m.content or "").strip()),
+            None,
+        )
+        if not answer:
+            return
+        # scrub fail-closed：不可用則不寫，避免未脫敏回答落檔
+        try:
+            from layer_2_chamber.backend.services.grading_harness import scrub_for_export
+        except Exception:  # noqa: BLE001
+            logger.warning("scrub 不可用，跳過 recall answer 補寫")
+            return
+        append_answer(log_dir, session_id, answer, scrub=scrub_for_export)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("recall answer 補寫失敗（不影響主流程）：%s", e)
+
+
 def _find_jsonl(session_uuid: str) -> Path | None:
     """嘗試在 Claude projects 目錄中找到對應的 .jsonl 檔案"""
     claude_dir = Path.home() / ".claude" / "projects"
@@ -524,8 +570,13 @@ def main() -> None:
         # 初始化 DB（CREATE IF NOT EXISTS，安全重複執行）
         init_db()
 
-        # 同步 session
-        sync_session(payload, config)
+        # 同步 session；recall answer 補寫放 finally，確保 sync 拋錯時仍會跑
+        # （否則 sync 失敗→answer 不補→pending 殘留被下輪覆寫→該輪回答靜默遺失）。
+        # _append_recall_answer 自身已 try-all、不冒泡，不會干擾外層 except 的 queue 備援。
+        try:
+            sync_session(payload, config)
+        finally:
+            _append_recall_answer(payload, config)
 
     except json.JSONDecodeError as e:
         logger.error("payload JSON 解析失敗：%s", e)

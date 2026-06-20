@@ -58,7 +58,7 @@ sys.path.insert(0, str(_PROJECT_ROOT))
 import yaml
 from shiba_config import CONFIG
 from lib.db import init_db
-from lib.rag import get_rag_context
+from lib.rag import get_rag_context_with_hits
 
 # ============================================================
 # 設定
@@ -222,9 +222,16 @@ def main() -> None:
         # Option 3（2026-06-20）：預設不把本地召回/路由結果注入 Claude context，
         # 改 echo 給使用者參考；feed_model=true 才回復舊的注入行為（可回滾）。
         feed_model = bool(rag_config.get("feed_model", False))
+        # recall_log（每日 append 稽核日誌）+ macOS 通知開關
+        recall_log_enabled = bool(rag_config.get("recall_log", False))
+        recall_log_dir = (
+            _PROJECT_ROOT / rag_config.get("recall_log_dir", "recall_logs")
+        ).resolve()
+        recall_log_retention_days = int(rag_config.get("recall_log_retention_days", 30))
+        notify_macos = bool(rag_config.get("notify_macos", False))
 
-        # 執行 RAG 檢索（callee 顯式回傳召回路徑，避免 caller 字串 sniff）
-        memory_context, rag_source = get_rag_context(
+        # 執行 RAG 檢索（with_hits：額外回結構化 hits 供 recall_log 記「召回原因」）
+        memory_context, rag_source, hits = get_rag_context_with_hits(
             query=query,
             project_path=project_path,
             top_n=top_n,
@@ -251,57 +258,73 @@ def main() -> None:
             parts.append(memory_context)
 
         combined_context = "\n\n".join(parts) if parts else ""
+        session_id = payload.get("session_id", "")
+        # 「有召回」＝memory 真的撈到（len(hits)>0）；Layer 0 router 草擬單獨存在不算。
+        mem_count = len(hits)
+        has_recall = mem_count > 0
 
-        if combined_context:
-            session_id = payload.get("session_id", "")
+        # --- stdout 契約：feed_model 決定是否注入 model（基於 combined_context，含 router）---
+        # stdout 無論如何都須輸出恰好一個合法 JSON。
+        if combined_context and feed_model:
             router_label = "local" if router_context else "rag-only"
-
-            # feed_model 旗標決定 stdout：true=注入 Claude context（舊行為）；
-            # false（Option 3 預設）=輸出空物件，召回內容不進 model、只走 stderr echo。
-            # stdout 無論如何都須輸出恰好一個合法 JSON（hook 契約）。
-            if feed_model:
-                logger.info(
-                    "context injected %d 字元（session=%s，router=%s）",
-                    len(combined_context), session_id, router_label,
-                )
-                output = {
-                    "hookSpecificOutput": {
-                        "hookEventName": "UserPromptSubmit",
-                        "additionalContext": combined_context,
-                    }
+            logger.info(
+                "context injected %d 字元（session=%s，router=%s）",
+                len(combined_context), session_id, router_label,
+            )
+            output = {
+                "hookSpecificOutput": {
+                    "hookEventName": "UserPromptSubmit",
+                    "additionalContext": combined_context,
                 }
-                print(json.dumps(output, ensure_ascii=False))
-            else:
+            }
+            print(json.dumps(output, ensure_ascii=False))
+        else:
+            if combined_context:
                 logger.info(
-                    "context withheld from model（feed_model=false）%d 字元 → echo only（session=%s，router=%s）",
-                    len(combined_context), session_id, router_label,
+                    "context withheld from model（feed_model=false）%d 字元 → 使用者通道（session=%s）",
+                    len(combined_context), session_id,
                 )
-                print(empty_output)
-            sys.stdout.flush()
+            print(empty_output)
+        sys.stdout.flush()
 
-            # echo_to_file：把召回內容覆寫到 echo 檔，只給使用者 `tail -F`
-            # （Claude Code 對 exit 0 的 stderr/檔案皆不回灌 model context，不計 token）。
-            # 寫檔前先 scrub（IP/email/user handle）；scrub 不可用則 fail-closed 不寫，
-            # 避免未脫敏的歷史記憶外洩到檔案 / shell log。
-            if echo_to_file:
-                try:
-                    from layer_2_chamber.backend.services.grading_harness import (
-                        scrub_for_export,
-                    )
-                    safe_context = scrub_for_export(combined_context)
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning("scrub 不可用，fail-closed 跳過 echo：%s", exc)
-                    safe_context = ""
+        # --- 使用者通道：echo / recall_log / notify。scrub 一次共用；不可用→fail-closed ---
+        scrub_fn = None
+        try:
+            from layer_2_chamber.backend.services.grading_harness import (
+                scrub_for_export,
+            )
+            scrub_fn = scrub_for_export
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("scrub 不可用，fail-closed 跳過 echo / recall_log：%s", exc)
+
+        if has_recall:
+            # echo：覆寫最新召回，給使用者 `tail -F` + statusLine 解析 rag_count
+            if echo_to_file and scrub_fn:
+                safe_context = scrub_fn(combined_context)
                 if safe_context:
-                    # 召回筆數＝memory_context 內 "### " 條目數（router 草擬不計入）
-                    mem_count = memory_context.count("### ") if memory_context else 0
                     _write_echo_file(
                         echo_path, safe_context, router_context, rag_source, mem_count
                     )
+            # recall_log：append cause + 寫 pending（供 Stop hook 補回答）
+            if recall_log_enabled and scrub_fn:
+                from lib.recall_log import append_cause
+                append_cause(
+                    recall_log_dir, session_id, query, rag_source, hits,
+                    scrub=scrub_fn, retention_days=recall_log_retention_days,
+                )
+            # macOS 通知（side-effect only，失敗不冒泡）
+            # 格式：標題「yyyy/MM/dd HH:mm RAG 召回次數:N次」、內文＝議題（問題，截 40 字）
+            if notify_macos:
+                from datetime import datetime
+                from lib.notify import macos_notify
+                topic = scrub_fn(query) if scrub_fn else query
+                if len(topic) > 40:
+                    topic = topic[:40] + "…"
+                title = f"{datetime.now():%Y/%m/%d %H:%M} RAG 召回次數:{mem_count}次"
+                macos_notify(title, topic)
         else:
-            logger.debug("無 context，輸出空物件")
-            print(empty_output)
-            # 召回為空也覆寫 echo 檔（rag_count=0），避免 statusLine / tail 殘留上一筆
+            # 無召回：echo 歸零（維持 statusLine 即時歸 0），不寫 recall_log、不通知
+            logger.debug("無召回（mem_count=0），echo 歸零")
             if echo_to_file:
                 _write_echo_file(echo_path, "（本次無召回）", None, "none", 0)
 
