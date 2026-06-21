@@ -21,6 +21,7 @@
 
 ### Changed
 
+- **專案主線重定向：累積資料→訓練模型 ⇒ 累積驗證指令模式→RAG 召回+in-context 代理執行（2026-06-21）** — fine-tuning yield 全診斷證實 5 條 harvest 路徑在現有資料全不通（真實 output 非答案形狀、採納訊號是 auto 啟發式非人工 gold、語料被 D4 灌水 ~6.8×；gold 手撰對照 4/5 過 8.0 證判官沒壞）。Shiba 拍板重定主線：Pattern Library（驗證模式 RAG 索引）+ manual-accept 飛輪 + Agentic 召回 + Verifier，fine-tune 降為後期 P5。Layer 去留：L1 RAG 升主引擎 / L2 chamber 轉 Verifier / L3 fine-tune 降後期。`AGENTS.md` + `CLAUDE.md`（本地）加「運作宗旨：Harness Engineering 自主開發迴圈」+ Roadmap 骨架；詳細 `docs/roadmap/2026-06-21-rag-augmented-execution.md`。診斷證據見 `experiments/2026-06-21_refiner_lever_probe/RESULT.md`。
 - **Layer 1 RAG 注入透明化：top-k 改為「使用者參考、不餵 Claude」（2026-06-20，可回滾）** — 解決可見性不對稱（Claude 看得到 UserPromptSubmit 注入的 top-k + Layer 0 router 草擬答案、Shiba 看不到 → 無法分辨 Claude 結論 vs 夾雜的本地建議）：
   - **`feed_model` 旗標（新增，預設 false）** — `session_start_hook.py` 依此決定 stdout：false=本地召回 + router 草擬結果**不**注入 model context（stdout 輸出空物件 `{}`），改只走使用者寫檔通道；true=回復舊行為（注入 `additionalContext`，Layer 0 本地接管才生效）。可回滾旁路；route() 仍呼叫故 router_decisions telemetry 不受影響。
   - **使用者通道＝寫檔（取代 stderr）** — 原 `debug_echo`→stderr ANSI 區塊改為 `echo_to_file: true` + `echo_file: .remember/rag_echo.md`：hook 每次 prompt **覆寫**該檔（首行 `<!-- rag_count=N source ts -->` metadata + 人類可讀區塊），Shiba 側邊 `tail -F` 跟看完整 top-k。**改因**：查證官方 hooks 文件，**Claude Code 2.x 起 exit-0 hook 的 stderr 只進 debug log、正常 UI 與 transcript 皆不顯示**（實測 111 字元吐 stderr Shiba 全程看不到）→ stderr 通道對使用者已死，改寫檔不依賴 Claude Code UI、跨改版穩定。`.remember/.gitignore=*` 不入版控。
