@@ -15,6 +15,7 @@ from lib.rag import (
     get_rag_context,
     get_rag_context_with_hits,
     is_low_signal_query,
+    is_system_meta_query,
     retrieve_relevant_sessions,
 )
 
@@ -65,6 +66,33 @@ def test_is_low_signal_query_false_for_low_divergence_or_novel(tmp_path):
     with _patch_db_path(db_file):
         assert is_low_signal_query("跑測試") is False   # 低發散
         assert is_low_signal_query("從沒見過的詞") is False  # 新詞/不存在
+
+
+def test_is_system_meta_query_true_for_harness_prompts():
+    """harness / remember 外掛產生的系統 prompt（非 Shiba 查詢）→ True，呼叫端跳過召回。
+
+    fixture 取自 recall_logs/20260621.txt 實際污染源（前綴穩定、來自不可控外掛/harness）。
+    """
+    assert is_system_meta_query(
+        "You are summarizing a Claude Code session for a daily memory log.\n\nRead the conversation"
+    ) is True
+    assert is_system_meta_query(
+        "Apply maximum non-destructive compression. Rules:\n- Keep ALL facts"
+    ) is True
+    assert is_system_meta_query(
+        "<task-notification>\n<task-id>bivu1ki8f</task-id>"
+    ) is True
+    assert is_system_meta_query(
+        "This session is being continued from a previous conversation that ran out of context."
+    ) is True
+
+
+def test_is_system_meta_query_false_for_real_user_queries():
+    """Shiba 的真實查詢（即使短或像 meta）→ False，照常召回。"""
+    assert is_system_meta_query("recall_logs 目錄放在哪裡？") is False
+    assert is_system_meta_query("Option 1") is False
+    assert is_system_meta_query("開PR push and merge main") is False
+    assert is_system_meta_query("") is False
 
 
 def _seed_db(tmp_db: Path) -> None:

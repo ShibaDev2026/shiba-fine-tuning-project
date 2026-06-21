@@ -49,6 +49,19 @@ def has_pending(log_dir: Path, session_id: str) -> bool:
     return _pending_path(log_dir, session_id).exists()
 
 
+def clear_pending(log_dir: Path, session_id: str) -> None:
+    """無條件清除本 session 的 pending 標記（side-effect only，無 pending 亦安全）。
+
+    Stop hook 用：session 結束時，即使補回答的早退路徑（transcript 找不到 / 無 assistant
+    回答 / scrub 不可用）發生，也要清掉 pending——否則該 pending 永遠無人配對而洩漏成孤兒。
+    append_answer 成功時已自清，本函式覆蓋它「沒走到 append_answer」的所有早退分支。
+    """
+    try:
+        _pending_path(log_dir, session_id).unlink(missing_ok=True)
+    except Exception as exc:  # noqa: BLE001
+        _logger.warning("recall_log clear_pending 失敗：%s", exc)
+
+
 def _one_line(text: str) -> str:
     """多行召回內容收斂成單行（日誌可讀）；保留全文、不截斷"""
     return " ".join((text or "").split())

@@ -58,7 +58,7 @@ sys.path.insert(0, str(_PROJECT_ROOT))
 import yaml
 from shiba_config import CONFIG
 from lib.db import init_db
-from lib.rag import get_rag_context_with_hits, is_low_signal_query
+from lib.rag import get_rag_context_with_hits, is_low_signal_query, is_system_meta_query
 
 # ============================================================
 # 設定
@@ -209,7 +209,15 @@ def main() -> None:
             print(empty_output)
             return
 
-        # 查詢側前置 gate：已學會的同意詞（高發散、無指向性）直接跳過——
+        # 查詢側結構性 gate（最前、零 DB）：harness/remember 外掛 spawn 的系統 prompt
+        # （daily 摘要 / 壓縮 / 子任務通知 / context 續接）非 Shiba 查詢，一刀攔下——
+        # 不召回、不寫 log、不通知、不寫 pending（杜絕孤兒 pending 的主要來源）。
+        if is_system_meta_query(query):
+            logger.debug("session_start_hook: query 判定為系統 prompt，略過 RAG/log/notify")
+            print(empty_output)
+            return
+
+        # 查詢側資料驅動 gate：已學會的同意詞（高發散、無指向性）直接跳過——
         # vector / FTS5 兩條路都不走，亦不寫 recall_log、不彈通知（資料驅動、累積後學）。
         if is_low_signal_query(query):
             logger.debug("session_start_hook: query 判定為同意詞，略過 RAG/log/notify")
