@@ -58,7 +58,12 @@ sys.path.insert(0, str(_PROJECT_ROOT))
 import yaml
 from shiba_config import CONFIG
 from lib.db import init_db
-from lib.rag import get_rag_context_with_hits, is_low_signal_query, is_system_meta_query
+from lib.rag import (
+    get_rag_context_with_hits,
+    is_low_signal_query,
+    is_short_query,
+    is_system_meta_query,
+)
 
 # ============================================================
 # 設定
@@ -214,6 +219,18 @@ def main() -> None:
         # 不召回、不寫 log、不通知、不寫 pending（杜絕孤兒 pending 的主要來源）。
         if is_system_meta_query(query):
             logger.debug("session_start_hook: query 判定為系統 prompt，略過 RAG/log/notify")
+            print(empty_output)
+            return
+
+        # 查詢側最短長度閘（結構性、零 DB，置於 divergence gate 之前）：過短 query
+        # （控制詞/決策選項/步驟碎片）召回價值低，且 is_low_signal_query 的 divergence
+        # 啟發式對一致性控制詞永遠到不了閾值。與 ingestion 門檻對稱。
+        # ⚠ 「零功能損失」前提＝feed_model=false（recall 只進 audit、不餵 Claude）。本閘
+        #   位於 feed_model 讀取之前、無條件跳過召回；且比另兩個 gate 鈍——也會擋短但
+        #   有意義的 query（如「D4 是什麼」「bge-m3 維度?」）。若回滾 feed_model=true，
+        #   這些短 query 會靜默失去 RAG augmentation → 屆時需把本閘改為 feed_model-aware。
+        if is_short_query(query):
+            logger.debug("session_start_hook: query 過短，略過 RAG/log/notify")
             print(empty_output)
             return
 
