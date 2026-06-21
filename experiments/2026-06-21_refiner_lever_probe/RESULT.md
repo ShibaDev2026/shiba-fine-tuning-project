@@ -60,6 +60,30 @@ judge 用 `COALESCE(refined_instruction, instruction)` 評）。本實驗驗：r
 - → **修正**：先前「本地裁判會給好配對 9+」**站不住**（那是 seed）。正確結論是：**本地 panel 切換後，
   沒有任何真實配對拿到過 approval 門檻 8.0。** 呼應 D3「panel 自然 approve 僅 1.4%」＝strict by design。
 
+## 後續 D4 配對設計調查（2026-06-21，panel_ceiling.py + real_selfcontained.py）
+為設計 D4 配對品質修法，做兩個決定性實驗：
+
+**panel_ceiling.py — 分離「配對問題 vs 門檻問題」**：把 gatekeeper_golden_samples 的「手撰
+instruction + expected_output」（已知良好配對）丟現行本地 panel 評 → **4/5 過 8.0（avg 8.5-9.0）**。
+→ **本地 panel 確實獎勵好配對、8.0 可達；瓶頸 100% 是配對品質、非門檻校準。** refiner 失敗
+（只修 instruction、不修 output）也由此解釋：gold 是 instruction＋output 兩邊都好才 9 分。
+
+**[已撤回] real_selfcontained.py — 抽錯母體**（advisor 揪出）：誤抽 61 個*已抽出* v2 樣本（那個「幾乎沒跑」
+的 pipeline 產物，43/9707 覆蓋），只 1 個符合 → 量到的是 extraction 選擇、非語料。據此推「語料缺 clean pair」
+是 population mismatch 的錯誤結論，已刪該腳本。
+
+**corpus_selfcontained.py — 修正母體（從 9716 eligible exchanges 直接抽）**：
+- **乾淨自包含 instruction = 716 個**（>> 目標 60）→ **instruction 不缺、非語料稀缺、非前提受限。**
+- 但真實乾淨對 + **真實 final output** 只 **1/8 過 8.0**（ex=4154 清楚問答 8.5✓；其餘 7 個 instruction 乾淨
+  但 output 是對話中段分析/「已記錄」/給選項/岔題 → 2-4）。
+
+## D4 配對設計的真問題：output 形狀（精準、tractable、非前提）
+- exchange 切割器正確、panel 門檻可達、**自包含 instruction 不缺（716）** → 唯一卡點＝**真實 output 不是答案形狀**。
+- `final_assistant_message_id` 在真實多輪協作裡常是中段備註/澄清/岔題，不是對開頭 instruction 的乾淨回答。
+- **設計方向＝pair-coherence-gated extraction**：只留「乾淨自包含 instruction × output 真正回答它」的對。
+  yield 概算：716 × ~12.5%(1/8) ≈ 90 對 ≈ 45/block（若均分）→ **plausibly 夠 30/block**（n=8 小、率區間寬，待擴樣）。
+- 排除：純過濾(A) yield 夠但需加 output 維度；重構/合成(B/C) 偏離「學真實互動」+ fabrication 風險。
+
 ## 對 30/block 的意涵（binding constraint 雙因，未分離）
 yield 卡關 = **(a) 有機對話配對不一致（exchange 邊界，連 D4）× (b) 嚴格本地 panel vs 8.0 高門檻**。
 兩者疊加 → 真實配對 ~0% 自然過關。**證偽 refiner、排除雜訊**後，剩餘槓桿候選（皆 hypothesis、未證實）：
