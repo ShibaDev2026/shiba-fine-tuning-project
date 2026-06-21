@@ -1,5 +1,11 @@
 # 2026-06-21 per-exchange 抽取（D4 配對品質 → fine-tuning yield）
 
+> ⚠ **2026-06-21 Step 1 gate 失敗、設計擱置不建**。原因：乾淨自包含 instruction 716 個有 82% 是
+> branch over-merge 重複（unique 僅 132）→ ~16 approved vs 需 60。更大發現＝語料被 D4 灌水 ~6.8×
+> （9731 exchange / 1429 distinct msg）→ **D4 是任何 yield 工作的前置條件**。詳見
+> `experiments/2026-06-21_refiner_lever_probe/RESULT.md`。下一個未測路徑＝error_repair。
+> 保留本檔供日後 D4 修好後重評；屆時刪。
+
 > 完成驗證後刪此檔。只記待做決策，不記已完成細節。
 
 ## 背景（一句）
