@@ -28,6 +28,43 @@ _SNIPPET_TOKENS = 32
 # RAG 召回路徑標記 — 由 callee 顯式回傳，避免 caller 用字串 sniff 推斷
 RagSource = Literal["vector", "fts5", "none"]
 
+# 同意詞判定閾值：一個 instruction 衍生出 >= 3 種不同 commands 即視為「無指向性」。
+# 與 _vector_search 結果側過濾用的字面 3 一致——同一原則的查詢側對應（改值請兩處同步）。
+_DIVERGENCE_THRESHOLD = 3
+
+
+def is_low_signal_query(query: str) -> bool:
+    """查詢側前置 gate：判斷 query 是否為「已學會的同意詞」（無召回價值）。
+
+    純資料驅動：拿 query 精確比對 `exchange_embeddings.instruction`，若該 instruction
+    在歷史裡衍生出 >= _DIVERGENCE_THRESHOLD 種不同 commands，代表它無法單一指向特定
+    操作（如「好/ok/繼續」或命令雜訊），召回只會引入混淆 → 回 True，呼叫端跳過召回。
+
+    設計約束：
+    - 走 SQLite（不依賴 Ollama），離線亦有效。
+    - 累積後再學：新詞 / 出現次數不足、divergence 未達閾值 → 回 False，照常召回。
+    - 任何 DB 例外一律回 False（fail-open：寧可多召回，不可誤殺正常查詢）。
+    """
+    q = (query or "").strip()
+    if not q:
+        return False
+    try:
+        with get_connection() as conn:
+            row = conn.execute(
+                """
+                SELECT count(DISTINCT commands) AS divergence
+                FROM exchange_embeddings
+                WHERE instruction = ?
+                """,
+                (q,),
+            ).fetchone()
+    except sqlite3.Error:
+        # fail-open：任何 DB 例外都回 False（寧可多召回，不可誤殺正常查詢，
+        # 更不可讓例外冒泡到 hook 外層 handler 而靜默吞掉整個召回流程）
+        return False
+    divergence = row["divergence"] if row else 0
+    return divergence >= _DIVERGENCE_THRESHOLD
+
 
 def retrieve_relevant_sessions(
     query: str,

@@ -14,8 +14,57 @@ from lib.rag import (
     build_rag_output,
     get_rag_context,
     get_rag_context_with_hits,
+    is_low_signal_query,
     retrieve_relevant_sessions,
 )
+
+
+def _patch_db_path(db_file: Path):
+    """把 get_connection 的 DB 指向 tmp。
+
+    get_connection → shiba_db.open_connection 直接讀 module global CONFIG.paths.db；
+    CONFIG.paths 為 frozen dataclass（不可 setattr/delattr），故整顆替換 module 的 CONFIG。
+    """
+    from types import SimpleNamespace
+    fake = SimpleNamespace(paths=SimpleNamespace(db=db_file))
+    return patch("shiba_db.CONFIG", fake)
+
+
+def _seed_embeddings(tmp_db: Path, rows: list[tuple[str, str]]) -> None:
+    """植入 exchange_embeddings（rows=[(instruction, commands), ...]）。
+
+    embedding 欄 NOT NULL 但 is_low_signal_query 不讀它，塞 '[]' 佔位即可。
+    """
+    import sqlite3 as _sqlite3
+    schema_path = Path(__file__).parent.parent.parent / "layer_1_memory" / "db" / "schema.sql"
+    conn = _sqlite3.connect(str(tmp_db))
+    conn.row_factory = _sqlite3.Row
+    conn.executescript(schema_path.read_text(encoding="utf-8"))
+    for i, (instr, cmd) in enumerate(rows):
+        conn.execute(
+            "INSERT INTO exchange_embeddings (session_uuid, instruction, commands, embedding)"
+            " VALUES (?, ?, ?, ?)",
+            (f"u{i}", instr, cmd, "[]"),
+        )
+    conn.commit()
+    conn.close()
+
+
+def test_is_low_signal_query_true_for_high_divergence(tmp_path):
+    """同一 instruction 衍生 >= 3 種 commands → 判定同意詞 → True"""
+    db_file = tmp_path / "test.db"
+    _seed_embeddings(db_file, [("好", "git add"), ("好", "git commit"), ("好", "pytest -q")])
+    with _patch_db_path(db_file):
+        assert is_low_signal_query("好") is True
+
+
+def test_is_low_signal_query_false_for_low_divergence_or_novel(tmp_path):
+    """發散不足（< 3）或從未出現的新詞 → False（照常召回，累積後再學）"""
+    db_file = tmp_path / "test.db"
+    _seed_embeddings(db_file, [("跑測試", "pytest"), ("跑測試", "pytest -q")])  # 僅 2 種
+    with _patch_db_path(db_file):
+        assert is_low_signal_query("跑測試") is False   # 低發散
+        assert is_low_signal_query("從沒見過的詞") is False  # 新詞/不存在
 
 
 def _seed_db(tmp_db: Path) -> None:
