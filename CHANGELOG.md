@@ -5,6 +5,10 @@
 
 ## [Unreleased]
 
+## [1.8.0] - 2026-06-21
+
+> 自主開發迴圈一個月成果：model_api_tools 模型清單爬蟲、Layer 2 裁判付費 API→本地 LM Studio 硬切換、評分 harness + Tier A/B 黃金樣本凍結、D3 judge 校準診斷、RAGAS 修復就緒、Layer 1 RAG 注入透明化 + 召回稽核日誌、B 組瓶頸 no-regret 結案；以及**專案主線重定向**（累積資料→訓練模型 ⇒ 累積驗證指令模式→RAG/Agentic 召回 + in-context 代理執行，fine-tune 降後期 P5）。
+
 ### Added
 
 - **B 組瓶頸 no-regret 結案：harness cosine-bound probe（2026-06-21）** — 判定 cosine(bge-m3) 召回是否真漏 relevant，證實 bge-m3 在此 domain 足強、reranker/新召回 EV 不成立、不修 golden set：
@@ -77,6 +81,10 @@
   - **core 模組（SRP 拆分、I/O 全 DIP 注入免網路）**：`store.py`（`ModelRecord` / `write_batch` 單 txn / `get_latest`）、`ollama_scraper.py`（ollama.com/library HTML，`x-test-*` 錨點 + wrapping span `title` 精確 UTC 時戳、relative-time fallback）、`hf_scraper.py`（huggingface.co/api/models，lane=gguf/mlx 權威標記 format、`lastModified` 降序停損 + `Link` header cursor 分頁）、`local_scanner.py`（`/api/tags`+`/api/show`、`lms ls --json` 掃本機已裝 → `enrich_catalog` 升 deep + `is_local_installed`）、`runner.py`（`ScrapeParams` 編排、`uuid4` run_id、預設範圍 today−365d→today）
   - **觸發 adapter**：`cli.py`（`python -m model_api_tools.cli --source {ollama,hf,both}`，正解為單次 `both`，避免本機模型在缺 library slug 比對下裂成 slug + `:tag` 兩列）+ `api.py`（獨立 FastAPI app，**不掛** Layer 2 backend）+ `requirements.txt`
   - **驗收**：8 tests（store roundtrip×3 / ollama 解析 / hf 解析+停損 / local 掃描+enrich），全 in-memory + 注入 fake 免網路；雙來源 real-source 實跑寫入成功
+
+## [1.7.0] - 2026-05-22
+
+> PR-O 系列核心瘦身 + 功能模組化重構（建 `core/feature_registry.py`、7 個 feature 拆出 `modules/`、全 flag 預設 false = 純核心 4-layer）；PR-L golden-set 汰換、PR-M macro-exchange RAG 擴展 infra（驗證 K≥1 全敗退回 K=0）、PR-N judge noise 治理 + golden set 16→65；session_start_hook `debug_echo` 觀測旁路。
 
 ### Added
 
