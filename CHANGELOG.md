@@ -7,6 +7,9 @@
 
 ### Added
 
+- **B 組瓶頸 no-regret 結案：harness cosine-bound probe（2026-06-21）** — 判定 cosine(bge-m3) 召回是否真漏 relevant，證實 bge-m3 在此 domain 足強、reranker/新召回 EV 不成立、不修 golden set：
+  - **`experiments/2026-06-21_harness_cosine_bound_probe/probe.py`**（唯讀 DB、不碰 production）：10 active golden、union pool = cosine top-15 ∪ char-bigram lexical top-50 ∪ arctic-embed2 top-15（第二正交 embedding）、local-qwen 盲標（遮 source/score + 洗牌 + LOO 剔自身），數 cosine top-15 漏掉的 relevant。全本地零 API（bge-m3 + arctic via ollama、qwen3.5-35b via LM Studio）。
+  - **結果**：pool broadened 後 miss **反降**（lexical 餓死 pool4-12→12.5% → char-bigram pool9-19→7.1%）→ 非 floor、cosine 真涵蓋 relevant；3 miss 全 cross-topic 牽強。probe(涵蓋角度) × reranker PoC(排序角度，零增益) 雙角度收斂。結論見 `RESULT.md`。
 - **Layer 1 RAG 召回稽核日誌 + macOS 通知（2026-06-21）** — 在 `feed_model=false`（召回不餵 Claude）下，給 Shiba 一份可稽核的「共現紀錄」+ 即時提醒：
   - **每日 append 日誌 `recall_logs/<yyyyMMdd>.txt`（log4j 風格）** — 有召回（`mem_count>0`，Layer 0 router 草擬不算）才寫：`UserPromptSubmit` hook append「`[毫秒時間戳][INFO][session][問題]` + 召回原因（vector 標 cosine `score=`、FTS5 標 `fts5#rank`）」；`Stop` hook 補「Claude 回答（完整保留、僅 scrub、不截斷）」+ `feed_model=false` 共現註記。**共現非因果**（召回未餵 Claude、回答未受其影響，僅並列供比對）。日檔由 append 當下日期決定、跨日自動換檔；`recall_log_retention_days`（預設 30）於 append 時順手刪超期日檔（解析檔名日期）。`recall_logs/` 入 `.gitignore`。
   - **跨 hook 配對（pending 標記）** — cause 寫入時建 `recall_logs/.pending_<sid8>`（內容=日檔路徑，解跨午夜 answer 落不同檔）；`Stop` hook 有 pending 才從 transcript 取最後 assistant 回答補入、清標記。`_append_recall_answer` 置於 `sync_session` 的 `finally`，sync 失敗仍補、不冒泡。

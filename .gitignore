@@ -45,3 +45,6 @@ backups/*.db
 
 # 舊前端（Phase 3-4 重寫，暫不入版控）
 frontend/
+
+# probe 中間產物（embedding 快取大檔，不入版控）
+experiments/**/e5_cache.json
