@@ -123,6 +123,27 @@ per-exchange 路徑（每乾淨自包含 exchange 自成一對，instruction/out
 **根因（3 路徑 + gold 對照收斂、非 n=1 臆測）**：真實助理 output 是帶專案脈絡的多段分析，不是乾淨
 答案。instruction 怎麼修都無效，牆在 output 側。**harvest 真實對話到 30/block 在現行 8.0 門檻下不可行。**
 
+## 選項 2（user_accepted）gate 量測（2026-06-21，Shiba 定「先2後1+D4」）
+router_decisions.user_accepted=1 的 (prompt→local_output) 配對＝Shiba 採納的本地回應：
+- **109 非測試 accepted 決策**；instruction 還原（hash 比對 sha256[:12]）**74/109=68%**（32% prompt
+  不在 messages，疑 RAG 改寫/專案名 fallback）；unique 74 對。
+- **output=local_output 是乾淨結構化答案**（「結論：…理由：…」）+ **user_accepted 強制 approved
+  →繞過 judge 與 output 形狀牆**（唯一做到的路徑）；零 fabrication、對齊「學真實互動」前提。
+- ⚠ **當前 volume 短**：74 unique、block1≈11-15/block2≈6-10（neither 53 多為碎片「1.同意」/system-reminder）
+  → **現在 <30/block、無法立即觸發訓練**。
+- ⚠ `local_output` 存檔截斷 500 字元（不完整）；instruction 含碎片/雜訊需過濾。
+- **與前三條的差別**：#2 不是撞牆，是 volume 不足、會隨使用累積。
+
+### ★ #2 前提崩塌（advisor load-bearing check）：user_accepted 全是 auto-heuristic 非 manual
+- 查 `acceptance_source`：那 109 筆 **全部 'auto'**；全 DB 僅 3 'manual'（且無 output/測試）。
+- `user_accepted=1` 由 `infer_acceptance_from_text` 啟發式設（下一則訊息含「同意/好/ok」→ 自動推定），
+  **非 Shiba 對 local output 品質的判斷**。「1.同意 2.同意」被採納正因字面含「同意」（循環誤判：
+  Shiba 同意的是下一步、非認可 output）。
+- **結論：#2「倚重 Shiba 採納當 gold」前提在現有資料上不存在**（manual≈0）。force-approve 這些＝
+  拿 auto 弱標籤訓練，正是 judge 該擋的。**不建 user_accepted backfill。**
+- **#2 要成真需前置**：改 workflow 讓 Shiba **刻意 manual 採納**好的 local output（→ 真 gold →
+  force-approve 才有意義）。這是 UX/機制改動，非抽取路徑；且仍需累積 volume。
+
 ## 30/block 的戰略選項（Shiba 決策）
 1. **output-reshaping**：LLM 把真實分析 output 重格式化成乾淨答案（保留真實內容、比 refiner 改
    instruction 的幻覺風險低，因 output 本含正解）→ 最有望的 harvest 救援。
