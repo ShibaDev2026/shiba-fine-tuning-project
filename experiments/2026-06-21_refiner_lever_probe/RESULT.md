@@ -106,6 +106,31 @@ per-exchange 路徑（每乾淨自包含 exchange 自成一對，instruction/out
 - ⚠ 不下「前提已死」結論：只測了 per-exchange clean-Q&A 一條路；error_repair 未測；去重後真實
   harvest 上限待 D4 修好後才能準確量。
 
+## error_repair 路徑 probe（er_regrade.py，本地 panel 重評）— 也失敗
+- 既有 55 個 error_repair 中 53 是 pre-cutover 舊付費裁判評的 → 本地 panel 重評 6 個求公平。
+- **0/6 過 8.0**（avg 4.7-6.7），且本地分數≈舊付費分數（6.7→6.7/5.7→5.7）→ 非 provenance 假象。
+- instruction 是 by-construction 自包含模板（好），但 **output 是凌亂分析**（「## Gemini 503 排查
+  結論」「密碼被安全分類器擋下」）→ 非答案形狀 → ≤6.7。母體上限僅 ~63 有錯 session。
+
+## ★★ 收斂結論：三條 harvest 路徑撞同一面牆＝output 不是答案形狀
+| 路徑 | 本地 panel 上限 | 牆 |
+|------|---------------|----|
+| per-exchange clean Q&A | ≤6 | output 對話中段非答案 |
+| error_repair | ≤6.7 | output 凌亂分析 |
+| refiner（改 instruction）| 無提升 | 只修 instruction |
+| **gold（手撰 in+out）對照** | **8.5-9 ✓** | 判官沒壞、門檻可達 |
+
+**根因（3 路徑 + gold 對照收斂、非 n=1 臆測）**：真實助理 output 是帶專案脈絡的多段分析，不是乾淨
+答案。instruction 怎麼修都無效，牆在 output 側。**harvest 真實對話到 30/block 在現行 8.0 門檻下不可行。**
+
+## 30/block 的戰略選項（Shiba 決策）
+1. **output-reshaping**：LLM 把真實分析 output 重格式化成乾淨答案（保留真實內容、比 refiner 改
+   instruction 的幻覺風險低，因 output 本含正解）→ 最有望的 harvest 救援。
+2. **倚重 user_accepted**：現有 approved 全是 user_accepted 覆蓋（~3-6 分）；Shiba 手動採納當訓練信號、繞過 judge。
+3. **手撰/seed gold**（如 48 Tier B）：可靠 9 分但人工、非 harvest。
+4. **接受 L3 維持 gated 實驗**（D1 已決的預設）。
+- 正交前置：**D4 修好**才能準確量任何 yield（語料 ~6.8× 灌水）。
+
 ## 對 30/block 的意涵（binding constraint 雙因，未分離）
 yield 卡關 = **(a) 有機對話配對不一致（exchange 邊界，連 D4）× (b) 嚴格本地 panel vs 8.0 高門檻**。
 兩者疊加 → 真實配對 ~0% 自然過關。**證偽 refiner、排除雜訊**後，剩餘槓桿候選（皆 hypothesis、未證實）：
