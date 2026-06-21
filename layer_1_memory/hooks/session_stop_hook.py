@@ -502,33 +502,39 @@ def _append_recall_answer(payload: dict, config: dict) -> None:
             return
         log_dir = (_PROJECT_ROOT / rag_cfg.get("recall_log_dir", "recall_logs")).resolve()
 
-        from lib.recall_log import append_answer, has_pending
+        from lib.recall_log import append_answer, clear_pending, has_pending
         # 無 pending（本輪未召回）→ 不必解析 transcript，直接跳過
         if not has_pending(log_dir, session_id):
             return
 
-        transcript_path = payload.get("transcript_path")
-        jsonl_path = Path(transcript_path) if transcript_path else _find_jsonl(session_id)
-        if not jsonl_path or not jsonl_path.exists():
-            return
-        parsed = parse_jsonl(jsonl_path)
-        if not parsed:
-            return
-        # 最後一則非空 assistant 內容 = 剛結束的回答
-        answer = next(
-            (m.content for m in reversed(parsed.all_messages)
-             if m.role == "assistant" and (m.content or "").strip()),
-            None,
-        )
-        if not answer:
-            return
-        # scrub fail-closed：不可用則不寫，避免未脫敏回答落檔
+        # session 結束 = 配對的最後機會。任何早退路徑（transcript 找不到 / 無 assistant
+        # 回答 / scrub 不可用）都要清 pending——否則它永遠無人配對而洩漏成孤兒。
+        # append_answer 成功時自清，這裡的 finally 覆蓋它「沒走到」的所有分支。
         try:
-            from layer_2_chamber.backend.services.grading_harness import scrub_for_export
-        except Exception:  # noqa: BLE001
-            logger.warning("scrub 不可用，跳過 recall answer 補寫")
-            return
-        append_answer(log_dir, session_id, answer, scrub=scrub_for_export)
+            transcript_path = payload.get("transcript_path")
+            jsonl_path = Path(transcript_path) if transcript_path else _find_jsonl(session_id)
+            if not jsonl_path or not jsonl_path.exists():
+                return
+            parsed = parse_jsonl(jsonl_path)
+            if not parsed:
+                return
+            # 最後一則非空 assistant 內容 = 剛結束的回答
+            answer = next(
+                (m.content for m in reversed(parsed.all_messages)
+                 if m.role == "assistant" and (m.content or "").strip()),
+                None,
+            )
+            if not answer:
+                return
+            # scrub fail-closed：不可用則不寫，避免未脫敏回答落檔
+            try:
+                from layer_2_chamber.backend.services.grading_harness import scrub_for_export
+            except Exception:  # noqa: BLE001
+                logger.warning("scrub 不可用，跳過 recall answer 補寫")
+                return
+            append_answer(log_dir, session_id, answer, scrub=scrub_for_export)
+        finally:
+            clear_pending(log_dir, session_id)
     except Exception as e:  # noqa: BLE001
         logger.warning("recall answer 補寫失敗（不影響主流程）：%s", e)
 

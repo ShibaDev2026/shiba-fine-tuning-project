@@ -66,6 +66,40 @@ def is_low_signal_query(query: str) -> bool:
     return divergence >= _DIVERGENCE_THRESHOLD
 
 
+# harness / remember 外掛產生的「系統 prompt」前綴白名單——這些不是 Shiba 的自然語言
+# 查詢，而是記憶系統（remember 外掛 save-session / compress-ndc）與 Claude Code harness
+# （子任務通知 / context 續接摘要）自動 spawn 的內部 LLM 呼叫，會經同一個 UserPromptSubmit
+# hook。它們召回無意義，且會污染 recall_log、誤觸 macOS 通知、留下無法配對的孤兒 pending。
+#
+# 為何用 content-prefix 而非 env marker：這些來源是不可控的第三方外掛/harness，無法注入
+# SHIBA_INTERNAL 之類的環境標記。改錨定「穩定且夠長」的開頭前綴——這些是固定的外掛 prompt
+# 檔與 harness 結構標籤，不會逐對話漂移；錨定開頭可避免誤殺 Shiba 引用這些字串的真實討論。
+_SYSTEM_META_PREFIXES = (
+    "You are summarizing a Claude Code session",   # remember 外掛 save-session.prompt
+    "Apply maximum non-destructive compression",   # remember 外掛 compress-ndc.prompt
+    "<task-notification>",                          # harness 子任務完成通知
+    "This session is being continued from a previous conversation",  # harness context 續接摘要
+)
+
+
+def is_system_meta_query(query: str) -> bool:
+    """查詢側結構性 gate：判斷 query 是否為 harness/外掛產生的系統 prompt（非 Shiba 查詢）。
+
+    與 is_low_signal_query（資料驅動同意詞）正交：本函式純前綴比對，不查 DB、零延遲，
+    對「結構上就不是使用者輸入」的內部 LLM 呼叫一刀攔下——不召回、不寫 log、不通知、
+    不寫 pending（杜絕孤兒 pending 的主要來源）。
+
+    設計約束：
+    - 錨定開頭（startswith）：避免誤殺 Shiba 在真實討論中引用這些字串的查詢。
+    - 不可控來源：簽章來自第三方 remember 外掛 prompt 檔與 harness 結構標籤，故用穩定前綴
+      而非 env marker（無法對外掛 spawn 的 session 注入環境變數）。
+    """
+    q = (query or "").strip()
+    if not q:
+        return False
+    return q.startswith(_SYSTEM_META_PREFIXES)
+
+
 def retrieve_relevant_sessions(
     query: str,
     project_path: str | None = None,

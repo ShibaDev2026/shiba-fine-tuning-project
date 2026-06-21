@@ -91,6 +91,21 @@ def test_append_answer_without_pending_noops(tmp_path):
     assert list(tmp_path.glob("*.txt")) == []
 
 
+def test_clear_pending_removes_orphan_marker(tmp_path):
+    """clear_pending 無條件清本 session 的 pending（Stop 早退路徑用，治孤兒洩漏）。
+
+    無 pending 時呼叫亦安全（missing_ok），不冒泡。
+    """
+    recall_log.append_cause(tmp_path, "orphan01", "q", "vector",
+                            [{"score": 0.6, "instruction": "i", "commands": "c"}],
+                            scrub=_NOOP, when=datetime(2026, 6, 21))
+    assert recall_log.has_pending(tmp_path, "orphan01")
+    recall_log.clear_pending(tmp_path, "orphan01")
+    assert not recall_log.has_pending(tmp_path, "orphan01")
+    # 再清一次（已不存在）不應拋例外
+    recall_log.clear_pending(tmp_path, "orphan01")
+
+
 def test_prune_deletes_expired_keeps_recent(tmp_path):
     """append 時順手刪超期日檔，保留期內日檔"""
     (tmp_path / "20200101.txt").write_text("old", encoding="utf-8")     # 超期
