@@ -346,6 +346,11 @@ def _write_exchange_embeddings(session_uuid: str, parsed, active_branch) -> None
         "[Request interrupted by user",
     )
 
+    # instruction 最短長度閘：過短的 user 訊息（A/ok/merge/繼續/Option 1 等會話控制詞、
+    # 決策選項、步驟引用碎片）脫離當下脈絡無召回價值，且入庫後會 cosine=1.0 自我命中、
+    # 污染召回並逼查詢側 gate 追著擋。per-message 與 session 兩條路徑共用此門檻（一致化）。
+    _MIN_INSTRUCTION_CHARS = 15
+
     # 收集 user message → 後續實際指令的因果對
     messages = active_branch.messages
     for i, msg in enumerate(messages):
@@ -353,6 +358,9 @@ def _write_exchange_embeddings(session_uuid: str, parsed, active_branch) -> None
             continue
         # 過濾系統保留訊息，避免存入 exchange_embeddings
         if msg.content.lstrip().startswith(_SYSTEM_PREFIXES):
+            continue
+        # 過濾過短會話控制詞/決策碎片（與 session 層 fallback 同門檻）
+        if len(msg.content.strip()) <= _MIN_INSTRUCTION_CHARS:
             continue
 
         # 收集此 user message 之後的 assistant 實際執行指令
@@ -399,7 +407,8 @@ def _write_exchange_embeddings(session_uuid: str, parsed, active_branch) -> None
             best_msg = max(
                 (
                     m for m in messages
-                    if m.role == "user" and m.content and len(m.content) > 15
+                    if m.role == "user" and m.content
+                    and len(m.content.strip()) > _MIN_INSTRUCTION_CHARS
                     and not m.content.lstrip().startswith(_SYSTEM_PREFIXES)
                 ),
                 key=lambda m: len(m.content),

@@ -100,6 +100,25 @@ def is_system_meta_query(query: str) -> bool:
     return q.startswith(_SYSTEM_META_PREFIXES)
 
 
+# 查詢側最短長度閘門檻：與 ingestion 寫入層 _MIN_INSTRUCTION_CHARS 同值（15，刻意對稱）。
+_MIN_QUERY_CHARS = 15
+
+
+def is_short_query(query: str) -> bool:
+    """查詢側最短長度閘：query 去空白後 <= _MIN_QUERY_CHARS 視為過短低訊號。
+
+    結構性、零 DB，置於 is_low_signal_query（資料驅動 divergence）之前——短控制詞/
+    決策選項/步驟碎片（merge/A/finish/是/好/Option 1/先2後1+D4）靠長度一刀攔。
+
+    為何需要（實證）：is_low_signal_query 的 divergence 啟發式對「一致性控制詞」永遠到
+    不了閾值（finish 恆映射 finish skill、divergence 恆低），且這些短詞召回時 cosine=1.0
+    自我命中或巧合匹配 > floor，仍會寫 recall_log/彈通知。長度閘擋在 divergence 之前，
+    短詞不再依賴累積自癒。recall 不餵 Claude（feed_model=false）→ 跳過短 query 召回零
+    功能損失，僅省 audit 噪音與通知 spam。與寫入層門檻對稱（同 15）。
+    """
+    return len((query or "").strip()) <= _MIN_QUERY_CHARS
+
+
 def retrieve_relevant_sessions(
     query: str,
     project_path: str | None = None,

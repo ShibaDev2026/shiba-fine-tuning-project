@@ -15,6 +15,7 @@ from lib.rag import (
     get_rag_context,
     get_rag_context_with_hits,
     is_low_signal_query,
+    is_short_query,
     is_system_meta_query,
     retrieve_relevant_sessions,
 )
@@ -93,6 +94,22 @@ def test_is_system_meta_query_false_for_real_user_queries():
     assert is_system_meta_query("Option 1") is False
     assert is_system_meta_query("開PR push and merge main") is False
     assert is_system_meta_query("") is False
+
+
+def test_is_short_query_gates_short_control_words():
+    """過短控制詞/決策碎片（<=15 字）→ True，呼叫端跳過召回+log+通知。
+
+    這些是 is_low_signal_query 的 divergence 啟發式抓不到的一致性控制詞
+    （fixture 取自 recall_logs/20260621.txt 實際洩漏）。零 DB、純長度。
+    """
+    for q in ("merge", "A", "finish", "是", "好", "Option 1", "先2後1+D4", "  收尾  "):
+        assert is_short_query(q) is True
+
+
+def test_is_short_query_false_for_real_instructions():
+    """>15 字的真實指令 → False，照常召回。"""
+    assert is_short_query("請幫我重構整個資料流節點並更新對應索引路徑") is False
+    assert is_short_query("檢查 recall_logs 今日是否有需改善之處") is False
 
 
 def _seed_db(tmp_db: Path) -> None:

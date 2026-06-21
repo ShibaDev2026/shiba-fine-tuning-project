@@ -5,6 +5,15 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **Layer 1 無意義輸入仍被召回記錄：查詢側最短長度閘 + ingestion 去噪（2026-06-22）** — 稽核 `recall_logs/20260621.txt` 發現大量無意義輸入（`A`/`merge`/`finish`/`是`/`好`/`Option 1`/`先2後1+D4` 等會話控制詞、決策選項、步驟碎片）仍被召回並寫入日誌+彈通知。診斷（advisor 兩度校正）：
+  - **非 gate divergence 盲點**：`is_low_signal_query` 的 divergence 啟發式正常（`ok` n=37/div=20 已 gate；seen≥5 且 div<3 的全是有意義具體指令、無 junk）。但它對**一致性控制詞**（`finish` 恆映射 finish skill → divergence 恆低）永遠到不了閾值 → 抓不到。
+  - **記錄是查詢側行為**：實證跑真實召回路徑——`merge`/`A`/`好` self-match cosine=1.0、`finish`（庫中 0 筆）巧合匹配其他內容 0.678，全 > floor 0.35 → 全部仍記錄。故**單靠 ingestion 修法不解決記錄抱怨**（它只防新 junk 入庫的自我命中，不碰已在庫者，且會凍結短詞的 divergence 自癒）。
+  - **正解＝查詢側最短長度閘 `is_short_query`**（`rag.py`）：query 去空白 ≤15 字即在 hook 最前（`is_system_meta_query` 後、`is_low_signal_query` 前、零 DB）跳過召回+log+通知。短控制詞靠長度一刀攔、不再依賴 divergence 累積。recall 不餵 Claude（`feed_model=false`）→ 跳過短 query **零功能損失**，僅省 audit 噪音+通知 spam；既有庫中 junk 列對**短** query 無害（不再召回它們），**長** query 仍可能命中既有 junk 列（靠 ingestion 閘防新增、未回溯清理）。⚠ 「零損失」綁 `feed_model=false`；回滾 `feed_model=true` 時本閘會讓短但有意義 query 失去 augmentation，屆時需改 feed_model-aware（已於 gate 處留記）。
+  - **互補：ingestion 寫入層去噪**：`_write_exchange_embeddings` per-message 路徑補 `len(instruction.strip()) > 15`（與 session 層 fallback 既有門檻一致化、抽共用常數 `_MIN_INSTRUCTION_CHARS`），防新 junk 入庫污染**長** query 的召回精度。量化：砍 31% distinct instruction，抽樣證實全脈絡依賴碎片、無真實指令誤殺。
+  - 兩端門檻刻意對稱（同 15）；不建控制詞 vocab 表（junk 全 ≤15、長度閘已涵蓋，避開資料驅動 vs vocab 張力）。`build_rag_query` 仍用真實 prompt（不因長度丟棄、日誌準確）、與 PR #10 不衝突。⚠ 既有 ~93 筆短 junk 仍在庫（未回溯清理；查詢側閘已使其無害）。驗收：新測 3 passed（is_short_query 短攔/長放 + ingestion merge 不入庫）+ `tests/memory/` 51 passed（3 pre-existing `test_db` fail 無關）。見 [[project-exchange-embeddings-ingestion-noise]] [[project-rag-injection-transparency]]。
+
 ## [1.8.0] - 2026-06-21
 
 > 自主開發迴圈一個月成果：model_api_tools 模型清單爬蟲、Layer 2 裁判付費 API→本地 LM Studio 硬切換、評分 harness + Tier A/B 黃金樣本凍結、D3 judge 校準診斷、RAGAS 修復就緒、Layer 1 RAG 注入透明化 + 召回稽核日誌、B 組瓶頸 no-regret 結案；以及**專案主線重定向**（累積資料→訓練模型 ⇒ 累積驗證指令模式→RAG/Agentic 召回 + in-context 代理執行，fine-tune 降後期 P5）。
