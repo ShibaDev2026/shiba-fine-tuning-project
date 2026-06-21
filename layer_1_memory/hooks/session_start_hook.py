@@ -58,7 +58,7 @@ sys.path.insert(0, str(_PROJECT_ROOT))
 import yaml
 from shiba_config import CONFIG
 from lib.db import init_db
-from lib.rag import get_rag_context_with_hits
+from lib.rag import get_rag_context_with_hits, is_low_signal_query
 
 # ============================================================
 # 設定
@@ -101,13 +101,14 @@ def build_rag_query(payload: dict) -> str:
     從 hook payload 建立 FTS5 查詢字串。
     優先使用 user prompt 內容；fallback 用 project name。
     """
-    # UserPromptSubmit hook 含 prompt 欄位
-    prompt = payload.get("prompt", "")
-    if prompt and len(prompt.strip()) >= 3:
-        # 取前 150 字元作為查詢（避免過長）
-        return prompt.strip()[:150]
+    # UserPromptSubmit hook 含 prompt 欄位：只要欄位存在就一律用真實 prompt。
+    # 不再用長度門檻擋短 prompt——短的同意詞（如「不用」）由 is_low_signal_query
+    # 在查詢側資料驅動判斷，不該在這裡被偷換成專案名（曾導致「不用」→ 專案名亂查）。
+    if "prompt" in payload:
+        # 取前 150 字元作為查詢（避免過長）；空字串照樣回空，呼叫端會跳過召回
+        return (payload.get("prompt") or "").strip()[:150]
 
-    # 其他 hook（PreToolUse 等）用 project path 的目錄名
+    # 無 prompt 欄位的其他 hook（PreToolUse 等）才 fallback 用 project path 目錄名
     project_path = payload.get("cwd") or payload.get("projectPath") or ""
     if project_path:
         return Path(project_path).name
@@ -205,6 +206,13 @@ def main() -> None:
         query = build_rag_query(payload)
         if not query:
             logger.debug("session_start_hook: 無有效 query，略過 RAG")
+            print(empty_output)
+            return
+
+        # 查詢側前置 gate：已學會的同意詞（高發散、無指向性）直接跳過——
+        # vector / FTS5 兩條路都不走，亦不寫 recall_log、不彈通知（資料驅動、累積後學）。
+        if is_low_signal_query(query):
+            logger.debug("session_start_hook: query 判定為同意詞，略過 RAG/log/notify")
             print(empty_output)
             return
 
