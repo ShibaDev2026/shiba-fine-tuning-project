@@ -2,6 +2,8 @@
 
 本地 Ollama 模型自我監督進化系統。透過對話記憶累積、自動評分、閉環反饋，讓本地模型逐步接手 Claude 的重複性任務。
 
+> **主線重定向（2026-06-21）**：終極目標由「累積對話資料 → fine-tune 本地模型」改為「累積**驗證過的指令模式** → RAG/Agentic 召回 + 本地 in-context 代理執行」，fine-tune 降為後期選項（P5）。下方「資料流（hook → fine-tuning → output）」描述 Layer 既有實裝，各 Layer 新角色（L1 RAG 升主引擎 / L2 chamber 轉 Verifier / L3 fine-tune 降後期）詳見 [`docs/roadmap/2026-06-21-rag-augmented-execution.md`](docs/roadmap/2026-06-21-rag-augmented-execution.md)。
+
 ## 系統架構
 
 ```
@@ -70,7 +72,7 @@
 │  A: sessions / messages / branches    基礎對話結構                        │
 │  B: exchanges                         四步語意單元（req→tool→resp→final）│
 │  C: sessions_fts (FTS5)               中文 trigram 全文索引               │
-│  D: exchange_embeddings               nomic-embed-text 768d 向量（RAG）   │
+│  D: exchange_embeddings               bge-m3 1024d 向量（RAG）            │
 └────────────────────────────────┬─────────────────────────────────────────┘
                                  ▼
 ┌──── Layer 2 精神時光屋 ──────────────────────────────────────────────────┐
@@ -301,42 +303,46 @@ features:
 
 ```
 docs/
-├── design/        # Layer 0/1/2/3 實裝規格（架構 + phase1 memory + layer 2/3 schema/pipeline）
+├── design/        # Layer 0/1/2/3 實裝規格 + architecture.txt 目錄總覽
+├── roadmap/       # 主線 roadmap（2026-06-21 RAG-augmented 代理執行）
+├── note/          # 診斷/評估筆記（tierB gold、D3 混淆矩陣、reranker PoC、workflow/progress）
+├── superpowers/   # superpowers 技能 spec
 ├── references/
 │   ├── papers/    # 學術論文（PAPERS_INDEX.md + 4 篇全文目錄）
 │   ├── blogs/     # 第三方技術文章
-│   └── git/       # 參考 open-source 專案（Claudest …）
+│   └── git/       # 參考 open-source 專案（Claudest …，git-ignored）
 └── archive/       # 一次性報告與過時 plan
-    └── plans/     # 從 ~/.claude/plans/ 歸檔的歷史計畫
+    └── plans/     # 進行中計畫（驗證完成即刪，見 ~/.claude/CLAUDE.md token 紀律）
 ```
 
 `AGENTS.md` 是對外 AI agent / coding 工具的公開規範入口；`CLAUDE.md` 為專案擁有者的個人補充（不入版控）。
 
-## RAGAS 評估基線（2026-05-18）
+## RAGAS 評估基線（2026-06-19，已 merge 進 main）
 
-> 實作位於 `ragas-evaluation` branch（`evaluation/` 目錄），預計 v1.6.0 隨此 branch merge 進 main。
+> `evaluation/` 目錄已隨 PR #6 merge 進 main（`7f6dd48`）。採用 [RAGAS](https://docs.ragas.io)（Retrieval Augmented Generation Assessment）框架對 Layer 1 RAG 管道進行系統性評估，量化召回品質並建立持續追蹤基線。
 
-採用 [RAGAS](https://docs.ragas.io)（Retrieval Augmented Generation Assessment）框架對 Layer 1 RAG 管道進行系統性評估，量化召回品質並建立持續追蹤基線。
-
-### Layer 1 召回指標（UUID 型，@k=3，n=31 queries）
+### Layer 1 召回指標（UUID 型，@k=3，bge-m3 向量，n=65 queries，Ollama 真測）
 
 | 指標 | 說明 | 值 |
 |------|------|----|
-| Recall@3 | ground truth UUID 中被召回的比例（真正率） | **0.744** |
-| Precision@3 | 召回 UUID 中屬 ground truth 的比例 | **0.613** |
-| Hit@1 | top-1 是否命中任一 ground truth | **0.643** |
-| MRR | Mean Reciprocal Rank（第一個命中的排名倒數均值） | **0.762** |
+| uuid_recall | ground truth UUID 中被召回的比例（真正率） | **0.677** |
+| uuid_precision | 召回 UUID 中屬 ground truth 的比例 | **0.833** |
+| Hit@1 | top-1 是否命中任一 ground truth | **0.862** |
+| MRR | Mean Reciprocal Rank（第一個命中的排名倒數均值） | **0.867** |
 
-> ctx_relevance（LLM judge 語意相關性）待 Gemini Flash 配額恢復後補齊。
+> run_id `ragas-ollama-real`（留存 `ragas_evaluation_results`），全 metric ≤1.0、golden expected UUID 100% 匹配當前 sessions。此為 reranker 等召回改善的 baseline 對照。
+> ⚠ golden set 構造限制：`build_candidates` 的 gt 候選抽自 bi-encoder+FTS5 → gt cosine-bound，無法公平評「打敗 cosine 的召回法」（reranker PoC 因此 eval 無效）。
+> 早期 2026-05-18 nomic-embed era 基線（Recall 0.744 / n=31）見下方「外部資源」學術討論紀錄。
 
 ---
 
 ## 版本歷程
 
-當前版本：**v1.7.0**（2026-05-22）
+當前版本：**v1.8.0**（2026-06-21）
 
 | 版本 | 日期 | 主要內容 |
 |------|------|---------|
+| v1.8.0 | 2026-06-21 | model_api_tools 模型清單爬蟲；Layer 2 裁判付費 API→本地 LM Studio 硬切換（可回滾）；評分 harness + Tier A/B 黃金樣本凍結（48 gold）；D3 judge 校準診斷（放水病不存在、可結案）；RAGAS 修復就緒（recall 0.677 / hit@1 0.862）；Layer 1 RAG 注入透明化 + 召回稽核日誌 + macOS 通知 + 查詢側雙 gate；B 組瓶頸 no-regret 結案（harness cosine-bound probe）。**專案主線重定向**：累積資料→訓練模型 ⇒ 累積驗證指令模式→RAG/Agentic 召回 + in-context 代理執行，fine-tune 降後期 P5 |
 | v1.7.0 | 2026-05-22 | PR-O 系列核心瘦身 + 功能模組化重構（PR-O-1~10）：建 `core/feature_registry.py` + `register_hook/get_hook` 機制；7 個 feature 拆出至 `modules/{gatekeeper, ebbinghaus_trigger, multi_judge_v2, ragas, paraphrase, advanced_compressor}/`；feature 表全加模組前綴（`gatekeeper_*` / `multi_judge_v2_*` / `ragas_*`）；`config/shiba.yaml::features` 區塊統一開關；6 模組 Stage A/B 隔離驗證 + 10 case 組合矩陣全綠；全關 = 純核心 4-layer |
 | v1.6.0 | 2026-05-20 | PR-I~N 系列：bge-m3 升級 + 2263 embedding backfill；OllamaClient + source_type；RAGAS Phase A/C 完成（Recall 0.744 / Precision 0.613，Claude 5.48）；PR-N golden set 16→65 + judge noise 治理（temperature=0、n_runs flag）|
 | v1.5.0 | 2026-05-20 | 模型 yaml 化重構 Step 3-7 全部完成（Layer 0 三顆推論模型 + Layer 3 訓練 base 解硬寫 + 前端 PhaseRouter dropdown 即時切換 + online/offline kill switch）；SQLite hardening PR1+PR2 全部落地（`shiba_db.py` 統一連線 + PRAGMA 三層對齊 + APScheduler cron 錯開 + WAL→DELETE journal mode + stop_hook 4 段切分 + multi_judge 三欄共一事務） |
