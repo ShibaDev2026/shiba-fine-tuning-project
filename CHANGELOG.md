@@ -5,6 +5,14 @@
 
 ## [Unreleased]
 
+### Added
+
+- **RAG/Agentic 論文庫擴充：`docs/references/papers/` 05–26（22 篇全文分析，2026-06-22）** — harness 自主迴圈：subagent 並行搜尋（Google Scholar/arXiv，賽道 A=Agentic/自適應檢索策略、賽道 B=召回品質+模式重用）→ triage 23 stub 入 `pending/` → 逐篇全文分析成 `NN_名稱/paper.md`（對齊既有 01–04 格式：對應 Layer/核心結論帶數字/方法拆解/速查接地/侷限）+ 更新 `PAPERS_INDEX.md`。
+  - **流程 gate（advisor 校準）**：分析前批量 WebFetch 驗證 6 篇後截止日 arxiv ID（全真實存在、無幻影論文）；數字經 WebFetch 摘要抽取、未逐一對 PDF 核（已於 index 加 provenance 標註，驅動花費前須回核原文）。
+  - **分階段對應 roadmap**：P1 Pattern Library（05 AWM/06 ExpRAG/07 DICE/08 DREAM）、P2 召回（09 HyDE/10 Query Rewriting/11 Self-RAG/12 BGE-M3/16 Adaptive-RAG/17 RankRAG/18–22 多步召回/19 Fusion）、P3 Verifier（13 CRAG/14 VeriGuard/15 Verifiably Safe Tool Use/26 SoK failure modes）、L1 診斷（25 Procedural Memory「generalization cliff」解釋指令模式純 cosine 召回失效）、P5 fine-tune（24 Search-R1 用 Qwen2.5 base）。
+  - **關鍵接地（誠實版）**：08 DREAM 多代理辯論補標（95.2%/3.5% 人工）可能解除 golden set cosine-bound；12 BGE-M3 sparse head ＝**修/換已壞的 FTS5 lexical arm**（B 組 probe 記錄 sessions_fts 不對齊、|fts|=0），非「全新最高 EV 軸」（advisor 校正過度宣稱），增益仍部分撞 cosine-bound、須與 08 綁一起評估、不重開已結案 B 組。
+  - 05–07 附 PDF；08–26 因 arxiv 限速暫缺 PDF（paper.md 全文分析不受影響、可日後補抓）。`pending/` 已清空。⚠ zsh 不對未加引號變數 word-split，過程曾誤建 5 個空殼目錄、已清理。
+
 ### Fixed
 
 - **Layer 1 無意義輸入仍被召回記錄：查詢側最短長度閘 + ingestion 去噪（2026-06-22）** — 稽核 `recall_logs/20260621.txt` 發現大量無意義輸入（`A`/`merge`/`finish`/`是`/`好`/`Option 1`/`先2後1+D4` 等會話控制詞、決策選項、步驟碎片）仍被召回並寫入日誌+彈通知。診斷（advisor 兩度校正）：
