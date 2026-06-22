@@ -296,3 +296,167 @@
 **關鍵詞**: POMDP formalization, four axes, six failure modes, layered evaluation
 **對應 Layer**: P3 Verifier + 評估框架 ｜ **核心**: POMDP 形式化（成本-效益）；**六大 failure mode = Verifier 檢查清單**；三層評估（組件/軌跡/系統）
 **速查**: Verifier 需求清單（本專案最該防 #3 Tool Misuse + #4/#5 Library 污染）；分層評估回應 cosine-bound 困局；四軸定位本專案
+
+---
+
+> 以下 27+ 為 2026-06-22 搜尋輪 2（賽道 C=Graph RAG / 賽道 D=Agent 記憶+中文/程式碼）。
+
+## P1 — Pattern Library / 記憶架構
+
+## 27 Graph-of-Skills
+
+**路徑**: `27_Graph-of-Skills/paper.md` ｜ **arXiv**: https://arxiv.org/abs/2604.05333
+**關鍵詞**: skill dependency graph, reverse-aware PPR, hybrid seeding, budgeted hydration, prerequisite recovery
+**對應 Layer**: P1 靶心（Pattern Library 工程藍圖）
+**核心結論**:
+- typed 依賴圖（dependency/workflow/semantic/alternative）+ reverse-aware PPR 回溯前置 + context 預算截斷
+- GPT-5.2 Codex SkillsBench reward +25.55%、token −56.72% vs 全量載入；六區塊全勝 Vector
+**速查**: 召回模式連帶拉前置（對應「切 branch 前先 stash」）；I/O schema 重疊 deterministic 連邊；⚠ 圖離線不更新→manual-accept 飛輪正補此洞
+
+## 28 Memp: Agent Procedural Memory
+
+**路徑**: `28_Memp_Agent_Procedural_Memory/paper.md` ｜ **arXiv**: https://arxiv.org/abs/2508.06433
+**關鍵詞**: Build-Retrieve-Update, trajectory vs script granularity, memory deprecation, cross-model transfer
+**對應 Layer**: 主線最貼合（P1+P2+P4）
+**核心結論**:
+- Build-Retrieve-Update 迴圈＝「蒸餾→召回→飛輪」；GPT-4o 71.93%→79.94%；召回 plateau ~5
+- 跨模型遷移：GPT-4o 程序記憶→Qwen2.5-14B +5%/−1.6 步
+**速查**: Update 的 Add/Del/Deprecate 給 Library 生命週期；雙粒度 script+trajectory；⚠ 只用向量召回未納 BM25＝本專案 sparse arm 機會；reward 依賴洞由 manual-accept 補
+
+## 29 A-MEM: Agentic Memory
+
+**路徑**: `29_A-MEM_Agentic_Memory/paper.md` ｜ **arXiv**: https://arxiv.org/abs/2502.12110
+**關鍵詞**: Zettelkasten, atomic notes, automatic tagging, dynamic links, memory evolution
+**對應 Layer**: P1 結構化 + P2
+**核心結論**:
+- 原子筆記+自動 tag+動態連結+記憶演化；LoCoMo Temporal F1 45.85 vs MemGPT 25.52；token −85~93%
+**速查**: Library 存原子筆記+LLM 自動 tag+相似度連結（對應 memory `[[name]]`）；memory evolution 比純 append 高階
+
+## 30 Generative Agents
+
+**路徑**: `30_Generative_Agents/paper.md` ｜ **arXiv**: https://arxiv.org/abs/2304.03442（UIST 2023）
+**關鍵詞**: memory stream, recency/importance/relevance retrieval, reflection, recursive planning
+**對應 Layer**: P1/P2 召回排序 + Layer 1
+**核心結論**:
+- 三因子加權召回 score=recency+importance+relevance（α=1）；ablation 完整 29.89 vs 無記憶 21.21（d=8.16）
+**速查**: **補本專案單一 cosine（=只有 relevance）**——加 importance（Shiba 採納度）+ recency；reflection＝memory consolidation
+
+## 31 Procedural Knowledge Improves Agentic Workflows
+
+**路徑**: `31_Procedural_Knowledge_Agentic_Workflows/paper.md` ｜ **arXiv**: https://arxiv.org/abs/2511.07568
+**關鍵詞**: HTN, hand-coded vs LLM-created, small-model uplift, implicit planning
+**對應 Layer**: 主線理論背書（P1）
+**核心結論**:
+- HTN 程序知識讓 20B/70B 勝 120B baseline；hand-coded HTN > LLM-created（⚠ 摘要級無逐項數字）
+**速查**: **「Pattern Library+小模型勝大模型、不靠 fine-tune」的直接背書**；hand-coded>LLM-created＝支持 manual-accept（人工採納>auto 蒸餾）
+
+## P2 — 記憶管理 / 圖檢索 / 程式碼
+
+## 32 MemGPT
+
+**路徑**: `32_MemGPT/paper.md` ｜ **arXiv**: https://arxiv.org/abs/2310.08560
+**關鍵詞**: OS-inspired memory, main vs external context, self-directed paging, function calls
+**對應 Layer**: P2 in-context 執行 + P3 ｜ **核心**: 分層記憶（RAM/disk）+ function call 自主分頁；Deep Memory Retrieval GPT-4 32.1%→92.5%
+**速查**: Library(external)↔本地 context(main) 工作集管理；⚠ 小模型 function calling 弱（GPT-3.5 退化）→本地模型需實測
+
+## 33 C-Pack: Chinese Embeddings (BGE)
+
+**路徑**: `33_C-Pack_Chinese_Embeddings/paper.md` ｜ **arXiv**: https://arxiv.org/abs/2309.07597
+**關鍵詞**: Chinese embeddings, C-MTEB, retrieval vs reranking 分離, BGE 家族源頭
+**對應 Layer**: Layer 1（bge-m3 同源）+ P1/P2 ｜ **核心**: C-MTEB 把 retrieval/reranking 列獨立任務分別評；BGE-large 中文 63.96 vs M3E 57.66
+**速查**: **背書 golden set 修法（gt 獨立標註、勿抽自 retriever）**；中文召回標準評測；連 08 DREAM
+
+## 34 When to use Graphs in RAG
+
+**路徑**: `34_When_to_use_Graphs_in_RAG/paper.md` ｜ **arXiv**: https://arxiv.org/abs/2506.05690
+**關鍵詞**: GraphRAG vs vanilla, decision boundary, token overhead
+**對應 Layer**: P1 圖化決策閘（煞車片）｜ **核心**: 簡單事實 vanilla RAG≈或勝 GraphRAG（60.92 vs 60.14）；複雜推理 GraphRAG +10.45；40× token 膨脹
+**速查**: **多數指令任務近 Level 1→先別建圖**（bge-m3 足夠）；圖化的 base-assumption gate；配 27/35 讀
+
+## 35 HopRAG
+
+**路徑**: `35_HopRAG/paper.md` ｜ **arXiv**: https://arxiv.org/abs/2502.12442
+**關鍵詞**: pseudo-query edges, logic-aware retrieval, retrieve-reason-prune, helpfulness metric
+**對應 Layer**: P2 + P3 ｜ **核心**: pseudo-query 邊建邏輯關係 + retrieve-reason-prune；answer +36.25%、retrieval F1 +20.97%；top-12≈top-20
+**速查**: 指令模式間用「回答什麼/引發什麼」建邏輯邊（比 GoS I/O schema 更語意）；prune＝Verifier；⚠ 受 34 約束簡單任務不需圖
+
+## 36 RepoCoder
+
+**路徑**: `36_RepoCoder/paper.md` ｜ **arXiv**: https://arxiv.org/abs/2303.12570（EMNLP 2023）
+**關鍵詞**: iterative retrieval-generation, generated-code-as-query, RepoEval, propose-retrieve-refine
+**對應 Layer**: P2（程式碼場景）｜ **核心**: 生成物當查詢回頭再檢索；EM +>10%、GPT-3.5 line 55.31% vs 40.56%；iter 2 即夠
+**速查**: 本地模型草擬當 query 再召回（HyDE 迭代版）；⚠ **低重複度→增益小＝直接呼應 P1 EV gate**
+
+## Graph RAG 變體（多為機制借鏡，受 paper-34 約束）
+
+## 37 Agent-as-a-Graph
+
+**路徑**: `37_Agent-as-a-Graph/paper.md` ｜ **arXiv**: https://arxiv.org/abs/2511.18194
+**關鍵詞**: KG tool/agent retrieval, type-specific weighted RRF, ownership graph, MCP
+**對應 Layer**: P2（工具層召回）｜ **核心**: vector→分型 wRRF→ownership 邊遍歷；LiveMCPBench Recall@5 0.85 vs 0.70（+14.9%）
+**速查**: 分型加權避免異質排序混血；ownership 邊聚可執行單位；若接 MCP 工具集適用
+
+## 38 Microsoft GraphRAG (Local to Global)
+
+**路徑**: `38_Microsoft_GraphRAG/paper.md` ｜ **arXiv**: https://arxiv.org/abs/2404.16130
+**關鍵詞**: entity KG, Leiden community, hierarchical summaries, query-focused summarization, global sensemaking
+**對應 Layer**: P1（機制借鏡，非直接適配）｜ **核心**: 針對全域 sensemaking；comprehensiveness 勝率 72-83%；root 摘要省 9-43× token
+**速查**: ⚠ **與本專案任務型態相反**（本專案是 local fact 型，paper-34 證 vanilla≈勝）→ 列對照/煞車片，非 P1 採用
+
+## 39 LightRAG
+
+**路徑**: `39_LightRAG/paper.md` ｜ **arXiv**: https://arxiv.org/abs/2410.05779
+**關鍵詞**: dual-level retrieval, graph indexing, incremental update, cost efficiency
+**對應 Layer**: P1/P2 ｜ **核心**: dual-level（entity+主題）+ incremental update（免重建）；勝 GraphRAG 小幅/勝 NaiveRAG 大幅；檢索 <100 token vs GraphRAG 610k
+**速查**: **incremental update 契合 manual-accept 飛輪**（採納即增量併入、免重建）；比 MS-GraphRAG 輕量本地可行
+
+## 40 GeAR
+
+**路徑**: `40_GeAR/paper.md` ｜ **arXiv**: https://arxiv.org/abs/2412.18431（ACL 2025 Findings）
+**關鍵詞**: graph expansion, retriever-agnostic, agent gist memory, multi-step
+**對應 Layer**: P2 ｜ **核心**: graph expansion 掛任何 base retriever（BM25/dense）+ gist memory；MuSiQue >10%、更少 token/迭代
+**速查**: **最低風險圖化**——保留 bge-m3 只加 graph expansion、不重建 Library；gist memory 跨步
+
+## 41 HippoRAG v1
+
+**路徑**: `41_HippoRAG_v1/paper.md` ｜ **arXiv**: https://arxiv.org/abs/2405.14831（NeurIPS 2024）
+**關鍵詞**: Personalized PageRank, hippocampal indexing, OpenIE KG, single-step multi-hop, node specificity
+**對應 Layer**: P2 + Layer 1（v2=paper-03 已在庫）｜ **核心**: PPR 單步多跳，比 IRCoT 便宜 10-30×/快 6-13×；2Wiki +20% R@5；⚠ NER 依賴（48% 錯誤）
+**速查**: 圖召回的 PPR 底層機制（GoS reverse-aware PPR 是其進化）；Node Specificity≈IDF；中文實體抽取品質是瓶頸
+
+## serving / 記憶管理 / 程式碼檢索
+
+## 42 GraphFlow
+
+**路徑**: `42_GraphFlow/paper.md` ｜ **arXiv**: https://arxiv.org/abs/2605.22566（ICML 2026）
+**關鍵詞**: wGraph, atomic operations, topology-aware KV-cache reuse, LLM-agent serving
+**對應 Layer**: P2/P4 serving 效率 ｜ **核心**: 原子操作合併圖 + KV-cache 跨重複執行重用；準確 +4.95pt、記憶體 4× 降；Qwen-2.5-7B 實測
+**速查**: **KV-cache 重用直接服務 P1 EV**（重複才有重用價值）；罕見路徑 fall back＝低頻無紅利
+
+## 43 Reflective Memory Management (RMM)
+
+**路徑**: `43_Reflective_Memory_Management/paper.md` ｜ **arXiv**: https://arxiv.org/abs/2503.08026（ACL 2025）
+**關鍵詞**: prospective/retrospective reflection, multi-granularity summarization, online RL retrieval
+**對應 Layer**: P1/P2 ｜ **核心**: 前瞻多粒度摘要 + 回溯用引用證據 online RL 精煉召回；LongMemEval +10%
+**速查**: **對症 exchange/macro-exchange 切割死路**（動態粒度非固定 exchange）；引用證據＝manual-accept RL 訊號
+
+## 44 Memory for Autonomous LLM Agents (Survey)
+
+**路徑**: `44_Memory_Autonomous_Agents_Survey/paper.md` ｜ **arXiv**: https://arxiv.org/abs/2603.07670
+**關鍵詞**: write-manage-read, memory taxonomy, control policy, evaluation gaps, forgetting
+**對應 Layer**: 賽道 D 地圖（全線）｜ **核心**: write-manage-read + 三軸分類（temporal/substrate/control）；評估 gap「classical retrieval metrics fall short」
+**速查**: 本專案定位＝procedural+semantic 記憶 / vector+structured+executable substrate / heuristic→prompted control；𝒰 非 append（去重/矛盾/deprecate）；四層評估接 SoK
+
+## 45 Retrieval-Augmented Code Generation (Survey)
+
+**路徑**: `45_Retrieval_Augmented_Code_Generation_Survey/paper.md` ｜ **arXiv**: https://arxiv.org/abs/2510.04905
+**關鍵詞**: RACG taxonomy, control regime (L0/L1/L2), graph-based code retrieval, adaptive policy, necessity boundary
+**對應 Layer**: 賽道 D 地圖 + P2 ｜ **核心**: control regime 三級（非agent/部分/全自主）；adaptive（LinUCB/necessity-aware）；command-driven context
+**速查**: roadmap 演進階梯 L0→L1(RepoCoder 式)→L2；necessity-aware 升級查詢側 gate；command-driven context 契合 CLI agent
+
+## 46 CoCoSoDa
+
+**路徑**: `46_CoCoSoDa_Code_Search/paper.md` ｜ **arXiv**: https://arxiv.org/abs/2204.03293（ICSE 2023）
+**關鍵詞**: contrastive learning, soft data augmentation, momentum contrast, NL-code alignment
+**對應 Layer**: P2（跨模態診斷）｜ **核心**: NL↔code 對齊；CodeSearchNet MRR vs CodeBERT +13.3%、GraphCodeBERT +10.5%
+**速查**: 診斷「中文指令查→CLI 模式召回」跨模態 gap 是否拖累 cosine；專屬對齊勝通用 embedding→bge-m3 或有 domain gap 值得實測
