@@ -7,6 +7,13 @@
 
 ### Added
 
+- **`docs/references/` 研究情報週報子系統 + `/weekly-digest` skill（2026-06-27）** — 在 references 工作區建立「每週情報摘要」自動化機制：
+  - **子目錄 `CLAUDE.md`**（疊加非隔離）：來源範圍（blog／tech news／論文／GitHub release，僅發布物、排除 issue/PR/討論串）、議題佇列驅動、目錄慣例、邊界護欄（不碰 `layer_*/`／主 DB／訓練）。
+  - **`topics_queue.md`**：議題輪轉佇列（pending 優先→最久沒跑，跑完標 done＋日期），seed 自 memory roadmap 主題（HyDE/embedding 去污染/Agentic/reranker/memory/Verifier/local serving/fine-tune/harness）。
+  - **`processed_log.md`**：已讀文章 URL 去重索引（蒐集時讀單檔跳過已讀）。
+  - **`.claude/skills/weekly-digest/`**：兩階段省 token 工作流——Phase A 廣掃（sub-agent 只取標題＋前言評分、不開全文）→ top-K 下載進 `YYYY_<month>/NN_Title/`；Phase B 批量閱讀（只讀無 `_read` 者）→ 新聞式週報 → `mv` 加 `_read` 後綴＋登記 log。狀態單一真相源＝資料夾名。
+  - **既有 references 資料一次性標既處理**：papers 46／git 1／blog 1 共 48 項加 `_read` 後綴（排除 `PAPERS_INDEX.md`／`pending/`）。
+  - **首次試跑**（議題 #1 HyDE/query rewriting，`TOP_K=3`）：廣掃 47 候選 → 深讀 12 則（4 sub-agent 並行）→ 產 `01_summary_report/2026-06-27-weekly-digest.md`。VentureBeat／Medium 受組織政策封鎖直連，改由使用者本機存檔 HTML 萃取補完（含 HyDE 實作細節與「HyDE 僅對未經 supervised 標註之 contriever 型 embedding 有效」判準 → bge-m3 須先驗）。
 - **RAG/Agentic 論文庫擴充：`docs/references/papers/` 05–46（42 篇全文分析，2026-06-22）** — harness 自主迴圈**兩輪** subagent 並行搜尋（Google Scholar/arXiv）→ triage 入 `pending/` → 逐篇全文分析成 `NN_名稱/paper.md`（對齊既有 01–04 格式：對應 Layer/核心結論帶數字/方法拆解/速查接地/侷限）+ 更新 `PAPERS_INDEX.md`。
   - **輪 1（05–26，22 篇）**：賽道 A=Agentic/自適應檢索策略、賽道 B=召回品質+模式重用。
   - **輪 2（27–46，20 篇）**：賽道 C=Graph RAG/結構化知識檢索（Graph-of-Skills/HopRAG/GeAR/HippoRAG v1/MS GraphRAG/LightRAG/Agent-as-a-Graph/GraphFlow/When-to-use-Graphs）、賽道 D=Agent 記憶+中文/程式碼（MemGPT/Generative Agents/A-MEM/Memp/RMM/記憶 survey/C-Pack/RepoCoder/RAG-Code survey/CoCoSoDa/Procedural-Knowledge）。
