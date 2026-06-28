@@ -138,7 +138,7 @@ def test_retrieve_relevant_sessions_finds_match(tmp_path):
     """FTS5 查詢應找到相關 session"""
     db_file = tmp_path / "test.db"
     _seed_db(db_file)
-    with patch("lib.db.get_db_path", return_value=db_file):
+    with _patch_db_path(db_file):
         results = retrieve_relevant_sessions("address_parser", top_n=3)
 
     assert len(results) >= 1
@@ -149,7 +149,7 @@ def test_retrieve_empty_query_returns_empty(tmp_path):
     """空 query 應回傳空 list（不做 FTS 查詢）"""
     db_file = tmp_path / "test.db"
     _seed_db(db_file)
-    with patch("lib.db.get_db_path", return_value=db_file):
+    with _patch_db_path(db_file):
         results = retrieve_relevant_sessions("", top_n=3)
 
     assert results == []
@@ -182,7 +182,7 @@ def test_get_rag_context_returns_fts5_source_when_vector_unavailable(tmp_path):
     """vector 不可用時 fallback FTS5，source 必須回 'fts5'"""
     db_file = tmp_path / "test.db"
     _seed_db(db_file)
-    with patch("lib.db.get_db_path", return_value=db_file), \
+    with _patch_db_path(db_file), \
          patch("lib.rag.get_embedding", return_value=None):
         context, source = get_rag_context("address_parser", top_n=3)
 
@@ -201,7 +201,7 @@ def test_get_rag_context_returns_none_source_when_no_hits(tmp_path):
     conn.commit()
     conn.close()
 
-    with patch("lib.db.get_db_path", return_value=db_file), \
+    with _patch_db_path(db_file), \
          patch("lib.rag.get_embedding", return_value=None):
         context, source = get_rag_context("不存在的關鍵字", top_n=3)
 
@@ -213,7 +213,7 @@ def test_get_rag_context_with_hits_returns_triple(tmp_path):
     """擴充版多回 hits：fts5 命中時回 (ctx, 'fts5', 非空 hits)，含結構化欄位"""
     db_file = tmp_path / "test.db"
     _seed_db(db_file)
-    with patch("lib.db.get_db_path", return_value=db_file), \
+    with _patch_db_path(db_file), \
          patch("lib.rag.get_embedding", return_value=None):
         context, source, hits = get_rag_context_with_hits("address_parser", top_n=3)
 
@@ -231,7 +231,7 @@ def test_get_rag_context_with_hits_empty_when_no_hits(tmp_path):
     conn.commit()
     conn.close()
 
-    with patch("lib.db.get_db_path", return_value=db_file), \
+    with _patch_db_path(db_file), \
          patch("lib.rag.get_embedding", return_value=None):
         context, source, hits = get_rag_context_with_hits("不存在的關鍵字", top_n=3)
 
