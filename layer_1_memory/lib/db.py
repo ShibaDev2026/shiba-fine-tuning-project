@@ -168,23 +168,36 @@ def init_db() -> None:
                     id                 INTEGER PRIMARY KEY AUTOINCREMENT,
                     session_uuid       TEXT NOT NULL,
                     instruction        TEXT NOT NULL,
-                    source_instruction TEXT,              -- NULL 表示原始，非 NULL 表示 paraphrase 的來源
-                    commands           TEXT NOT NULL,
+                    source_instruction TEXT,
+                    commands           TEXT NOT NULL DEFAULT '',
+                    answer             TEXT,
                     embedding          BLOB NOT NULL,
-                    model              TEXT NOT NULL DEFAULT 'nomic-embed-text',
+                    model              TEXT NOT NULL DEFAULT 'bge-m3',
+                    exchange_id        INTEGER REFERENCES exchanges(id),
                     created_at         TEXT NOT NULL DEFAULT (datetime('now'))
                 )
             """)
             conn.execute(
                 "CREATE INDEX idx_exchange_embeddings_session ON exchange_embeddings(session_uuid)"
             )
+            conn.execute(
+                "CREATE INDEX idx_exchange_embeddings_exchange ON exchange_embeddings(exchange_id)"
+            )
             logger.info("Migration: 建立 exchange_embeddings 表")
         else:
-            # Migration: 補充 source_instruction 欄位（舊資料升級）
+            # Migration: 補充舊版缺少的欄位
             cols = [r[1] for r in conn.execute("PRAGMA table_info(exchange_embeddings)").fetchall()]
             if "source_instruction" not in cols:
                 conn.execute("ALTER TABLE exchange_embeddings ADD COLUMN source_instruction TEXT")
                 logger.info("Migration: exchange_embeddings 新增 source_instruction 欄位")
+            if "answer" not in cols:
+                conn.execute("ALTER TABLE exchange_embeddings ADD COLUMN answer TEXT")
+                logger.info("Migration: exchange_embeddings 新增 answer 欄位")
+            if "exchange_id" not in cols:
+                conn.execute(
+                    "ALTER TABLE exchange_embeddings ADD COLUMN exchange_id INTEGER REFERENCES exchanges(id)"
+                )
+                logger.info("Migration: exchange_embeddings 新增 exchange_id 欄位")
 
         # router_decisions / finetune_runs 已併入 schema.sql（A1：跨層共享表 DDL 集中化）
 
@@ -199,15 +212,18 @@ def upsert_exchange_embedding(
     embedding: list[float],
     model: str = "bge-m3",
     source_instruction: str | None = None,
+    answer: str | None = None,
+    exchange_id: int | None = None,
 ) -> None:
-    """寫入因果對 embedding。source_instruction=None 表示原始，否則為 paraphrase。"""
+    """寫入因果對 embedding。answer=AI 最終回答（純問答時 commands=''）。"""
     import json
     with get_connection() as conn:
         conn.execute(
             """INSERT INTO exchange_embeddings
-               (session_uuid, instruction, source_instruction, commands, embedding, model)
-               VALUES (?, ?, ?, ?, ?, ?)""",
-            (session_uuid, instruction, source_instruction, commands, json.dumps(embedding), model),
+               (session_uuid, instruction, source_instruction, commands, answer, embedding, model, exchange_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (session_uuid, instruction, source_instruction, commands, answer,
+             json.dumps(embedding), model, exchange_id),
         )
         conn.commit()
 

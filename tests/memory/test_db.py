@@ -175,3 +175,28 @@ def test_fetch_tool_execution_output_roundtrip(tmp_path):
                 is_error=False,
             )
             assert fetch_tool_execution_output(conn, tool_exec_id) == long_output
+
+
+def test_upsert_writes_answer_column(tmp_path):
+    """upsert 帶 answer 時，answer 欄正確寫入。"""
+    import sys
+    from pathlib import Path
+    from types import SimpleNamespace
+    from unittest.mock import patch
+    sys.path.insert(0, str(Path(__file__).parent.parent.parent / "layer_1_memory"))
+    from lib.db import init_db, get_connection, upsert_exchange_embedding
+
+    db_file = tmp_path / "t.db"
+    fake = SimpleNamespace(paths=SimpleNamespace(db=db_file))
+    with patch("shiba_db.CONFIG", fake):
+        init_db()
+        upsert_exchange_embedding(
+            session_uuid="s1", instruction="D4 灌水是什麼意思請解釋",
+            commands="", embedding=[0.1, 0.2], answer="branch membership 錯亂",
+        )
+        with get_connection() as conn:
+            row = conn.execute(
+                "SELECT commands, answer FROM exchange_embeddings WHERE session_uuid='s1'"
+            ).fetchone()
+    assert row["answer"] == "branch membership 錯亂"
+    assert row["commands"] == ""

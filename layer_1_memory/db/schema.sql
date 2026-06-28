@@ -204,7 +204,8 @@ CREATE TABLE IF NOT EXISTS exchange_embeddings (
     session_uuid       TEXT NOT NULL,
     instruction        TEXT NOT NULL,   -- user 的原始說法（因）
     source_instruction TEXT,            -- NULL=原始；非 NULL=paraphrase 來源，防止二次展開
-    commands           TEXT NOT NULL,   -- 實際執行的 bash/git 指令（果）
+    commands           TEXT NOT NULL,   -- 實際執行的 bash/git 指令（果）；純問答為空字串
+    answer             TEXT,            -- AI 最終回答（≤2000 字）；NULL 表示無文字回答
     embedding          BLOB NOT NULL,   -- instruction 的 JSON float array 向量
     model              TEXT NOT NULL DEFAULT 'bge-m3',
     -- exchange_id：連結到 exchanges 表，召回時可取鄰居 ±K exchange 做上下文擴展
