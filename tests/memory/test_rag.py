@@ -236,3 +236,18 @@ def test_get_rag_context_with_hits_empty_when_no_hits(tmp_path):
         context, source, hits = get_rag_context_with_hits("不存在的關鍵字", top_n=3)
 
     assert context == "" and source == "none" and hits == []
+
+
+def test_build_context_block_includes_answer():
+    """hit 帶 answer 時，單 exchange 區塊輸出「答案：」行。"""
+    from lib.rag import _build_context_block
+    hit = {
+        "instruction": "D4 灌水是什麼",
+        "commands": "",
+        "answer": "branch membership 錯亂導致重複切片",
+        "exchange_id": None,
+    }
+    block, expanded = _build_context_block(hit, window_k=0, preview_chars=200)
+    assert expanded is False
+    assert "答案：branch membership 錯亂導致重複切片" in block
+    assert "指令：" not in block  # 純問答無指令

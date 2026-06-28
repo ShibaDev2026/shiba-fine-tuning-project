@@ -366,15 +366,24 @@ def _build_context_block(
     exchange_id = hit.get("exchange_id")
     instruction = hit["instruction"].strip()
     commands = hit["commands"].strip()
+    answer = (hit.get("answer") or "").strip()
+
+    def _single(instr: str, ans: str, cmds: str) -> str:
+        parts = [f"問題：{instr}"]
+        if ans:
+            parts.append(f"答案：{ans}")
+        if cmds:
+            parts.append(f"指令：{cmds}")
+        return "\n".join(parts)
 
     # 無 exchange_id 或 window_k=0 → 退回單 exchange 行為
     if not exchange_id or window_k <= 0:
-        return ("問題：{}\n指令：{}".format(instruction, commands), False)
+        return (_single(instruction, answer, commands), False)
 
     neighbors = _fetch_neighbor_exchanges(exchange_id, window_k)
     if not neighbors:
         # 找不到鄰居（可能 hit exchange 已被刪除），fallback
-        return ("問題：{}\n指令：{}".format(instruction, commands), False)
+        return (_single(instruction, answer, commands), False)
 
     # 找出 hit 在 neighbors 裡的位置，標 ★
     hit_idx = next(
@@ -502,7 +511,7 @@ def _vector_search(
             # 召回這類結果反而會引入雜訊，故自動排除。
             # 閾值 3 = 允許一句話對應最多 2 種合理變體（如 git add + git commit）
             rows = conn.execute("""
-                SELECT session_uuid, instruction, commands, embedding, exchange_id
+                SELECT session_uuid, instruction, commands, answer, embedding, exchange_id
                 FROM exchange_embeddings
                 WHERE instruction IN (
                     SELECT instruction
@@ -526,6 +535,7 @@ def _vector_search(
                 "session_uuid": row["session_uuid"],
                 "instruction": row["instruction"],
                 "commands": row["commands"],
+                "answer": row["answer"],
                 "score": score,
                 "exchange_id": row["exchange_id"],
             })
