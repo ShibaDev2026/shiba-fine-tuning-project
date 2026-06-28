@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """一次性 schema 遷移：rename 舊 exchange_embeddings → deprecated_exchange_embeddings_old，
-建含 answer 的新表。idempotent：偵測新表已有 answer 欄即跳過。"""
+建含 answer 的新表。idempotent：偵測新表已有 answer 欄即跳過。
+
+非原子性限制：`executescript` 會隱式 COMMIT，RENAME+DROP 與 CREATE 並非單一交易。
+若 CREATE 失敗，舊資料安全留在 deprecated_exchange_embeddings_old；重跑會走
+fresh 分支建空新表，原資料需人工確認是否需回填。"""
 import sys
 from pathlib import Path
 
@@ -41,7 +45,7 @@ def main() -> None:
             print("already migrated (answer column present); skip")
             return
         conn.execute("ALTER TABLE exchange_embeddings RENAME TO deprecated_exchange_embeddings_old")
-        # 舊索引名隨表改名後仍佔用同名，須先 drop 才能在新表重用
+        # RENAME 後舊索引名仍佔用命名空間，故在此 DROP 後再於新表 CREATE 同名索引
         conn.execute("DROP INDEX IF EXISTS idx_exchange_embeddings_session")
         conn.execute("DROP INDEX IF EXISTS idx_exchange_embeddings_exchange")
         conn.executescript(_NEW_DDL)
