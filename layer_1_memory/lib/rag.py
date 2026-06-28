@@ -32,6 +32,9 @@ RagSource = Literal["vector", "fts5", "none"]
 # 與 _vector_search 結果側過濾用的字面 3 一致——同一原則的查詢側對應（改值請兩處同步）。
 _DIVERGENCE_THRESHOLD = 3
 
+# answer 在 formatter 中的最大預覽字元數；避免單一長答案吃光 token_budget
+_ANSWER_PREVIEW_CHARS = 200
+
 
 def is_low_signal_query(query: str) -> bool:
     """查詢側前置 gate：判斷 query 是否為「已學會的同意詞」（無召回價值）。
@@ -455,13 +458,24 @@ def retrieve_for_eval(
     """
     vector_results = _vector_search(query, top_n=top_n, exclude_session_uuids=exclude_session_uuids)
     if vector_results:
+        def _fmt_eval_context(r: dict) -> str:
+            """eval 路徑 context 格式：與生產 _build_exchange_context 保持一致。
+
+            問題 +（有 answer 才）答案（截斷 _ANSWER_PREVIEW_CHARS）+（有 commands 才）指令。
+            """
+            ctx = r["instruction"].strip()
+            answer = r.get("answer")
+            if answer:
+                ctx += "\n答案：{}".format(answer[:_ANSWER_PREVIEW_CHARS])
+            commands = r["commands"].strip()
+            if commands:
+                ctx += "\n指令：{}".format(commands)
+            return ctx
+
         return {
             "query": query,
             "source": "vector",
-            "retrieved_contexts": [
-                "{}\n指令：{}".format(r["instruction"].strip(), r["commands"].strip())
-                for r in vector_results
-            ],
+            "retrieved_contexts": [_fmt_eval_context(r) for r in vector_results],
             "retrieved_session_uuids": list({r["session_uuid"] for r in vector_results}),
         }
 
@@ -551,14 +565,28 @@ def _vector_search(
 
 
 def _build_exchange_context(exchanges: list[dict], token_budget: int = 500) -> str:
-    """將因果對格式化為 RAG 注入字串"""
+    """將因果對格式化為 RAG 注入字串。
+
+    渲染規則：
+    - 問題行：永遠輸出
+    - 答案行：有 answer 才輸出，截斷至 _ANSWER_PREVIEW_CHARS（防單一答案吃光 token_budget）
+    - 指令行：commands 非空才輸出（純問答 row 不留空指令行）
+    """
     char_budget = token_budget * _CHARS_PER_TOKEN
     header = "## 相關歷史記憶（top {}）\n".format(len(exchanges))
     body = ""
     for ex in exchanges:
-        section = "### 問題：{}\n指令：{}\n".format(
-            ex["instruction"].strip(), ex["commands"].strip()
-        )
+        # 問題行
+        section = "### 問題：{}\n".format(ex["instruction"].strip())
+        # 答案行（有 answer 才加，截斷防爆 budget）
+        answer = ex.get("answer")
+        if answer:
+            preview = answer[:_ANSWER_PREVIEW_CHARS]
+            section += "答案：{}\n".format(preview)
+        # 指令行（純問答為空字串，不輸出空行）
+        commands = ex["commands"].strip()
+        if commands:
+            section += "指令：{}\n".format(commands)
         if len(header) + len(body) + len(section) > char_budget:
             break
         body += section
