@@ -15,6 +15,31 @@ from lib.embedder import get_embedding  # noqa: E402
 _MIN_INSTRUCTION_CHARS = 15
 _ANSWER_CAP = 2000
 
+# 系統注入雜訊過濾：instruction 前綴 / answer 錯誤訊息標記
+_NOISE_INSTRUCTION_PREFIXES = ("<", "/", "[Request interrupted")
+_NOISE_ANSWER_MARKERS = (
+    "hit your session limit",
+    "session limit · resets",
+    "api error",
+    "rate limit",
+)
+
+
+def _is_noise(instruction: str, answer: str | None) -> bool:
+    """判斷此問答對是否為系統雜訊，雜訊傳回 True。
+
+    - instruction 以 < 或 / 或 [Request interrupted 開頭 → 系統注入／slash command
+    - answer 含限流／錯誤訊息 → Claude 非正常回應
+    """
+    instr = (instruction or "").lstrip()
+    if instr.startswith(_NOISE_INSTRUCTION_PREFIXES):
+        return True
+    if answer:
+        low = answer.lower()
+        if any(m in low for m in _NOISE_ANSWER_MARKERS):
+            return True
+    return False
+
 
 def fetch_pairs(conn):
     """回傳問答對 rows，按 ended_at 升序（後者覆蓋前者＝保留最新）。"""
@@ -48,9 +73,13 @@ def main() -> None:
         instr = r["instruction"].strip()[:300]
         latest[instr] = r
 
-    written = skipped = 0
+    written = skipped = noise_skipped = 0
     for instr, r in latest.items():
         answer = ((r["answer"] or "").strip()[:_ANSWER_CAP]) or None
+        # 雜訊過濾：系統注入／slash command／錯誤回應 → 跳過，不 embed 不寫入
+        if _is_noise(instr, answer):
+            noise_skipped += 1
+            continue
         vec = get_embedding(instr)
         if vec is None:
             skipped += 1
@@ -64,7 +93,10 @@ def main() -> None:
             exchange_id=r["exchange_id"],
         )
         written += 1
-    print(f"backfill done: written={written} skipped={skipped} distinct={len(latest)}")
+    print(
+        f"backfill done: written={written} skipped={skipped} "
+        f"noise_skipped={noise_skipped} distinct={len(latest)}"
+    )
 
 
 if __name__ == "__main__":
