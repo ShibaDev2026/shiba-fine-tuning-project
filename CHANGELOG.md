@@ -5,6 +5,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- **個人評測集 v1 + A-vs-B 召回對照首戰（2026-07-03）** — `experiments/2026-07-03_personal_eval_v1/`：24 題（隱性專案知識/ops/一般開發三組）、key facts pre-registered、X/Y 盲評、判定規則先註冊。結果 A（qwen3:30b-a3b+CLAUDE.md）=36 vs B（+production 召回）=37，diff +1 < 門檻 5 → **「召回>好模型+CLAUDE.md」前提實測 FAIL、召回線結案**；O 組 16:16 證 CLAUDE.md 單項飽和 ops 知識。召回 +4（歷史知識 surface）同時 -3（雜訊致幻覺/過度謹慎）。過程修 2 個 eval harness bug（thinking 截斷、runner 讀錯 `retrieved_contexts` key 致 B 臂靜默空召回——0-hits 全審計攔下）。評測集可重用於換模型/改 CLAUDE.md 跑分。
+
 ### Changed
 
 - **專案主軸再定位：author / curate / eval / route（2026-07-03）** — `AGENTS.md`/`CLAUDE.md` 專案目的、Layer 角色、Roadmap 節全面改寫；舊 roadmap P1–P5 全數廢止/擱置（P1 EV+keystone 雙 FAIL、P2 前提未證＋13% 水位、P3 隨 P2、P4 無下游、P5 無資料），`docs/roadmap/2026-06-21-rag-augmented-execution.md` 標記 SUPERSEDED。依據：糾正頻率 probe（`experiments/2026-07-03_correction_freq/`）證實糾正/偏好重複 freq≥3 存在且人工捕獲迴圈已飽和——「糾正→指令檔」是唯一實證跑通的累積→增值路徑；RAG 召回降級為人讀稽核通道；fine-tuning 廢止。

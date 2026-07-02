@@ -32,10 +32,10 @@
 |----|------|------|
 | author | 同類摩擦**第二次**出現 → 手寫 skill（由上而下 authoring，不挖語料——頻率牆擋的是挖掘不是人工判斷） | 習慣性、零 gate |
 | curate | 糾正 → 記憶 → 指令檔（已實證飽和運作）；手工修剪，curation 勝 accumulation | 安全網＝按需重跑 `experiments/2026-07-03_correction_freq/` |
-| eval | 個人評測集 v1（20–30 題、獨立人工標、不從召回候選抽）；首用＝A(模型+指令檔) vs B(+召回) 定召回生死 | 啟動需擁有者確認投入標註時間 |
+| eval | 個人評測集 v1（24 題、key facts pre-registered、盲評）；可重用於換模型/改指令檔跑分（`experiments/2026-07-03_personal_eval_v1/`） | ✅ 首戰 2026-07-03：A=36 vs B(+召回)=37，diff+1<門檻5 → **召回 FAIL 結案** |
 | route | L0 維持分類/路由；本地模型只跑受約束任務（分類/抽取/壓縮），不做開放式代理 | 現狀即正解、不加碼 |
 
-**廢止（2026-07-03）**：P1 Pattern Library（EV/keystone FAIL）、P2 召回餵本地執行（前提未證＋13% 水位）、P3 Verifier（隨 P2 擱置）、P4 D4 回填（無下游）、P5 fine-tune（無資料）。歷史脈絡見 `docs/roadmap/2026-06-21-rag-augmented-execution.md`（superseded）。
+**廢止（2026-07-03）**：P1 Pattern Library（EV/keystone FAIL）、P2 召回餵本地執行（前提未證＋13% 水位；同日 A-vs-B 實測 FAIL 背書）、P3 Verifier（隨 P2 擱置）、P4 D4 回填（無下游）、P5 fine-tune（無資料）。歷史脈絡見 `docs/roadmap/2026-06-21-rag-augmented-execution.md`（superseded）。
 
 ## 統一 DB
 路徑：`./data/shiba-brain.db`（Layer 1 + 2 + 3 共用，v1.0.0 起從 `~/.local-brain/` 移入專案 `data/`，由 docker-compose 掛載）
