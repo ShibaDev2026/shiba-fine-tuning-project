@@ -1,0 +1,169 @@
+msg_id	session_id	patterns	dup	snippet
+687	4	一律/必須		expires_at 必須要記錄起始跟到期日期時間 也要記錄重置計算的時間從下一次的何時
+922	8	不要		go 測試案例只要涵蓋到範圍就好不要過冗餘於測試 會感覺你在偷我token
+1060	8	不需要/不必		將此次可改進的方式 避免不必要浪費token的處理 請對global claude.md做建議
+1428	11	不需要/不必|改用/改成/改回		❯ 這四份有哪些值得參考的或引用在我們架構內的 ⏺ 根據已讀的四份內容，對照你們的四層架構： --- 已採用（架構中已有對應設計） ┌─────────┬─────────────────────────────────────────────────────────────┬───────────
+1692	13	一律/必須		我傾向自薦一個本地模型 例如Qwen他必須具備一定水平的程式開發知識 他要幫我們卡控 1. 我的機敏隱私，本地端資訊不可留漏出去 例如我的專案路徑 我的本機名稱 密碼 2. 他必須有能力將這些問題抽離成有明確目的的問題與預期解答 但不可偏離本意 將我跟你對話的提問 轉換為有價值（好）的問題
+1695	13	一律/必須		1.題目生成可以保留 但它必須被精粹成好的問題 這是一個生成後下一個流程做精粹的流程 2. 同Q1 3. 用意是？ Q4. 先暫列 Qwen 3.5-35b-a3b Q5. 我希望你參考現行網路上我們遇到的問題 實務上 大公司如何做 或AI公司如何做 我們能否仿照
+1906	14	en-dont/never/always		# /loop — schedule a recurring or self-paced prompt Parse the input below into `[interval] <prompt…>` and schedule it. ## Parsing (in priority order) 
+1938	14	en-dont/never/always	dup	# /loop — schedule a recurring or self-paced prompt Parse the input below into `[interval] <prompt…>` and schedule it. ## Parsing (in priority order) 
+1979	14	en-dont/never/always	dup	# /loop — schedule a recurring or self-paced prompt Parse the input below into `[interval] <prompt…>` and schedule it. ## Parsing (in priority order) 
+2042	14	不用		不用吧 你就定期3分鐘回覆我cpu使用量 gpu使用量 與RAM使用量就好了
+2052	14	en-dont/never/always	dup	# /loop — schedule a recurring or self-paced prompt Parse the input below into `[interval] <prompt…>` and schedule it. ## Parsing (in priority order) 
+2081	14	en-dont/never/always	dup	# /loop — schedule a recurring or self-paced prompt Parse the input below into `[interval] <prompt…>` and schedule it. ## Parsing (in priority order) 
+2101	14	en-dont/never/always	dup	# /loop — schedule a recurring or self-paced prompt Parse the input below into `[interval] <prompt…>` and schedule it. ## Parsing (in priority order) 
+2115	14	en-dont/never/always	dup	# /loop — schedule a recurring or self-paced prompt Parse the input below into `[interval] <prompt…>` and schedule it. ## Parsing (in priority order) 
+2139	14	en-dont/never/always	dup	# /loop — schedule a recurring or self-paced prompt Parse the input below into `[interval] <prompt…>` and schedule it. ## Parsing (in priority order) 
+2215	14	en-dont/never/always	dup	# /loop — schedule a recurring or self-paced prompt Parse the input below into `[interval] <prompt…>` and schedule it. ## Parsing (in priority order) 
+2254	14	en-dont/never/always	dup	# /loop — schedule a recurring or self-paced prompt Parse the input below into `[interval] <prompt…>` and schedule it. ## Parsing (in priority order) 
+2266	14	en-dont/never/always	dup	# /loop — schedule a recurring or self-paced prompt Parse the input below into `[interval] <prompt…>` and schedule it. ## Parsing (in priority order) 
+2268	14	不對/錯了|一律/必須		不對 我認為是 因果關係 我跟你的對話 的確是來自我的需求 但你轉化為bash 指令 所以因是我的對話 果是來自你的操作細節 所以 RAG 必須要可以因為我的對話關鍵字 引導到你做git bash 指令
+2358	14	不用|不對/錯了|一律/必須|en-dont/never/always		This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation
+2803	15	改用/改成/改回		我們昨天不是有改造RAG的方式改用embdding
+2880	15	改用/改成/改回		先根據昨天的記憶回想 我們後來改用了ollama 對mac 存取效率較佳的模型還記得嗎
+3117	15	不要|記住/以後/下次		好 下次推薦我拜託不要來路不明的來源或docker compose
+3348	15	不用		這不用做 （下一步是補 Refiner/Paraphrase prompt 的 `/no_think` token，讓 Qwen3 關閉 thinking 加速推理。）
+3407	15	不要|不用|改用/改成/改回|記住/以後/下次	dup	This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation
+3516	16	改用/改成/改回		好 指令部分太長，可以改成更精簡的格式
+3801	17	不用		先跟我討論就好不用動作 理想上是 本地透過phase 1 的兩隻python將對話拋給 DB(DB與RAG資料庫能否放入docker-compose?) docker-compose起對應的自動化流程做其他phase的事 把要進模型的資訊拋給模型 還是有其他建議方式？
+4439	21	不要|不需要/不必|不對/錯了|改用/改成/改回|記住/以後/下次|規範/慣例/原則		你是一位極具資深且專業的資料科學家 請根據你的經驗來審視這兩個ai來源建議評估並規劃改善方案 **✅ 問題診斷完成** 目前 repo（v0.6.0）公開資訊中**完全沒有樣本數量、通過率、benchmark 分數**等數據，只有 `≥30 approved samples per block` 的
+4440	21	不要|不需要/不必|不對/錯了|改用/改成/改回|記住/以後/下次|規範/慣例/原則	dup	你是一位極具資深且專業的資料科學家 請根據你的經驗來審視這兩個ai來源建議評估並規劃改善方案 **✅ 問題診斷完成** 目前 repo（v0.6.0）公開資訊中**完全沒有樣本數量、通過率、benchmark 分數**等數據，只有 `≥30 approved samples per block` 的
+4466	21	一律/必須|規範/慣例/原則		3 另外需新增teacher ai 例如grok、本地Qwen、Copilt、chatGPT盡量使用免費api 但必須要將其每日配額 token數、請求數 這些規範定義清楚 並每次請求發送 發送token數量/接收token數量都必須被歷程記錄下來反映在teacher ai的表內確認哪些額度已被使用
+4944	25	不用		先不用 先行該如何用瀏覽器存取頁面
+5095	26	不要		狀態說明區塊內 請將local Local 建議注入 與 claude Claude 直接處理 擺放在同一列 不要換行浪費 右側空間 決策紀錄 · 點擊任一筆查看詳情 請新增 日期起迄選擇 保留原有 今日 近7天 全部 點選任一筆決策紀錄 · 點擊任一筆查看詳情 會話識別只給session id 根
+5263	28	不要		前後端架構規劃變更 請將前端透過vue3 搭配nginx達到響應式互動介面並封裝在docker-compose內（設定可參考/Users/surpend/Developer/01_project/woof-woof-project），UI盡量別異動到，希望可以一鍵啟動前端與對應python程式 SQ
+5303	28	不要		2. 跟SQLite相關的存取都寫在一個設定檔內 不要寫死在程式碼內 另外原本截取對話hook應該會保留在原位置對嗎
+5616	33	en-dont/never/always	dup	This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation
+5996	46	en-dont/never/always	dup	This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation
+6332	55	不要		我想針對table 做討論 請先不要做任何動作只要討論跟規劃即可 我想詢問message表 當role=assistant tool_names 共有這些[] ["Glob"] ["Bash"] ["Skill"] ["ToolSearch"] ["TaskCreate"] ["TaskUpdate
+6468	55	不要|en-dont/never/always	dup	This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation
+7064	77	不用		不用列出完整的plan，待決策的問題：1.方向3、2-3.你評估但需說明、4./docs/納入，AGENTS.md保留，先做A1結束後停止
+7203	77	en-dont/never/always	dup	This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation
+7497	83	不准/禁止|en-dont/never/always	dup	This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation
+7622	83	改用/改成/改回|規範/慣例/原則		依「核心演算法→Opus high、樣板/整合→Sonnet medium、驗證/收尾→Haiku low」原則。 🔴 A 級 ┌─────────┬─────────────────────────────────────────┬─────────┬─────────┬─────────────
+7863	83	不准/禁止|規範/慣例/原則|en-dont/never/always	dup	This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation
+8082	83	不准/禁止|改用/改成/改回|en-dont/never/always	dup	This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation
+8410	83	en-dont/never/always	dup	This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation
+8961	113	規範/慣例/原則|en-dont/never/always	dup	This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation
+9019	125	en-dont/never/always		# Schedule Remote Agents You are helping the user schedule, update, list, or run **remote** Claude Code agents. These are NOT local cron jobs — each r
+9294	127	en-dont/never/always	dup	This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation
+9603	136	記住/以後/下次		3 個作用中的 docker-compose.yml（real-estate-project / woof-woof-project / line-nemoclaw-bridge）仍引用 ngrok/ngrok:latest，下次 docker compose up 會自動以新 image 重建容器
+9786	140	不要		Step 1：model yaml schema 一個模型單一角色 不要一個模型多角色 不要採用minimal schema 過於簡化
+9992	147	規範/慣例/原則		我記得2026-05-06-cuddly-greeting-charm.md 這裡已經規範過一次要求將plan跟目錄機制都更新在主記憶內
+10131	147	不用		1. 跟我討論前端如何使用 2. 等1.完成後 3.不用要清用來測試多版本
+10321	147	不用		Inference、Meta、System Prompt flag縮小字體1pt 卡片未點擊前 Inference、Meta、System Prompt都收合 點擊後三個全展開 四張水平卡片等高（不包含多版本）若有多版本卡片自動下移（與當前版本卡片長寬一致只是擺放在其下）另外四張卡片的外框左右底部框
+10350	147	不需要/不必		現行資料 分類器、壓縮器、訓練基底的卡片高度 應該與回應模型的當前版本等高 不需要包含回應模型[當前版本+STANDBY]的高度
+10351	147	不用|不需要/不必|一律/必須|規範/慣例/原則|en-dont/never/always	dup	This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation
+10570	160	不要		is_current=1 只是代表當前使用此模型 當前端下拉時 不需考慮 is_current=1 而是選定後 再將被選定的update為is_current=1，原先那筆則更新為is_current=0 （需注意不要改到其他role，只對當前role更新）
+10704	160	en-dont/never/always	dup	This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation
+10979	170	不要		拋開議題 請問你的agent就目前為止可以幫我做到哪些事？（說明舉例但不要動作）
+10982	170	不要|規範/慣例/原則|en-dont/never/always	dup	This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation
+11317	170	規範/慣例/原則|en-dont/never/always	dup	This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation
+11528	170	一律/必須		先把step7 做完 但必須補上hook衍生的db問題 導致衍生SQLite hardening PR 隨即commit git push and update readme and changelog
+11967	170	一律/必須|en-dont/never/always	dup	This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation
+12098	170	不要		建議的應對方案：DBeaver 配置優化：在 DBeaver 的連接設置中，找到 Connection types，將 Auto-commit 開啟。在編輯器設置中，確保 "Keep connection alive" 是關閉的。強制使用 PRAGMA query_only = ON;（這比單純的唯
+12246	170	不用		我想抽離現行程式架構對模型的依賴 另外DB未來可能需要抽換成更有效率穩定高 再來是現行的專案都以我個人使用在本地地端 但如果我想將hook程式讓其他使用者 在其他電腦上安裝後 將資料傳回DB 現在的DB無法應付大量並行 且缺少一層Message Queue去處理分批寫入 而且DB跟後端可能都需要拆解
+12252	170	不要		模型應該不會上雲端 應該會用本地 先聽我一個假設情境 你先不要回覆 下一個問題我會說明
+12254	170	一律/必須		若我現在架構要提供多人使用 理想情境是 讓其他外網IP電腦的使用者安裝hook（前提是hook要調整為http API） 所以雲或是我本地必須開放外部服務來接取http req / resp 的一個主要伺服器 等於外部使用者hook是一個小型微服務 我這邊server就負責接收跟回傳 接到資料後才會
+12301	170	不要|不用|記住/以後/下次|en-dont/never/always	dup	This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation
+12569	180	不得|規範/慣例/原則|en-dont/never/always	dup	This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation
+12735	180	不用		先不用 理想是 各個layer分拆成小型微服務 將layer流程解構
+13061	196	不得|en-dont/never/always	dup	This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation
+13375	196	不得|規範/慣例/原則|en-dont/never/always	dup	This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation
+13805	196	改用/改成/改回		Gemini 2.5 Flash 因一開始你使用時沒有避開每分鐘存取次數故超過額度停止服務 請改用 Gemini 2.5 Flash Lite
+13817	196	規範/慣例/原則		不是耗盡 麻煩請在本專案內對於呼叫此兩模型時 Gemini 2.5 Flash Gemini 2.5 Flash Lite 請符合 RPM與TPM 規範 請將此規範記錄在CLAUDE.md內
+13829	196	不得|改用/改成/改回|一律/必須|規範/慣例/原則|en-dont/never/always	dup	This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation
+13982	196	不用|一律/必須|規範/慣例/原則		請根據我的開發習慣更新主記憶（/Users/surpend/.claude/）的CLAUDE.md，與SOLID 五大原則單一職責原則 (SRP - Single Responsibility Principle)：一個類別應該只有一個引起它變化的原因，即一個類別只負責一項職責。開放封閉原則 (OC
+14022	225	規範/慣例/原則		請先建立一branch 為init切換至此branch 並以SOILD原則 參考shiba-brain.db 將其的schema 於本專案內使用liquibase建立腳本作為初始化 預期使用postgreSQL為DB 請將產生的xml與schema擺放至本專案內/01_init_db/ 或是你有比l
+14064	225	不用		只要產生.sql腳本即可 不用以系統角度看這件事 2. FTS5是否有postgresql可以尋找跟替代的方案，包含該DB採用的RAG是否有適合的方法 SQL資料若允許請匯出為.sql
+14121	228	不要|不用|規範/慣例/原則		1. 請根據Gemini API取用設為共用程式包含處理錯誤機制 後面py程式呼叫到直接從共用取用 目前先實作Gemini API的範圍即可 Claude API先不用但為但未來接比照此規範開發各AI存取的API 2. 錯誤重試我只接受一次就停止並告警我 3. 不要 呼叫Gemini的哪一個模型就是
+14271	228	不要		1.目前已經是Gemini付費方案 所以請更新 RPD機制 Model Category RPM TPM RPD Gemini 2.5 Flash Text-out models 6 / 1K 1.57K / 1M 25 / 10K Gemini 2.5 Flash Lite Text-out mo
+14377	228	不要|不用|不得|一律/必須|規範/慣例/原則|en-dont/never/always	dup	This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation
+14601	228	不需要/不必		不過本模型沒有http error code機制 在schema應該要有欄位區隔AI API是本地(local)還是遠端(remote) 本地似乎錯誤類別的機制就沒有用了 另外一個問題是 本地的請求跟等待模型回應 似乎時間很久 而且會不會導致機制timeout無法完整紀錄 或許本地不需要考慮time
+14645	228	不得|不需要/不必|一律/必須|en-dont/never/always	dup	This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation
+14829	228	改用/改成/改回		先修 Qwen3.6 的 api_base（改成 http://localhost:11434/v1） 讓Claude API、Flash都啟用
+14937	228	不得|改用/改成/改回|一律/必須|en-dont/never/always	dup	This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation
+15793	228	不得|一律/必須|規範/慣例/原則|en-dont/never/always	dup	This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation
+15994	228	不得|一律/必須|規範/慣例/原則|en-dont/never/always	dup	This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation
+16602	282	en-dont/never/always	dup	This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation
+16930	282	不得|一律/必須|en-dont/never/always	dup	This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation
+17098	282	不得|一律/必須|en-dont/never/always	dup	This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation
+17377	282	不得|不對/錯了|一律/必須|en-dont/never/always	dup	This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation
+17595	282	不得|一律/必須|en-dont/never/always	dup	This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation
+17886	282	不得|一律/必須|en-dont/never/always	dup	This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation
+18021	321	不要|規範/慣例/原則		請閱讀本專案內/docs/2026-05-21_refactor/2026-05-21_shiba-fine-tuning-refactor.md 進行評估 根據本專案除核心phase0-3 之外已開發新功能 將其與原核心功能 做出區隔 將新功能設為可開關的介面透過config 設定是否啟用/關閉 
+18233	321	不要|不得|一律/必須|規範/慣例/原則|en-dont/never/always	dup	This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation
+18567	321	不得|一律/必須|en-dont/never/always	dup	This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation
+18892	339	en-dont/never/always		The user just ran /insights to generate a usage report analyzing their Claude Code sessions. Here is the full insights data: { "project_areas": { "are
+18921	347	en-dont/never/always		Add as a new top-level section near the top of CLAUDE.md, before any project-specific instructions.\n\n## Scope Discipline - When user asks for a spec
+18980	347	en-dont/never/always	dup	Add as a new top-level section near the top of CLAUDE.md, before any project-specific instructions.\n\n## Scope Discipline - When user asks for a spec
+19036	347	不要|規範/慣例/原則		有共通性原則（就其他專案也可以比照的規則嗎？）如果有請將本專案的共通性原則 放入主要CLAUDE.md 本專案CLAUDE.md就不要保留太多共通性原則 如果有請列給我評估 再動作
+19040	347	不用		A1-A6做 B1-B4從專案.md移除 C1不用這是本專案情境 C2-C3:ok
+19322	362	en-dont/never/always		`xhigh effort → 5 angles × 8 candidates → 1-vote verify → sweep → ≤15 findings` You are reviewing for **recall** at extra-high effort: catch every rea
+19569	362	不得|一律/必須|規範/慣例/原則|en-dont/never/always	dup	This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation
+19685	370	記住/以後/下次		我接受123，執行順序為132，「兩週能力上限驗證」實驗A. 願意 → 我把 brainstorm 整個收掉，改幫你寫這個驗證腳本的設計（一頁 spec，30 筆 test） 另外幫我把這次 批判點留在 record 裡 以上先記錄 因為usage快滿 我要等到下次reset後再開新session執
+19798	370	不要|不得|不對/錯了|一律/必須|記住/以後/下次|規範/慣例/原則|en-dont/never/always	dup	This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation
+19922	370	不得|一律/必須|en-dont/never/always	dup	This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation
+20290	370	不得|不對/錯了|一律/必須|規範/慣例/原則|en-dont/never/always	dup	This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation
+20419	370	不得|一律/必須|規範/慣例/原則|en-dont/never/always	dup	This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation
+20563	403	en-dont/never/always		Set up a minimal CLAUDE.md (and optionally skills and hooks) for this repo. CLAUDE.md is loaded into every Claude Code session, so it must be concise 
+20587	400	不需要/不必		清查當前待處理的plan若已經實驗過不可行或得到失敗結果就不需要再保留了 直接將結論記憶即可
+21568	428	不用		go 完成後不用列入副作用清單 使用/01_init/down.sh and up.sh重啟openclaw 不用驗證 我驗證即可
+21668	428	不用		停 不用從keychain取得密碼注入了 改注入token
+21797	428	一律/必須|記住/以後/下次		所以我的問題是 以後重建 我必須自帶token到瀏覽器列？ 那請問這樣我跟使用明碼token有什麼不同
+22160	442	改用/改成/改回		我請openclaw對web_search做測試 結果如下 SeArXng 服務存取 ✅ 成功：curl -I http://host.docker.internal:8990 回傳 200 OK，說明 SeArXng 在本地容器內可正常存取。 Web Search 執行 ✅ 成功：使用 web_s
+22380	449	不要		抱歉 你做這些在幹嘛 你現在不就很明顯是可能動到docker-compose的導至重build一次 他的gateway重啟後 之前的token失效了 那不就重新把取得新token回寫到.env再去看哪個環節導致token被重置 把這環節觸發時取得新token更新.env這條路補上不就好了 到底要看什
+22440	449	不要		請你feedback給claude 不要一直在無意義的任務上消耗token
+22593	463	一律/必須		是 但我必須知道block2 output經過精煉的原文追溯到哪一個原始message 必須要有對應關係
+22606	463	一律/必須		我修正一下我的描述 假設 請幫我使用（精煉前）git push aaaaaa 被精煉為 （精煉後）git push aaaaaa 我必須要能夠知道block2 output存放的精煉前與精煉後的語句 並且能夠從block2 output追溯精煉前的語句對應到message表的哪一個session裡的
+22657	463	不得|一律/必須|規範/慣例/原則|en-dont/never/always	dup	This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation
+22800	463	不用|別|不得|一律/必須|規範/慣例/原則|en-dont/never/always	dup	This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation
+22888	463	不用|不得|一律/必須|規範/慣例/原則|en-dont/never/always	dup	This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation
+23012	463	不得|一律/必須|規範/慣例/原則|en-dont/never/always	dup	This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation
+23113	463	不要		評估現有search_model_list 適合用來refiner的模型 取5個 只給建議不要動作
+23114	463	不要		評估現有search_model_list 根據本機規格尋找 適合用來refiner的模型 取5個 只給建議不要動作
+23141	463	不要|不得|一律/必須|規範/慣例/原則|en-dont/never/always	dup	This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation
+23156	463	不要		若我需要你現在能夠完全自主 先修 RAGAS 2 bug（否則無法量測，會重演「13% 無效量測」）→ 先上 reranker（D2 no-regret，很可能補掉大半 meaningful） 我應該要如何讓你下指令？但這過程我希望1.不要使用到付費API 2.不要詢問我決策 3.自主將我給你的任務
+23159	463	改用/改成/改回		LLM-judge 指標 需改用本地模型
+23331	479	不得|en-dont/never/always	dup	This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation
+23540	479	不得|en-dont/never/always	dup	This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation
+23858	479	記住/以後/下次		不走嚴謹TDD 直接調整程式碼 驗證是否可截取 確定可以後 直接更新現有資料庫 <system-reminder>Message sent at Tue 2026-06-16 09:44:10 UTC.</system-reminder>
+23859	479	不得|記住/以後/下次|en-dont/never/always	dup	This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation
+24257	493	不得|en-dont/never/always	dup	This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation
+24327	493	en-dont/never/always		The user just ran /insights to generate a usage report analyzing their Claude Code sessions. Here is the full insights data: {} Report URL: file:///Us
+24359	493	不得|一律/必須|規範/慣例/原則|en-dont/never/always	dup	This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation
+24465	493	不得|一律/必須|規範/慣例/原則|en-dont/never/always	dup	This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation
+24518	493	不得|不准/禁止|一律/必須|規範/慣例/原則|en-dont/never/always	dup	This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation
+24678	493	不得|不准/禁止|一律/必須|規範/慣例/原則|en-dont/never/always	dup	This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation
+24718	493	不得|不准/禁止|一律/必須|規範/慣例/原則|en-dont/never/always	dup	This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation
+24777	493	不得|不准/禁止|一律/必須|規範/慣例/原則|en-dont/never/always	dup	This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation
+24914	493	不得|不准/禁止|一律/必須|規範/慣例/原則|en-dont/never/always	dup	This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation
+25033	493	不得|不准/禁止|一律/必須|規範/慣例/原則|en-dont/never/always	dup	This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation
+25158	493	不得|不准/禁止|一律/必須|規範/慣例/原則|en-dont/never/always	dup	This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation
+25199	493	不要|不得|不准/禁止|一律/必須|規範/慣例/原則|en-dont/never/always	dup	This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation
+25258	493	不得|一律/必須|規範/慣例/原則|en-dont/never/always	dup	This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation
+25441	493	不得|一律/必須|規範/慣例/原則|en-dont/never/always	dup	This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation
+25459	493	改用/改成/改回		1.ok 2.ok做finish 3.ok readme的評分更新 說明將付費api設定為關閉改用本地模型
+25531	493	不得|改用/改成/改回|一律/必須|規範/慣例/原則|en-dont/never/always	dup	This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation
+26636	558	一律/必須		我詢問了一些ai得到了啟發 你聽聽看並參考 2. 它與 Retrieval Delta / Grading Harness 的整合關係當您在設計 AI 代理的評測系統時，這三者的運作邏輯如下：Grading Harness（評測框架）：作為外層的自動化測試環境，負責灌入 1,000 道不同的測試題目
+27046	568	不需要/不必		在你下這個結論前 請你確認 原先我有實現一個在CLI計算claude code token的計量表 顯示在stderr上 但某個時間點claude code更新之後就再也看不到了 整個UI都簡化到沒有那些資訊 我猜測是claude code某次改版後移除了stderr的客製化顯示 請你先確認這件事是
+27232	569	一律/必須		rag_echo.md 訊息寫入邏輯 我想調整為有召回 才寫入 並紀錄訊息 使用類似log4j的log紀錄 需紀錄下頁資訊 [yyyy-mm-dd HH:mm:ss.SSS] [level][cluade session id][問題描述][RAG召回資訊<!-- rag_count=0 sourc
+27496	569	不用		A.1 ok 2 ok 3 全清 B.不用
+27693	570	不用		根據我剛才 不用的回答 召回次數:3次 2026-06-21 11:44:29.282] [INFO][session=dee0c368] 問題：shiba-fine-tuning-project [召回原因] source=fts5 · score=fts5#1 ...shiba-brain.db
+27720	570	不要		我想要的是能夠動態去自主判斷 哪些是有效召回 哪些是無效就不要彈出通知紀錄log 若有效則保留進RAG 無效則不要進
+27731	570	不要|不用|不需要/不必		讓我修正我的描述 當我跟你的對話 我的輸入 若他在意義與長度上只夠讓你辨別 這件事 ok / 好 / go / keep going / 繼續 / 可以 / 不用 / 對 / 嗯 / （不包含：等… 這只是描述性）你判斷上只代表這件事叫做同意 但對FTS5與RAG來說 召回無意義 寫入RAG會產生混
+27888	570	不要		要不要我提一個關於這兩項的建議 <- 我回答ok
+29004	572	改用/改成/改回		A 我認同這把專案從「累積資料 → 訓練模型」（撞牆）重定為「累積驗證過的指令模式 → 召回 + in-context 執行」（用有效的部分）。fine-tuning 退化成「當模式庫夠大、且確實有重複高頻模式時，才壓縮進權重」的後期選項，而非主線。 另外我希望加入 1. In-context 技能
+29007	572	不需要/不必		1. 對 但我希望整個改寫當前CLAUDE.md的架構 或是這裡變成變體 建構在CLAUDE.md之上 2. 我希望完全引入harness engineering 不需要沙盒運作 但 多數你想到的需求與技術 能夠自主fine tuning與自我改進 進化 持續循環將此roadmap各項目標達成（這個
+30157	575	不用		1 但先不用執行 claude 每周token即將滿載
+30202	576	en-dont/never/always	dup	The user just ran /insights to generate a usage report analyzing their Claude Code sessions. Here is the full insights data: { "project_areas": { "are
+30239	576	en-dont/never/always		# Update Config Skill Modify Claude Code configuration by updating settings.json files. ## When Hooks Are Required (Not Memory) If the user wants some
+30457	577	不要		回到3. Keystone：先跑那個 ~$0 的頻率 probe（不要先建捕獲治具） advisor 擋下我一個會重蹈 EV gate 覆轍的錯：把 WorkflowPattern 捕獲治具當「解法」呈現，就是在未證的前提上開建。 捕獲治具乾淨解決形狀軸。它對頻率軸的故事是「程序抽象把逐字變體 co
+30640	578	en-dont/never/always	dup	Set up a minimal CLAUDE.md (and optionally skills and hooks) for this repo. CLAUDE.md is loaded into every Claude Code session, so it must be concise 
+30705	578	記住/以後/下次		另外 因為本專案關於shiba-fine-tuning-project的議題會隨著每次遇到的情境有所不同 所以 我希望 /references內部能有一個專門搜集shiba-fine-tuning-project議題的機制，可能是從memory.md去取得後紀錄在此 或是你建議可以直接去讀取哪一份有
+30738	578	不需要/不必		另外避免每次跑skill或cron job你搜尋太多主題 消耗大量token閱讀思考 我建議先搜集找標題 你根據前言來評分 每個標題哪個相關性與本專案相關 當次搜尋每個分類的相關性評分前top5篇進行下載後 再回來閱讀與整理成report 或是你有更好的方法也可以 我希望他是能夠節省token但又能
+30795	578	不用		1 只要到第一層就好喔 不用遞迴到裡面的子目錄、子檔案
+30947	578	不需要/不必		我在他們的資料夾內新增了一個html檔 請你根據該檔 把不必要的廣告或無關的廣告文字濾除
+31248	579	不要		執行方式：1 一個誠實的 scope 取捨要你知道:歷史 commands 不回填(exchanges 沒存指令字串、在 tool_executions 要多 join),保留在 deprecated_exchange_embeddings_old,往後由 stop_hook 同步抓。歷史問答會是「
+31632	579	不要		根據我面臨的問題 你有什麼看法 請提出客觀可行的可能 不要太過於細節 請用淺而易懂的方式表達
+31779	580	不要		根據你所知的提供本專案可運行的方向 不要天馬行空 而是別人資料科學家或AI公司在如何做 如何將目前瓶頸解開
