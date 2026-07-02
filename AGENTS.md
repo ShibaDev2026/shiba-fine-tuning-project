@@ -3,8 +3,8 @@
 > 本檔為對外 agent / coding 工具的規範入口。專案擁有者（Shiba）的 Claude Code 個人補充見 `CLAUDE.md`（不在版控內）。事實內容與 `CLAUDE.md` 同步。
 
 ## 專案目的
-主線（2026-06-21 重定向）：從與 AI 助手對話累積「**驗證過的指令模式**」→ RAG/Agentic 召回 → 本地模型 in-context 代理執行（依擁有者使用習慣）。**fine-tuning 退為後期選項**（Pattern Library 夠大 + 確認高頻重複模式，才壓進權重）。
-> 重定向依據：fine-tune 訓練資料 harvest 撞牆（5 條路在現有資料全證不通——真實 output 非答案形狀、採納訊號是 auto 啟發式非人工 gold、語料被 branch over-merge 灌水 ~6.8×）；RAG 召回是唯一實證可行資產。從「累積資料→訓練模型」改為「累積驗證模式→召回+in-context 執行」。詳見 `docs/roadmap/2026-06-21-rag-augmented-execution.md`。
+主線（2026-07-03 再定位）：協作槓桿全押四個實證有效位置——**author**（skills）/ **curate**（指令檔手工精修）/ **eval**（個人評測集）/ **route**（L0 窄車道）。RAG 召回降級為**人讀稽核通道**（recall_logs/rag_echo，`feed_model=false`）；fine-tuning 廢止。
+> 依據（三連證）：①任務指令重複 freq≥3=0（574 session，EV+keystone 雙 probe）→ 挖掘型 Pattern Library／小模型專化封死；②糾正/偏好重複 freq≥3 **存在**且人工捕獲迴圈已飽和（2026-07-03 correction probe，見 `experiments/2026-07-03_correction_freq/RESULT.md`）→「糾正→指令檔」是唯一實證跑通的累積→增值路徑；③「召回 > 好模型+指令檔」未證（A-vs-B 未跑）→ 召回不作主引擎。13% 採納率＝小模型正常水位非 bug，業界做法＝窄車道+升級回退（cascade），不硬撐開放式代理。
 
 ## 運作宗旨：Harness Engineering 自主開發迴圈
 全自主、無沙盒、證據驅動、自我進化，持續推進 roadmap 直到達標：
@@ -24,21 +24,18 @@
 | 2 | 精神時光屋 | 問題集 × AI 師父 → 自動評分 → 訓練資料集 |
 | 3 | Fine-tuning Pipeline | MLX LoRA → GGUF → Ollama 更新 |
 
-**Layer 新角色（2026-06-21 重定）**：L0 路由 ✅ 保留；L1 記憶 RAG ✅ **升級主引擎**（Agentic RAG 召回模式給模型執行）；L2 chamber ♻️ **轉 Verifier**（執行前安全閘）；L3 fine-tune ⬇️ **降後期**（壓高頻模式進權重）。
+**Layer 角色（2026-07-03 再定）**：L0 路由 ✅ 窄車道保留（分類/路由/壓縮，現狀即正解不加碼）；L1 ♻️ **人讀稽核通道**（對話入庫 + recall_logs/rag_echo/statusLine；召回不餵模型）；L2 ⏸ dormant（server 手動起才活；Verifier 構想隨 P2 廢止擱置）；L3 ⏸ dormant（finetune_runs=0、不裝 daemon）。
 
-## Roadmap：RAG-augmented 代理執行（主線）
+## 主軸（2026-07-03）：author / curate / eval / route
 
-執行迴圈：對話 →[蒸餾] **Pattern Library**（RAG 索引）←[飛輪] 擁有者刻意採納 +1 gold；任務 →[L0 路由本地]→[Agentic RAG 召回模式]→[本地 in-context 提案]→[Verifier 閘]→ 執行 → 回饋飛輪。
+| 軌 | 內容 | Gate / 狀態 |
+|----|------|------|
+| author | 同類摩擦**第二次**出現 → 手寫 skill（由上而下 authoring，不挖語料——頻率牆擋的是挖掘不是人工判斷） | 習慣性、零 gate |
+| curate | 糾正 → 記憶 → 指令檔（已實證飽和運作）；手工修剪，curation 勝 accumulation | 安全網＝按需重跑 `experiments/2026-07-03_correction_freq/` |
+| eval | 個人評測集 v1（24 題、key facts pre-registered、盲評）；可重用於換模型/改指令檔跑分（`experiments/2026-07-03_personal_eval_v1/`） | ✅ 首戰 2026-07-03：A=36 vs B(+召回)=37，diff+1<門檻5 → **召回 FAIL 結案** |
+| route | L0 維持分類/路由；本地模型只跑受約束任務（分類/抽取/壓縮），不做開放式代理 | 現狀即正解、不加碼 |
 
-| 階段 | 內容 | Gate |
-|------|------|------|
-| P1 | Pattern Library + manual-accept 飛輪 | 先量指令重複頻率(EV) + 採納摩擦夠低 |
-| P2 | Agentic 召回 + in-context 執行 | 召回模式能讓本地正確執行 |
-| P3 | Verifier(propose-check-execute) | 擋危險/錯誤、不過度阻擋 |
-| P4 | D4 修復 + 歷史回填(按需) | 6.8× 灌水去重後回填 |
-| P5 | fine-tune(後期選配) | Library 大 + 高頻模式穩定才壓權重 |
-
-設計約束：**13% 採納天花板** → 本地只接手高信心模式、其餘優雅回退外部 AI 助手。詳見 `docs/roadmap/2026-06-21-rag-augmented-execution.md`。
+**廢止（2026-07-03）**：P1 Pattern Library（EV/keystone FAIL）、P2 召回餵本地執行（前提未證＋13% 水位；同日 A-vs-B 實測 FAIL 背書）、P3 Verifier（隨 P2 擱置）、P4 D4 回填（無下游）、P5 fine-tune（無資料）。歷史脈絡見 `docs/roadmap/2026-06-21-rag-augmented-execution.md`（superseded）。
 
 ## 統一 DB
 路徑：`./data/shiba-brain.db`（Layer 1 + 2 + 3 共用，v1.0.0 起從 `~/.local-brain/` 移入專案 `data/`，由 docker-compose 掛載）
@@ -69,7 +66,7 @@ export OLLAMA_KEEP_ALIVE=10m
 - 覆蓋已存在的非暫存檔案
 
 ## Fine-tuning 規範
-> ⬇️ **2026-06-21 降為 Roadmap P5 後期選配**：30/block harvest 已證撞牆（見 `docs/roadmap/2026-06-21-rag-augmented-execution.md`）。下列為 P5 真要壓權重時的設定，非當前主線目標。
+> ⛔ **2026-07-03 廢止**（P5 除名，見「主軸」節廢止清單）：30/block harvest 已證撞牆 + 任務重複頻率封死（574 session freq≥3=0）。下列僅作歷史參考。
 
 ### 兩個 LoRA Adapter
 | Adapter | event_type | 目標 |

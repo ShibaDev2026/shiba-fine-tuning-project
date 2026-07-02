@@ -1,0 +1,43 @@
+{
+  "meta": {
+    "created": "2026-07-03",
+    "purpose": "個人評測集 v1 — 首用：A(本地模型+CLAUDE.md) vs B(+召回) 定「召回>好模型+CLAUDE.md」前提生死",
+    "pre_registered_rules": {
+      "scoring": "每題 0/1/2：2=key facts 命中且可直接執行；1=方向對但缺關鍵事實；0=錯誤/幻覺/答非所問",
+      "decision": "B_total - A_total >= +5（滿分 48）→ 召回前提成立；|diff| < 5 → 無實質差異=前提 FAIL；<= -5 → 召回有害",
+      "secondary": "翻車數（B 相對 A 由 2 降至 0 的題數）> 2 → 即使總分小勝也標注注入風險",
+      "blind": "盲評：兩臂隨機標 X/Y（seed=42），評完才解盲",
+      "sampling_note": "P 組偏袒召回（隱性專案知識=召回宣稱的小生境）；若 B 連 P 組都贏不了則結論決定性"
+    },
+    "arms": {
+      "A": "qwen3:30b-a3b + 全域 CLAUDE.md + 專案 CLAUDE.md 全文（system）",
+      "B": "A + retrieve_for_eval(question, top_n=3) production 召回（含 answer 欄）"
+    }
+  },
+  "questions": [
+    {"id": "P1", "group": "P", "question": "本專案的 pytest 測試一直誤寫到 production DB（data/shiba-brain.db），要 patch 什麼才能正確隔離測試資料庫？", "key_facts": ["patch shiba_db.CONFIG（CONFIG.paths.db）", "patch lib.db.get_db_path 無效（shiba_db 直讀 CONFIG 不經過它）"]},
+    {"id": "P2", "group": "P", "question": "Layer 2 用 LM Studio 跑本地裁判評分時，要怎麼關掉模型的 thinking？哪些方法試過沒效？", "key_facts": ["唯一有效：API 參數 reasoning_effort:\"none\"（qwen/glm 帶、gemma 不帶）", "/no_think 與 chat_template_kwargs.enable_thinking 實測無效"]},
+    {"id": "P3", "group": "P", "question": "呼叫 Gemini 收到 429、quotaId 含 PerDay 時，要等到什麼時候才會重置？", "key_facts": ["PT 午夜（=UTC 08:00）重置"]},
+    {"id": "P4", "group": "P", "question": "本專案四層共用的統一資料庫檔案路徑是哪裡？", "key_facts": ["./data/shiba-brain.db（專案內 data/）"]},
+    {"id": "P5", "group": "P", "question": "現在 RAG 召回的結果會注入到 Claude 的 context 嗎？為什麼？召回結果實際流向哪裡？", "key_facts": ["不注入（feed_model=false）", "流向 .remember/rag_echo.md / recall_logs 日檔 / macOS 通知（人讀通道）"]},
+    {"id": "P6", "group": "P", "question": "查詢側擋掉「ok」「好」「merge」這類無意義短 query 的機制是哪個函式？門檻是多少？", "key_facts": ["is_short_query（rag.py）", "≤15 字元一刀攔、零 DB 依賴"]},
+    {"id": "P7", "group": "P", "question": "跑 Layer 2 評分之前要先啟動什麼服務？用什麼指令、哪個 port？", "key_facts": ["LM Studio server：lms server start --port 1234"]},
+    {"id": "P8", "group": "P", "question": "exchange_embeddings 表做 answer 欄遷移時，舊表被改名成什麼？DB 備份檔叫什麼名字？", "key_facts": ["deprecated_exchange_embeddings_old", "data/shiba-brain.db.bak-pre-rename-20260628-*"]},
+    {"id": "P9", "group": "P", "question": "本機跑 Ollama 需要設定哪幾個環境變數做效能優化？", "key_facts": ["OLLAMA_FLASH_ATTENTION=1", "OLLAMA_MAX_LOADED_MODELS=1", "OLLAMA_KV_CACHE_TYPE=q8_0", "OLLAMA_KEEP_ALIVE=10m"]},
+    {"id": "P10", "group": "P", "question": "之前的 reranker PoC 為什麼被判定 eval 無效？核心結構性原因是什麼？", "key_facts": ["golden set ground truth 候選抽自 bi-encoder(cosine)+FTS5 → gt cosine-bound / grader=author 陷阱", "reranker 結構上無法在此 eval 贏過 cosine recall"]},
+    {"id": "O1", "group": "O", "question": "只想跑 Memory/RAG 這一層的測試，指令是什麼？", "key_facts": ["pytest tests/memory/ -q"]},
+    {"id": "O2", "group": "O", "question": "改了 docker-compose 之後要怎麼驗證語法沒壞？", "key_facts": ["docker compose config -q"]},
+    {"id": "O3", "group": "O", "question": "改了 stop hook 之後要怎麼做 smoke test？", "key_facts": ["帶 SHIBA_PROJECT_ROOT=$(pwd) 環境變數", "直接 python 跑 stop hook 腳本（layer_1_memory/ 下）"]},
+    {"id": "O4", "group": "O", "question": "全量測試的基準數字是多少？跑出來低於基準代表什麼？", "key_facts": ["基準=145+（PR-O 後）", "低於=回歸，須查明不得當通過"]},
+    {"id": "O5", "group": "O", "question": "本專案 commit 訊息的格式規範是什麼？給個例子。", "key_facts": ["<type>(<scope>): <中文主旨>", "例：fix(pr-c-schedule): 排程時程改 PT 午夜"]},
+    {"id": "O6", "group": "O", "question": "git push 的時候 tags 要怎麼處理？", "key_facts": ["須一併推送 tags：git push origin --tags"]},
+    {"id": "O7", "group": "O", "question": "批次呼叫 Gemini API 時每次呼叫後要做什麼避免 429？", "key_facts": ["每次呼叫後 time.sleep(4)（3-5s 區間，付費 Tier 也照做）", "不得批次迴圈連續快速呼叫"]},
+    {"id": "O8", "group": "O", "question": "API Key 和 token 的存放規範是什麼？DB 裡存什麼？", "key_facts": ["一律存 macOS Keychain", "DB/設定檔只存 keychain_ref 指標"]},
+    {"id": "G1", "group": "G", "question": "把最近 3 個還沒推送的 commit 合併成一個，git 指令怎麼下？", "key_facts": ["git rebase -i HEAD~3（squash）或 git reset --soft HEAD~3 + git commit"]},
+    {"id": "G2", "group": "G", "question": "找出 repo 裡所有含 TODO 的 Python 檔案並列出行號，指令？", "key_facts": ["grep -rn TODO --include='*.py' .（或 rg -n TODO -t py）"]},
+    {"id": "G3", "group": "G", "question": "SQLite 既有表要加一個欄位，用什麼語法？需要重建表嗎？", "key_facts": ["ALTER TABLE <t> ADD COLUMN <c> <type>", "ADD COLUMN 不需重建表（即時 metadata 操作）"]},
+    {"id": "G4", "group": "G", "question": "pytest 只重跑上一次失敗的測試，怎麼下？", "key_facts": ["pytest --lf（--last-failed）"]},
+    {"id": "G5", "group": "G", "question": "bash 腳本開頭要加什麼讓錯誤立即中止、未定義變數報錯、pipe 錯誤不被吞？", "key_facts": ["set -euo pipefail"]},
+    {"id": "G6", "group": "G", "question": "想看某個檔案每一行最後是誰改的、在哪個 commit，git 指令？", "key_facts": ["git blame <file>"]}
+  ]
+}
