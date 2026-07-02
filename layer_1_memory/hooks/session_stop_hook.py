@@ -363,20 +363,29 @@ def _write_exchange_embeddings(session_uuid: str, parsed, active_branch) -> None
         if len(msg.content.strip()) <= _MIN_INSTRUCTION_CHARS:
             continue
 
-        # 收集此 user message 之後的 assistant 實際執行指令
+        # 收集此 user message 之後的 assistant 實際執行指令 + 文字回答
         commands: list[str] = []
+        answer_parts: list[str] = []
         for j in range(i + 1, len(messages)):
             next_msg = messages[j]
             if next_msg.role == "user":
                 break
             cmds = exec_by_msg.get(next_msg.uuid, [])
             commands.extend(cmds)
+            # 純問答也要存：收集 assistant 的文字回答
+            if next_msg.role == "assistant" and next_msg.content:
+                txt = next_msg.content.strip()
+                if txt and not txt.lstrip().startswith(_SYSTEM_PREFIXES):
+                    answer_parts.append(txt)
 
-        if not commands:
+        answer = ("\n".join(answer_parts)[:2000].strip()) or None
+
+        # 有指令或有答案就寫（純問答不再被丟）
+        if not commands and not answer:
             continue
 
         instruction = msg.content[:300].strip()
-        cmd_str = "\n".join(commands[:5])  # 最多 5 條指令，避免過長
+        cmd_str = "\n".join(commands[:5])  # 純問答時為空字串
 
         vec = get_embedding(instruction)
         if vec is None:
@@ -387,6 +396,7 @@ def _write_exchange_embeddings(session_uuid: str, parsed, active_branch) -> None
                 session_uuid=session_uuid,
                 instruction=instruction,
                 commands=cmd_str,
+                answer=answer,
                 embedding=vec,
             )
         except Exception:

@@ -33,7 +33,9 @@ def test_signal_c_round_trip_embedding_format(tmp_path):
     應能還原 vector 並計算出 cosine 距離（不報「embedding 解析失敗」）"""
     db_file = _make_db(tmp_path)
 
-    with patch("lib.db.get_db_path", return_value=db_file):
+    from types import SimpleNamespace
+    fake = SimpleNamespace(paths=SimpleNamespace(db=db_file))
+    with patch("shiba_db.CONFIG", fake):
         # 寫入 6 筆「舊」 + 6 筆「新」embedding，向量內容刻意不同以製造 drift
         for i in range(6):
             memory_db.upsert_exchange_embedding(

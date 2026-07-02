@@ -57,11 +57,11 @@ def test_vector_search_leave_one_out(monkeypatch):
     # query 向量 [1,0,0]；三筆 row 設計成 cosine A(1.0) > B(0.8) > C(0.6)，皆 > 0.35 門檻
     monkeypatch.setattr(rag, "get_embedding", lambda *a, **kw: [1.0, 0.0, 0.0])
     rows = [
-        {"session_uuid": "A", "instruction": "a", "commands": "x",
+        {"session_uuid": "A", "instruction": "a", "commands": "x", "answer": None,
          "embedding": json.dumps([1.0, 0.0, 0.0]), "exchange_id": 1},
-        {"session_uuid": "B", "instruction": "b", "commands": "y",
+        {"session_uuid": "B", "instruction": "b", "commands": "y", "answer": None,
          "embedding": json.dumps([0.8, 0.6, 0.0]), "exchange_id": 2},
-        {"session_uuid": "C", "instruction": "c", "commands": "z",
+        {"session_uuid": "C", "instruction": "c", "commands": "z", "answer": None,
          "embedding": json.dumps([0.6, 0.8, 0.0]), "exchange_id": 3},
     ]
 

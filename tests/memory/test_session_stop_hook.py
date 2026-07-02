@@ -40,3 +40,27 @@ def test_short_instruction_not_ingested_long_kept():
     # merge（≤15）絕不入庫；長指令入庫
     assert "merge" not in written
     assert any("重構整個資料流" in w for w in written)
+
+
+def test_pure_qa_ingested_with_answer():
+    """純問答（無工具）現在會入庫，commands 為空、answer 帶回答。"""
+    messages = [
+        _msg("u1", "user", "D4 灌水是什麼意思？請解釋一下原理"),   # >15 字、純問答
+        _msg("a1", "assistant", "D4 指的是 branch membership 錯亂導致同段對話被重複切片。"),
+    ]
+    active_branch = SimpleNamespace(messages=messages)
+    parsed = SimpleNamespace(tool_executions=[])  # 無任何工具
+
+    written: list[dict] = []
+
+    def fake_upsert(*, session_uuid, instruction, commands, embedding, answer=None, **kw):
+        written.append({"instruction": instruction, "commands": commands, "answer": answer})
+
+    with patch("layer_1_memory.lib.embedder.get_embedding", return_value=[0.1, 0.2, 0.3]), \
+         patch("layer_1_memory.lib.db.upsert_exchange_embedding", side_effect=fake_upsert):
+        _write_exchange_embeddings("sess-test", parsed, active_branch)
+
+    assert len(written) == 1
+    assert "D4" in written[0]["instruction"]
+    assert written[0]["commands"] == ""               # 純問答指令為空
+    assert "branch membership" in (written[0]["answer"] or "")

@@ -32,6 +32,9 @@ RagSource = Literal["vector", "fts5", "none"]
 # 與 _vector_search 結果側過濾用的字面 3 一致——同一原則的查詢側對應（改值請兩處同步）。
 _DIVERGENCE_THRESHOLD = 3
 
+# answer 在 formatter 中的最大預覽字元數；避免單一長答案吃光 token_budget
+_ANSWER_PREVIEW_CHARS = 200
+
 
 def is_low_signal_query(query: str) -> bool:
     """查詢側前置 gate：判斷 query 是否為「已學會的同意詞」（無召回價值）。
@@ -366,15 +369,24 @@ def _build_context_block(
     exchange_id = hit.get("exchange_id")
     instruction = hit["instruction"].strip()
     commands = hit["commands"].strip()
+    answer = (hit.get("answer") or "").strip()
+
+    def _single(instr: str, ans: str, cmds: str) -> str:
+        parts = [f"問題：{instr}"]
+        if ans:
+            parts.append(f"答案：{ans}")
+        if cmds:
+            parts.append(f"指令：{cmds}")
+        return "\n".join(parts)
 
     # 無 exchange_id 或 window_k=0 → 退回單 exchange 行為
     if not exchange_id or window_k <= 0:
-        return ("問題：{}\n指令：{}".format(instruction, commands), False)
+        return (_single(instruction, answer, commands), False)
 
     neighbors = _fetch_neighbor_exchanges(exchange_id, window_k)
     if not neighbors:
         # 找不到鄰居（可能 hit exchange 已被刪除），fallback
-        return ("問題：{}\n指令：{}".format(instruction, commands), False)
+        return (_single(instruction, answer, commands), False)
 
     # 找出 hit 在 neighbors 裡的位置，標 ★
     hit_idx = next(
@@ -446,13 +458,24 @@ def retrieve_for_eval(
     """
     vector_results = _vector_search(query, top_n=top_n, exclude_session_uuids=exclude_session_uuids)
     if vector_results:
+        def _fmt_eval_context(r: dict) -> str:
+            """eval 路徑 context 格式：與生產 _build_exchange_context 保持一致。
+
+            問題 +（有 answer 才）答案（截斷 _ANSWER_PREVIEW_CHARS）+（有 commands 才）指令。
+            """
+            ctx = r["instruction"].strip()
+            answer = r.get("answer")
+            if answer:
+                ctx += "\n答案：{}".format(answer[:_ANSWER_PREVIEW_CHARS])
+            commands = r["commands"].strip()
+            if commands:
+                ctx += "\n指令：{}".format(commands)
+            return ctx
+
         return {
             "query": query,
             "source": "vector",
-            "retrieved_contexts": [
-                "{}\n指令：{}".format(r["instruction"].strip(), r["commands"].strip())
-                for r in vector_results
-            ],
+            "retrieved_contexts": [_fmt_eval_context(r) for r in vector_results],
             "retrieved_session_uuids": list({r["session_uuid"] for r in vector_results}),
         }
 
@@ -502,7 +525,7 @@ def _vector_search(
             # 召回這類結果反而會引入雜訊，故自動排除。
             # 閾值 3 = 允許一句話對應最多 2 種合理變體（如 git add + git commit）
             rows = conn.execute("""
-                SELECT session_uuid, instruction, commands, embedding, exchange_id
+                SELECT session_uuid, instruction, commands, answer, embedding, exchange_id
                 FROM exchange_embeddings
                 WHERE instruction IN (
                     SELECT instruction
@@ -526,6 +549,7 @@ def _vector_search(
                 "session_uuid": row["session_uuid"],
                 "instruction": row["instruction"],
                 "commands": row["commands"],
+                "answer": row["answer"],
                 "score": score,
                 "exchange_id": row["exchange_id"],
             })
@@ -541,14 +565,28 @@ def _vector_search(
 
 
 def _build_exchange_context(exchanges: list[dict], token_budget: int = 500) -> str:
-    """將因果對格式化為 RAG 注入字串"""
+    """將因果對格式化為 RAG 注入字串。
+
+    渲染規則：
+    - 問題行：永遠輸出
+    - 答案行：有 answer 才輸出，截斷至 _ANSWER_PREVIEW_CHARS（防單一答案吃光 token_budget）
+    - 指令行：commands 非空才輸出（純問答 row 不留空指令行）
+    """
     char_budget = token_budget * _CHARS_PER_TOKEN
     header = "## 相關歷史記憶（top {}）\n".format(len(exchanges))
     body = ""
     for ex in exchanges:
-        section = "### 問題：{}\n指令：{}\n".format(
-            ex["instruction"].strip(), ex["commands"].strip()
-        )
+        # 問題行
+        section = "### 問題：{}\n".format(ex["instruction"].strip())
+        # 答案行（有 answer 才加，截斷防爆 budget）
+        answer = ex.get("answer")
+        if answer:
+            preview = answer[:_ANSWER_PREVIEW_CHARS]
+            section += "答案：{}\n".format(preview)
+        # 指令行（純問答為空字串，不輸出空行）
+        commands = ex["commands"].strip()
+        if commands:
+            section += "指令：{}\n".format(commands)
         if len(header) + len(body) + len(section) > char_budget:
             break
         body += section

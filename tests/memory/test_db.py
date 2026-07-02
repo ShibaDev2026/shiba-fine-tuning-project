@@ -25,11 +25,23 @@ from lib.db import (
 )
 
 
+def _patch_db_path(db_file):
+    """把 DB 路徑指向 tmp。
+
+    get_connection → shiba_db.open_connection 直接讀 module global CONFIG.paths.db，
+    完全不看 get_db_path，故 patch get_db_path 無效（會誤寫 production）。
+    正解＝整顆替換 shiba_db.CONFIG。
+    """
+    from types import SimpleNamespace
+    fake = SimpleNamespace(paths=SimpleNamespace(db=db_file))
+    return patch("shiba_db.CONFIG", fake)
+
+
 def test_init_db_creates_tables(tmp_path):
     """init_db 應建立 sessions、messages、sessions_fts 等核心資料表"""
     db_file = tmp_path / "test.db"
     # 暫時替換 DB 路徑
-    with patch("lib.db.get_db_path", return_value=db_file):
+    with _patch_db_path(db_file):
         init_db()
         conn = sqlite3.connect(str(db_file))
         tables = {
@@ -48,18 +60,18 @@ def test_init_db_creates_tables(tmp_path):
 def test_get_connection_returns_sqlite_connection(tmp_path):
     """get_connection 應回傳可用的 SQLite 連線"""
     db_file = tmp_path / "test.db"
-    with patch("lib.db.get_db_path", return_value=db_file):
+    with _patch_db_path(db_file):
         with get_connection() as conn:
             assert isinstance(conn, sqlite3.Connection)
-            # WAL 模式已開啟
+            # journal_mode=DELETE（shiba_db 刻意設定，macOS bind mount 下 WAL/SHM 不一致）
             mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
-            assert mode == "wal"
+            assert mode == "delete"
 
 
 def test_init_db_idempotent(tmp_path):
     """init_db 重複呼叫不應拋出錯誤（CREATE TABLE IF NOT EXISTS 安全）"""
     db_file = tmp_path / "test.db"
-    with patch("lib.db.get_db_path", return_value=db_file):
+    with _patch_db_path(db_file):
         init_db()
         init_db()  # 第二次不應失敗
 
@@ -91,7 +103,7 @@ def test_decompress_text_handles_none():
 def test_fetch_message_raw_content_roundtrip(tmp_path):
     """insert_message 寫入長 raw_content → fetch 應還原為原始字串"""
     db_file = tmp_path / "test.db"
-    with patch("lib.db.get_db_path", return_value=db_file):
+    with _patch_db_path(db_file):
         init_db()
         long_text = "raw payload " * 200  # 超過 1024 bytes 必走壓縮路徑
         with get_connection() as conn:
@@ -121,7 +133,7 @@ def test_fetch_message_raw_content_roundtrip(tmp_path):
 def test_transaction_rollback_on_error(tmp_path):
     """get_connection 異常時應 rollback，不留下部分寫入"""
     db_file = tmp_path / "test.db"
-    with patch("lib.db.get_db_path", return_value=db_file):
+    with _patch_db_path(db_file):
         init_db()
         try:
             with get_connection() as conn:
@@ -141,7 +153,7 @@ def test_transaction_rollback_on_error(tmp_path):
 def test_fetch_tool_execution_output_roundtrip(tmp_path):
     """insert_tool_execution 寫入長 output_log → fetch 應還原為原始字串"""
     db_file = tmp_path / "test.db"
-    with patch("lib.db.get_db_path", return_value=db_file):
+    with _patch_db_path(db_file):
         init_db()
         long_output = "line\n" * 500  # > 1024 bytes 走壓縮
         with get_connection() as conn:
@@ -175,3 +187,28 @@ def test_fetch_tool_execution_output_roundtrip(tmp_path):
                 is_error=False,
             )
             assert fetch_tool_execution_output(conn, tool_exec_id) == long_output
+
+
+def test_upsert_writes_answer_column(tmp_path):
+    """upsert 帶 answer 時，answer 欄正確寫入。"""
+    import sys
+    from pathlib import Path
+    from types import SimpleNamespace
+    from unittest.mock import patch
+    sys.path.insert(0, str(Path(__file__).parent.parent.parent / "layer_1_memory"))
+    from lib.db import init_db, get_connection, upsert_exchange_embedding
+
+    db_file = tmp_path / "t.db"
+    fake = SimpleNamespace(paths=SimpleNamespace(db=db_file))
+    with patch("shiba_db.CONFIG", fake):
+        init_db()
+        upsert_exchange_embedding(
+            session_uuid="s1", instruction="D4 灌水是什麼意思請解釋",
+            commands="", embedding=[0.1, 0.2], answer="branch membership 錯亂",
+        )
+        with get_connection() as conn:
+            row = conn.execute(
+                "SELECT commands, answer FROM exchange_embeddings WHERE session_uuid='s1'"
+            ).fetchone()
+    assert row["answer"] == "branch membership 錯亂"
+    assert row["commands"] == ""

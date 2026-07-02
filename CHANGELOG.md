@@ -7,6 +7,7 @@
 
 ### Added
 
+- **`exchange_embeddings` 新增 `answer` 欄（2026-06-28）** — `schema.sql` DDL 補 `answer TEXT`（NULL=無文字回答）；`db.py` `init_db` CREATE TABLE 同步新增 `answer`/`exchange_id`/新增 `idx_exchange_embeddings_exchange` 索引；舊表 ALTER TABLE migration；`upsert_exchange_embedding` 新增可選參數 `answer`/`exchange_id`，不破壞既有呼叫端。
 - **`docs/references/` 研究情報週報子系統 + `/weekly-digest` skill（2026-06-27）** — 在 references 工作區建立「每週情報摘要」自動化機制：
   - **子目錄 `CLAUDE.md`**（疊加非隔離）：來源範圍（blog／tech news／論文／GitHub release，僅發布物、排除 issue/PR/討論串）、議題佇列驅動、目錄慣例、邊界護欄（不碰 `layer_*/`／主 DB／訓練）。
   - **`topics_queue.md`**：議題輪轉佇列（pending 優先→最久沒跑，跑完標 done＋日期），seed 自 memory roadmap 主題（HyDE/embedding 去污染/Agentic/reranker/memory/Verifier/local serving/fine-tune/harness）。

@@ -138,7 +138,7 @@ def test_retrieve_relevant_sessions_finds_match(tmp_path):
     """FTS5 查詢應找到相關 session"""
     db_file = tmp_path / "test.db"
     _seed_db(db_file)
-    with patch("lib.db.get_db_path", return_value=db_file):
+    with _patch_db_path(db_file):
         results = retrieve_relevant_sessions("address_parser", top_n=3)
 
     assert len(results) >= 1
@@ -149,7 +149,7 @@ def test_retrieve_empty_query_returns_empty(tmp_path):
     """空 query 應回傳空 list（不做 FTS 查詢）"""
     db_file = tmp_path / "test.db"
     _seed_db(db_file)
-    with patch("lib.db.get_db_path", return_value=db_file):
+    with _patch_db_path(db_file):
         results = retrieve_relevant_sessions("", top_n=3)
 
     assert results == []
@@ -182,7 +182,7 @@ def test_get_rag_context_returns_fts5_source_when_vector_unavailable(tmp_path):
     """vector 不可用時 fallback FTS5，source 必須回 'fts5'"""
     db_file = tmp_path / "test.db"
     _seed_db(db_file)
-    with patch("lib.db.get_db_path", return_value=db_file), \
+    with _patch_db_path(db_file), \
          patch("lib.rag.get_embedding", return_value=None):
         context, source = get_rag_context("address_parser", top_n=3)
 
@@ -201,7 +201,7 @@ def test_get_rag_context_returns_none_source_when_no_hits(tmp_path):
     conn.commit()
     conn.close()
 
-    with patch("lib.db.get_db_path", return_value=db_file), \
+    with _patch_db_path(db_file), \
          patch("lib.rag.get_embedding", return_value=None):
         context, source = get_rag_context("不存在的關鍵字", top_n=3)
 
@@ -213,7 +213,7 @@ def test_get_rag_context_with_hits_returns_triple(tmp_path):
     """擴充版多回 hits：fts5 命中時回 (ctx, 'fts5', 非空 hits)，含結構化欄位"""
     db_file = tmp_path / "test.db"
     _seed_db(db_file)
-    with patch("lib.db.get_db_path", return_value=db_file), \
+    with _patch_db_path(db_file), \
          patch("lib.rag.get_embedding", return_value=None):
         context, source, hits = get_rag_context_with_hits("address_parser", top_n=3)
 
@@ -231,8 +231,88 @@ def test_get_rag_context_with_hits_empty_when_no_hits(tmp_path):
     conn.commit()
     conn.close()
 
-    with patch("lib.db.get_db_path", return_value=db_file), \
+    with _patch_db_path(db_file), \
          patch("lib.rag.get_embedding", return_value=None):
         context, source, hits = get_rag_context_with_hits("不存在的關鍵字", top_n=3)
 
     assert context == "" and source == "none" and hits == []
+
+
+def test_build_context_block_includes_answer():
+    """hit 帶 answer 時，單 exchange 區塊輸出「答案：」行。"""
+    from lib.rag import _build_context_block
+    hit = {
+        "instruction": "D4 灌水是什麼",
+        "commands": "",
+        "answer": "branch membership 錯亂導致重複切片",
+        "exchange_id": None,
+    }
+    block, expanded = _build_context_block(hit, window_k=0, preview_chars=200)
+    assert expanded is False
+    assert "答案：branch membership 錯亂導致重複切片" in block
+    assert "指令：" not in block  # 純問答無指令
+
+
+# ── _build_exchange_context answer 渲染（Fix A TDD）──
+
+def test_build_exchange_context_renders_answer():
+    """純問答 exchange（空 commands + 有 answer）→ 含「答案：」行、不含空「指令：」行。"""
+    from lib.rag import _build_exchange_context
+    exchanges = [
+        {
+            "instruction": "D4 灌水是什麼",
+            "commands": "",
+            "answer": "branch membership 錯亂導致重複切片",
+        }
+    ]
+    result = _build_exchange_context(exchanges)
+    assert "答案：branch membership 錯亂導致重複切片" in result
+    # 純問答不得輸出空指令行
+    assert "指令：\n" not in result
+    assert "指令：" not in result
+
+
+def test_build_exchange_context_truncates_long_answer():
+    """answer 超過 200 字 → 顯示截斷至約 200 字（_ANSWER_PREVIEW_CHARS）。"""
+    from lib.rag import _build_exchange_context, _ANSWER_PREVIEW_CHARS
+    long_answer = "A" * 500  # 遠超 200 字
+    exchanges = [
+        {
+            "instruction": "說明一下",
+            "commands": "",
+            "answer": long_answer,
+        }
+    ]
+    result = _build_exchange_context(exchanges)
+    # 截斷後長度應 <= 200 + 一點 ellipsis overhead（允許 ≤ 210 以防 format 前後加字）
+    answer_start = result.find("答案：")
+    assert answer_start != -1
+    answer_portion = result[answer_start + len("答案："):]
+    # 截到下一行或結尾
+    answer_line = answer_portion.split("\n")[0]
+    assert len(answer_line) <= _ANSWER_PREVIEW_CHARS + 3  # +3 for potential "..."
+
+
+# ── retrieve_for_eval answer 渲染（Fix B TDD）──
+
+def test_retrieve_for_eval_includes_answer(monkeypatch):
+    """vector_search 回帶 answer 的 hit → retrieved_contexts[0] 含「答案：」行。"""
+    from lib import rag
+
+    fake_hit = {
+        "session_uuid": "uuid-test",
+        "instruction": "什麼是 HyDE",
+        "commands": "",
+        "answer": "Hypothetical Document Embeddings 透過假設文件增強召回",
+        "score": 0.85,
+        "exchange_id": None,
+    }
+    monkeypatch.setattr(rag, "_vector_search", lambda *a, **kw: [fake_hit])
+
+    result = rag.retrieve_for_eval("什麼是 HyDE")
+    assert result["source"] == "vector"
+    ctx = result["retrieved_contexts"][0]
+    assert "答案：Hypothetical Document Embeddings" in ctx
+    # 純問答不得有空指令行
+    assert "指令：\n" not in ctx
+    assert "指令：" not in ctx
