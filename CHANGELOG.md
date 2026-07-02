@@ -5,6 +5,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **專案主軸再定位：author / curate / eval / route（2026-07-03）** — `AGENTS.md`/`CLAUDE.md` 專案目的、Layer 角色、Roadmap 節全面改寫；舊 roadmap P1–P5 全數廢止/擱置（P1 EV+keystone 雙 FAIL、P2 前提未證＋13% 水位、P3 隨 P2、P4 無下游、P5 無資料），`docs/roadmap/2026-06-21-rag-augmented-execution.md` 標記 SUPERSEDED。依據：糾正頻率 probe（`experiments/2026-07-03_correction_freq/`）證實糾正/偏好重複 freq≥3 存在且人工捕獲迴圈已飽和——「糾正→指令檔」是唯一實證跑通的累積→增值路徑；RAG 召回降級為人讀稽核通道；fine-tuning 廢止。
+
 ### Added
 
 - **`exchange_embeddings` 新增 `answer` 欄（2026-06-28）** — `schema.sql` DDL 補 `answer TEXT`（NULL=無文字回答）；`db.py` `init_db` CREATE TABLE 同步新增 `answer`/`exchange_id`/新增 `idx_exchange_embeddings_exchange` 索引；舊表 ALTER TABLE migration；`upsert_exchange_embedding` 新增可選參數 `answer`/`exchange_id`，不破壞既有呼叫端。

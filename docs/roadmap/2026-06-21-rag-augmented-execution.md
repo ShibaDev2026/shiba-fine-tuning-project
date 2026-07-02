@@ -1,5 +1,7 @@
 # Roadmap：RAG-augmented 代理執行（2026-06-21 定）
 
+> ⛔ **SUPERSEDED（2026-07-03）**：本 roadmap P1–P5 已全數廢止/擱置——P1 Pattern Library（EV gate + keystone probe 雙 FAIL：574 session 任務重複 freq≥3=0）、P2 召回餵本地執行（「召回 > 好模型+指令檔」前提未證＋13% 採納水位）、P3 Verifier（隨 P2 擱置）、P4 D4 回填（無下游）、P5 fine-tune（無資料）。現行主軸＝**author / curate / eval / route**，見 `AGENTS.md`／`CLAUDE.md`「主軸」節。本檔保留作歷史脈絡，不再更新。
+
 > 主線重定向的完整版。CLAUDE.md 只放骨架，細節在此。運作宗旨（harness engineering 自主開發迴圈）見 CLAUDE.md。
 
 ## 為什麼重定向（證據）
