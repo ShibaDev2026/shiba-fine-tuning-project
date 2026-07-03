@@ -11,6 +11,8 @@
 
 ### Changed
 
+- **weekly-digest 改組：對準主軸活軌、降頻縮量、EV 記帳（2026-07-03）** — 議題佇列死線題全除役（HyDE/Agentic RAG/reranker/Verifier/fine-tune 等 8 題，召回線結案後不再蒐集）、新四題一一對應 author/curate/eval/route；skill 節奏每週→月更或按需、TOP_K 5→3、報告結尾強制「Action items」段（0 個要誠實寫）、同題連續 2 次 0 action item → 提議除役 gate。依據：本期議題 #2（索引去污染/召回多樣性，20 則）產 0 action item——量測後收束而非慣性續跑。
+
 - **專案主軸再定位：author / curate / eval / route（2026-07-03）** — `AGENTS.md`/`CLAUDE.md` 專案目的、Layer 角色、Roadmap 節全面改寫；舊 roadmap P1–P5 全數廢止/擱置（P1 EV+keystone 雙 FAIL、P2 前提未證＋13% 水位、P3 隨 P2、P4 無下游、P5 無資料），`docs/roadmap/2026-06-21-rag-augmented-execution.md` 標記 SUPERSEDED。依據：糾正頻率 probe（`experiments/2026-07-03_correction_freq/`）證實糾正/偏好重複 freq≥3 存在且人工捕獲迴圈已飽和——「糾正→指令檔」是唯一實證跑通的累積→增值路徑；RAG 召回降級為人讀稽核通道；fine-tuning 廢止。
 
 ### Added
