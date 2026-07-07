@@ -54,7 +54,7 @@ def test_vector_search_leave_one_out(monkeypatch):
     import json
     import layer_1_memory.lib.rag as rag
 
-    # query 向量 [1,0,0]；三筆 row 設計成 cosine A(1.0) > B(0.8) > C(0.6)，皆 > 0.35 門檻
+    # query 向量 [1,0,0]；三筆 row 設計成 cosine A(1.0) > B(0.8) > C(0.7)，皆 > _MIN_COSINE(0.61) 門檻
     monkeypatch.setattr(rag, "get_embedding", lambda *a, **kw: [1.0, 0.0, 0.0])
     rows = [
         {"session_uuid": "A", "instruction": "a", "commands": "x", "answer": None,
@@ -62,7 +62,7 @@ def test_vector_search_leave_one_out(monkeypatch):
         {"session_uuid": "B", "instruction": "b", "commands": "y", "answer": None,
          "embedding": json.dumps([0.8, 0.6, 0.0]), "exchange_id": 2},
         {"session_uuid": "C", "instruction": "c", "commands": "z", "answer": None,
-         "embedding": json.dumps([0.6, 0.8, 0.0]), "exchange_id": 3},
+         "embedding": json.dumps([0.7, 0.714, 0.0]), "exchange_id": 3},
     ]
 
     class _FakeCur:
@@ -92,3 +92,8 @@ def test_vector_search_leave_one_out(monkeypatch):
     assert uuids(top_n=2, exclude_session_uuids={"A", "B"}) == ["C"]
     # 盲點3：全排除→空池，不得 fallback 含回 source
     assert uuids(top_n=2, exclude_session_uuids={"A", "B", "C"}) == []
+
+    # 雜訊過濾：cosine 低於 _MIN_COSINE 的候選須被丟棄（top-3 不再恆滿）
+    rows.append({"session_uuid": "D", "instruction": "d", "commands": "w", "answer": None,
+                 "embedding": json.dumps([0.5, 0.866, 0.0]), "exchange_id": 4})  # cosine=0.5 < 門檻
+    assert uuids(top_n=4) == ["A", "B", "C"]

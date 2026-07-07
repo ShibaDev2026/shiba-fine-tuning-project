@@ -5,6 +5,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **召回 cosine 門檻校準 0.35 → 0.61（2026-07-07）** — `experiments/2026-07-07_recall_score_calibration/`：雜訊基線實驗（1956 組跨 session 不相關配對）證實舊 floor 0.35 低於語料底噪（雜訊 p50=0.447/p99=0.611），放行 93.9% 純雜訊 → top-3 恆滿、「RAG:3」無鑑別力，且歷史召回約 40% 與隨機配對統計不可分。新門檻 = 雜訊 p99（0.61），命中數 0–3 浮動恢復訊號；live 驗證閒聊 query 0 hits、語意明確 query 3 hits（0.70+）。`tests/memory` 65 passed（含新增門檻過濾測試）。
+
 ### Added
 
 - **個人評測集 v1 + A-vs-B 召回對照首戰（2026-07-03）** — `experiments/2026-07-03_personal_eval_v1/`：24 題（隱性專案知識/ops/一般開發三組）、key facts pre-registered、X/Y 盲評、判定規則先註冊。結果 A（qwen3:30b-a3b+CLAUDE.md）=36 vs B（+production 召回）=37，diff +1 < 門檻 5 → **「召回>好模型+CLAUDE.md」前提實測 FAIL、召回線結案**；O 組 16:16 證 CLAUDE.md 單項飽和 ops 知識。召回 +4（歷史知識 surface）同時 -3（雜訊致幻覺/過度謹慎）。過程修 2 個 eval harness bug（thinking 截斷、runner 讀錯 `retrieved_contexts` key 致 B 臂靜默空召回——0-hits 全審計攔下）。評測集可重用於換模型/改 CLAUDE.md 跑分。

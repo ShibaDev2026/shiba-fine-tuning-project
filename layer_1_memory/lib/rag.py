@@ -35,6 +35,12 @@ _DIVERGENCE_THRESHOLD = 3
 # answer 在 formatter 中的最大預覽字元數；避免單一長答案吃光 token_budget
 _ANSWER_PREVIEW_CHARS = 200
 
+# 向量召回最低 cosine 門檻：取自雜訊基線實驗的 noise p99
+# （experiments/2026-07-07_recall_score_calibration：1956 組跨 session 不相關配對
+# p50=0.447/p95=0.557/p99=0.611；歷史命中 538 筆 p50=0.624——舊值 0.35 放行 93.9%
+# 純雜訊、top-3 恆滿無鑑別力）。設 noise p99 → 誤放行雜訊 ~1%，命中數 0-3 浮動恢復訊號。
+_MIN_COSINE = 0.61
+
 
 def is_low_signal_query(query: str) -> bool:
     """查詢側前置 gate：判斷 query 是否為「已學會的同意詞」（無召回價值）。
@@ -560,8 +566,8 @@ def _vector_search(
     # leave-one-out：排除 source session 必須在 top_n 截斷「前」，否則會靜默 under-retrieve
     if exclude_session_uuids:
         scored = [r for r in scored if r["session_uuid"] not in exclude_session_uuids]
-    # 只回傳相似度 > 0.35 的結果（降低門檻以提高召回率）
-    return [r for r in scored[:top_n] if r["score"] > 0.35]
+    # 只回傳相似度 > 雜訊基線的結果（門檻推導見 _MIN_COSINE 註解）
+    return [r for r in scored[:top_n] if r["score"] > _MIN_COSINE]
 
 
 def _build_exchange_context(exchanges: list[dict], token_budget: int = 500) -> str:
